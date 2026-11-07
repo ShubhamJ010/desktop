@@ -1,4 +1,4 @@
-name: Build Zen PiP macOS (POC)
+name: Build Zen macOS (POC)
 
 permissions:
   contents: write
@@ -16,8 +16,8 @@ on:
         default: aarch64
 
 jobs:
-  build-macos-pip:
-    name: Build Zen PiP macOS - ${{ inputs.arch }}
+  build-macos-zen:
+    name: Build Zen macOS - ${{ inputs.arch }}
     runs-on: ubuntu-24.04
     env:
       SCCACHE_GHA_ENABLED: "true"
@@ -143,11 +143,21 @@ jobs:
       - name: Prepare Artifact
         run: |
           mkdir -p ./output
-          mv ./dist/*.dmg ./output/Zen-PiP-macOS-${{ inputs.arch }}.dmg
+          mv ./dist/*.dmg ./output/Zen-macOS-${{ inputs.arch }}.dmg
 
       - name: Upload DMG Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Zen-PiP-macOS-${{ inputs.arch }}
-          path: ./output/Zen-PiP-macOS-${{ inputs.arch }}.dmg
+          name: Zen-macOS-${{ inputs.arch }}
+          path: ./output/Zen-macOS-${{ inputs.arch }}.dmg
           retention-days: 14
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        continue-on-error: true
+        with:
+          tag_name: v1.24.1b-poc
+          name: "Zen macOS POC (${{ inputs.arch }})"
+          files: ./output/Zen-macOS-${{ inputs.arch }}.dmg
+          draft: false
+          prerelease: true

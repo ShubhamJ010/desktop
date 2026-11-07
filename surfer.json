@@ -1,8 +1,8 @@
 {
-  "name": "Zen PiP Browser",
+  "name": "Zen Browser",
   "vendor": "Zen OSS Team",
-  "appId": "zen-pip",
-  "binaryName": "zen-pip",
+  "appId": "zen-custom",
+  "binaryName": "zen",
   "version": {
     "product": "firefox",
     "version": "159.0.1",
@@ -16,11 +16,11 @@
   "brands": {
     "release": {
       "backgroundColor": "#282A33",
-      "brandShorterName": "Zen PiP",
-      "brandShortName": "Zen PiP",
-      "brandFullName": "Zen PiP Browser",
+      "brandShorterName": "Zen",
+      "brandShortName": "Zen",
+      "brandFullName": "Zen Browser",
       "release": {
-        "displayVersion": "1.24.1b-pip",
+        "displayVersion": "1.24.1b",
         "github": {
           "repo": "ShubhamJ010/desktop"
         },
