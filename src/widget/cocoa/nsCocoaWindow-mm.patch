@@ -11,7 +11,7 @@ index cd1cbea4e..478bcb670 100644
  #include "mozilla/dom/Document.h"
  #include "mozilla/layers/CompositorBridgeChild.h"
 +#include "mozilla/nsZenDragAndDrop.h"
-+#import "ZenPictureInPictureInternal.h"
++#import "mozilla/ZenPictureInPictureInternal.h"
  #include "mozilla/widget/Screen.h"
  
  #ifdef ACCESSIBILITY
