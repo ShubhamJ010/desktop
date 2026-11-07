@@ -92,6 +92,11 @@ index cd1cbea4e..478bcb670 100644
 +    mWindow.styleMask |= NSWindowStyleMaskNonactivatingPanel;
 +    return;
 +  }
++  if (mWindow && (aXulWinType.EqualsLiteral("PictureInPicture") ||
++                  aXulWinType.LowerCaseEqualsLiteral("pictureinpicture"))) {
++    zen_pip::Attach(mWindow);
++    return;
++  }
 +  if (mWindowType != WindowType::TopLevel || mIsBrowserWindow ||
 +      !aXulWinType.EqualsLiteral("navigator:browser")) {
 +    return;
@@ -152,10 +157,13 @@ index cd1cbea4e..478bcb670 100644
    NS_IF_RELEASE(mDragService);
    return handled;
  }
-@@ -5060,6 +5176,10 @@ - (BOOL)wantsBestResolutionOpenGLSurface {
+@@ -5060,6 +5176,13 @@ - (BOOL)wantsBestResolutionOpenGLSurface {
  nsCocoaWindow::~nsCocoaWindow() {
    NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
  
++  if (mWindow) {
++    zen_pip::Detach(mWindow);
++  }
 +  if (mIsBrowserWindow) {
 +    Preferences::UnregisterCallback(ZenWindowVibrancyPrefChanged,
 +                                    "zen.widget.macos.window-vibrancy", this);
@@ -163,12 +171,13 @@ index cd1cbea4e..478bcb670 100644
    RemoveAllChildren();
    if (mWindow && mWindowMadeHere) {
      CancelAllTransitions();
-@@ -5752,7 +5873,12 @@ static void SyncPopoverBounds(NSPopover* aPopover,
+@@ -5752,7 +5875,12 @@ static void SyncPopoverBounds(NSPopover* aPopover,
      } else {
        NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
        EnsureFrameIsOnScreen();
 -      if (mWindowType == WindowType::TopLevel &&
-+      if ([mWindow level] >= NSFloatingWindowLevel) {
++      if (mWindow && [mWindow level] == NSFloatingWindowLevel &&
++          [mWindow.title containsString:@"Picture"]) {
 +        zen_pip::Attach(mWindow);
 +      }
 +      if ((mWindowType == WindowType::TopLevel ||

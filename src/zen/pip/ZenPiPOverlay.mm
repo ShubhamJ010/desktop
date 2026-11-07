@@ -33,4 +33,10 @@ using namespace zen_pip;
                                                  : NSMakeRect(0, 0, kPeek, size.height);
 }
 
+- (void)dealloc {
+  [_handle release];
+  _handle = nil;
+  [super dealloc];
+}
+
 @end

@@ -21,6 +21,7 @@ const void *const kZoomKey = &kZoomKey;
 }
 
 + (BOOL)zooms:(NSWindow *)window {
+  if (!window || ![window isKindOfClass:[NSWindow class]]) return NO;
   if (!window.visible || !(window.styleMask & NSWindowStyleMaskResizable)) return NO;
   ZenPiPController *controller = [ZenPiPController forWindow:window];
   if (controller) return controller.stashedEdge == ZenPiPEdgeNone;
@@ -28,9 +29,10 @@ const void *const kZoomKey = &kZoomKey;
 }
 
 + (instancetype)forWindow:(NSWindow *)window {
+  if (!window || ![window isKindOfClass:[NSWindow class]]) return nil;
   ZenPiPZoom *zoom = objc_getAssociatedObject(window, kZoomKey);
   if (!zoom) {
-    zoom = [[ZenPiPZoom alloc] init];
+    zoom = [[[ZenPiPZoom alloc] init] autorelease];
     zoom->_window = window;
     objc_setAssociatedObject(window, kZoomKey, zoom, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
   }
@@ -39,12 +41,18 @@ const void *const kZoomKey = &kZoomKey;
 
 static __unsafe_unretained NSWindow *gZoomGesture = nil;
 
++ (void)abandonZoomOn:(NSWindow *)window {
+  if (gZoomGesture == window) gZoomGesture = nil;
+  ZenPiPZoom *zoom = window ? objc_getAssociatedObject(window, kZoomKey) : nil;
+  [zoom stopEase];
+}
+
 + (BOOL)handle:(NSEvent *)event {
   return [self route:event];
 }
 
 + (NSWindow *)windowFor:(NSEvent *)event {
-  if (event.window) return event.window;
+  if (event.window && [event.window isKindOfClass:[NSWindow class]]) return event.window;
   NSPoint point = event.locationInWindow;
   for (NSWindow *window in NSApp.orderedWindows)
     if (NSPointInRect(point, window.frame) && [self zooms:window]) return window;
@@ -82,19 +90,34 @@ static __unsafe_unretained NSWindow *gZoomGesture = nil;
   return event.window ? [event.window convertPointToScreen:event.locationInWindow] : event.locationInWindow;
 }
 
+- (void)stopEase {
+  if (_ease) {
+    [_ease invalidate];
+    [_ease release];
+    _ease = nil;
+  }
+  _target = 0;
+}
+
+- (void)dealloc {
+  [self stopEase];
+  [super dealloc];
+}
+
 - (void)zoomBy:(double)factor at:(NSPoint)pointer ease:(BOOL)ease {
   NSWindow *window = _window;
+  if (!window) return;
   [[ZenPiPController forWindow:window] stopMotion];
   NSRect frame = window.frame;
   if (!NSEqualRects(frame, _last) || _width <= 0) {
     double aspect = NSWidth(frame) / MAX(NSHeight(frame), 1);
     if (!(_aspect > 0 && fabs(NSWidth(frame) / _aspect - NSHeight(frame)) <= 1)) _aspect = aspect;
     _width = NSWidth(frame), _target = 0;
-    [_ease invalidate], _ease = nil;
+    [self stopEase];
   }
   _pointer = pointer;
   if (!ease) {
-    [_ease invalidate], _ease = nil, _target = 0;
+    [self stopEase];
     return [self step:factor];
   }
   double low, high;
@@ -102,19 +125,19 @@ static __unsafe_unretained NSWindow *gZoomGesture = nil;
   _target = MIN(MAX((_target > 0 ? _target : _width) * factor, low), high);
   if (_ease) return;
   __unsafe_unretained ZenPiPZoom *weakSelf = self;
-  _ease = [NSTimer timerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *timer) {
+  _ease = [[NSTimer timerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *timer) {
     ZenPiPZoom *strongSelf = weakSelf;
-    if (!strongSelf || !strongSelf->_window.visible || !NSEqualRects(strongSelf->_window.frame, strongSelf->_last)) {
-      if (strongSelf) strongSelf->_ease = nil, strongSelf->_target = 0;
-      return [timer invalidate];
+    if (!strongSelf || !strongSelf->_window || !strongSelf->_window.visible || !NSEqualRects(strongSelf->_window.frame, strongSelf->_last)) {
+      if (strongSelf) [strongSelf stopEase];
+      else [timer invalidate];
+      return;
     }
     double width = strongSelf->_width, target = strongSelf->_target;
     BOOL done = fabs(target - width) < 0.25;
     [strongSelf step:(done ? target : width + (target - width) * 0.25) / width];
     if (!done) return;
-    strongSelf->_ease = nil, strongSelf->_target = 0;
-    [timer invalidate];
-  }];
+    [strongSelf stopEase];
+  }] retain];
   [NSRunLoop.currentRunLoop addTimer:_ease forMode:NSRunLoopCommonModes];
   _last = frame;
 }

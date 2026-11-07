@@ -46,6 +46,7 @@ typedef NS_ENUM(NSInteger, ZenPiPEdge) { ZenPiPEdgeNone = 0, ZenPiPEdgeLeft = -1
 @property (nonatomic) BOOL keepOnTop;
 + (instancetype)forWindow:(NSWindow *)window;
 + (BOOL)attachToWindow:(NSWindow *)window;
++ (void)detachFromWindow:(NSWindow *)window;
 - (instancetype)initWithWindow:(NSWindow *)window;
 - (void)roundCorners;
 - (CGFloat)cornerRadius;
@@ -113,6 +114,7 @@ typedef NS_ENUM(NSInteger, ZenPiPEdge) { ZenPiPEdgeNone = 0, ZenPiPEdgeLeft = -1
 
 @interface ZenPiPZoom : NSObject
 + (BOOL)handle:(NSEvent *)event;
++ (void)abandonZoomOn:(NSWindow *)window;
 @end
 
 namespace zen_pip {
@@ -123,5 +125,6 @@ int ScreenIndex(NSScreen *screen);
 std::vector<zen_pip_throw::Screen> ThrowScreens();
 void InstallMonitors();
 BOOL Attach(NSWindow *window);
+void Detach(NSWindow *window);
 
 }

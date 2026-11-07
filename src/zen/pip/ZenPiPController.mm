@@ -33,6 +33,22 @@ BOOL ScreenAt(CGFloat x, CGFloat y) {
   return NO;
 }
 
+static __unsafe_unretained NSWindow *gDragged = nil;
+NSPoint gLastMouse;
+NSPoint gGrabLocal;
+static __unsafe_unretained NSScreen *gDragHome = nil;
+std::vector<zen_pip_throw::Sample> gDragSamples;
+
+NSPoint ScreenLocation(NSEvent *event) {
+  CGPoint point = CGEventGetLocation(event.CGEvent);
+  return NSMakePoint(point.x, NSMaxY(NSScreen.screens.firstObject.frame) - point.y);
+}
+
+void SampleDrag(NSEvent *event, NSPoint mouse) {
+  if (gDragSamples.size() >= 64) gDragSamples.erase(gDragSamples.begin(), gDragSamples.begin() + 32);
+  gDragSamples.push_back({event.timestamp, mouse.x, mouse.y});
+}
+
 }
 
 namespace zen_pip {
@@ -57,17 +73,27 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
 @implementation ZenPiPController
 
 + (instancetype)forWindow:(NSWindow *)window {
+  if (!window || ![window isKindOfClass:[NSWindow class]]) return nil;
   return objc_getAssociatedObject(window, kControllerKey);
 }
 
 + (BOOL)attachToWindow:(NSWindow *)window {
-  if (!window) return NO;
+  if (!window || ![window isKindOfClass:[NSWindow class]]) return NO;
   ZenPiPController *existing = [self forWindow:window];
   if (existing) return YES;
-  ZenPiPController *controller = [[ZenPiPController alloc] initWithWindow:window];
+  ZenPiPController *controller = [[[ZenPiPController alloc] initWithWindow:window] autorelease];
   [controller roundCorners];
   InstallMonitors();
   return YES;
+}
+
++ (void)detachFromWindow:(NSWindow *)window {
+  if (!window || ![window isKindOfClass:[NSWindow class]]) return;
+  ZenPiPController *controller = [self forWindow:window];
+  if (controller) {
+    [controller detach];
+  }
+  [ZenPiPZoom abandonZoomOn:window];
 }
 
 - (instancetype)initWithWindow:(NSWindow *)window {
@@ -81,7 +107,7 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
     objc_setAssociatedObject(window, kControllerKey, self, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
-    _observers = [NSMutableArray array];
+    _observers = [[NSMutableArray alloc] init];
     for (NSNotificationName name in @[ NSWindowDidMoveNotification, NSWindowDidResizeNotification ]) {
       [_observers addObject:[center addObserverForName:name object:window queue:nil usingBlock:^(NSNotification *) {
                     [weakSelf windowMoved];
@@ -113,16 +139,42 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
 }
 
 - (void)detach {
+  [self retain];
   [ZenPiPController abandonSwipeOn:_window];
-  for (id observer in _observers) [NSNotificationCenter.defaultCenter removeObserver:observer];
-  [_observers removeAllObjects];
+  [ZenPiPZoom abandonZoomOn:_window];
+  if (gDragged == _window) {
+    gDragged = nil;
+    gDragHome = nil;
+    gDragSamples.clear();
+  }
+  [self stopMotion];
+  if (_observers) {
+    for (id observer in _observers) [NSNotificationCenter.defaultCenter removeObserver:observer];
+    [_observers removeAllObjects];
+    [_observers release];
+    _observers = nil;
+  }
   [NSObject cancelPreviousPerformRequestsWithTarget:self];
-  [_slide invalidate];
-  [_overlay removeFromSuperview];
-  objc_setAssociatedObject(_window, kControllerKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  if (_overlay) {
+    [_overlay removeFromSuperview];
+    [_overlay release];
+    _overlay = nil;
+  }
+  if (_window) {
+    NSWindow *win = _window;
+    _window = nil;
+    objc_setAssociatedObject(win, kControllerKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+  [self release];
+}
+
+- (void)dealloc {
+  [self detach];
+  [super dealloc];
 }
 
 - (void)roundCorners {
+  if (!_window) return;
   NSView *content = _window.contentView;
   content.wantsLayer = YES;
   CALayer *layer = content.layer;
@@ -137,7 +189,11 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
   [self fitCorners:NO];
   _window.opaque = NO;
   _window.backgroundColor = NSColor.clearColor;
-  dispatch_async(dispatch_get_main_queue(), ^{ [self->_window invalidateShadow]; });
+  NSWindow *window = [_window retain];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [window invalidateShadow];
+    [window release];
+  });
 }
 
 - (CGFloat)cornerRadius {
@@ -304,33 +360,41 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
       }];
 }
 
+- (void)stopMotion {
+  if (_slide) {
+    [_slide invalidate];
+    [_slide release];
+    _slide = nil;
+  }
+  _animating = NO;
+}
+
 - (void)animateTo:(NSRect)target {
-  [_slide invalidate];
+  [self stopMotion];
   NSRect from = _window.frame;
   if (NSEqualRects(from, target)) return;
   _animating = YES;
   CFTimeInterval start = CACurrentMediaTime();
   __unsafe_unretained ZenPiPController *weakSelf = self;
-  _slide = [NSTimer scheduledTimerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *timer) {
+  _slide = [[NSTimer scheduledTimerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *timer) {
     ZenPiPController *strongSelf = weakSelf;
+    if (!strongSelf || !strongSelf->_window || !strongSelf->_window.visible) {
+      if (strongSelf) [strongSelf stopMotion];
+      else [timer invalidate];
+      return;
+    }
     double t = MIN((CACurrentMediaTime() - start) / 0.25, 1);
     double eased = 1 - pow(1 - t, 3);
     NSRect frame = NSMakeRect(round(NSMinX(from) + (NSMinX(target) - NSMinX(from)) * eased),
                               round(NSMinY(from) + (NSMinY(target) - NSMinY(from)) * eased), NSWidth(target), NSHeight(target));
     [strongSelf.window setFrame:t < 1 ? frame : target display:YES];
-    if (t < 1 && strongSelf) return;
-    [timer invalidate];
-    if (strongSelf) strongSelf->_animating = NO, strongSelf->_sawDrag = NO;
+    if (t < 1) return;
+    [strongSelf stopMotion];
+    strongSelf->_sawDrag = NO;
     [strongSelf fitCorners:YES];
     [strongSelf rescueIfLost];
-  }];
+  }] retain];
   [NSRunLoop.currentRunLoop addTimer:_slide forMode:NSRunLoopCommonModes];
-}
-
-- (void)stopMotion {
-  [_slide invalidate];
-  _slide = nil;
-  _animating = NO;
 }
 
 - (BOOL)throwFrom:(NSPoint)grab velocity:(NSPoint)velocity {
@@ -355,12 +419,11 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
   _animating = YES;
   const CFTimeInterval start = CACurrentMediaTime();
   __unsafe_unretained ZenPiPController *weakSelf = self;
-  _slide = [NSTimer scheduledTimerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *timer) {
+  _slide = [[NSTimer scheduledTimerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *timer) {
     ZenPiPController *strongSelf = weakSelf;
-    NSWindow *window = strongSelf.window;
-    if (!strongSelf || !window.visible) {
-      [timer invalidate];
-      if (strongSelf) strongSelf->_animating = NO;
+    if (!strongSelf || !strongSelf->_window || !strongSelf->_window.visible) {
+      if (strongSelf) [strongSelf stopMotion];
+      else [timer invalidate];
       return;
     }
     const double t = CACurrentMediaTime() - start;
@@ -368,15 +431,14 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
     const auto y = zen_pip_throw::SpringAt(NSMinY(from) - NSMinY(target), velocity.y, t);
     const BOOL done = zen_pip_throw::Resolved(x, y);
     const NSPoint origin = done ? target.origin : NSMakePoint(round(NSMinX(target) + x.offset), round(NSMinY(target) + y.offset));
-    if (!NSEqualPoints(origin, window.frame.origin)) {
-      [window setFrameOrigin:origin];
+    if (!NSEqualPoints(origin, strongSelf->_window.frame.origin)) {
+      [strongSelf->_window setFrameOrigin:origin];
     }
     if (!done) return;
-    [timer invalidate];
-    strongSelf->_animating = NO;
+    [strongSelf stopMotion];
     [strongSelf fitCorners:YES];
     [strongSelf rescueIfLost];
-  }];
+  }] retain];
   [NSRunLoop.currentRunLoop addTimer:_slide forMode:NSRunLoopCommonModes];
 }
 
@@ -457,26 +519,6 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
 
 @end
 
-namespace {
-
-static __unsafe_unretained NSWindow *gDragged = nil;
-NSPoint gLastMouse;
-NSPoint gGrabLocal;
-static __unsafe_unretained NSScreen *gDragHome = nil;
-std::vector<zen_pip_throw::Sample> gDragSamples;
-
-NSPoint ScreenLocation(NSEvent *event) {
-  CGPoint point = CGEventGetLocation(event.CGEvent);
-  return NSMakePoint(point.x, NSMaxY(NSScreen.screens.firstObject.frame) - point.y);
-}
-
-void SampleDrag(NSEvent *event, NSPoint mouse) {
-  if (gDragSamples.size() >= 64) gDragSamples.erase(gDragSamples.begin(), gDragSamples.begin() + 32);
-  gDragSamples.push_back({event.timestamp, mouse.x, mouse.y});
-}
-
-}
-
 namespace zen_pip {
 
 void InstallMonitors() {
@@ -484,7 +526,7 @@ void InstallMonitors() {
   dispatch_once(&onceToken, ^{
     [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown
                                           handler:^NSEvent *(NSEvent *event) {
-      ZenPiPController *controller = event.window ? [ZenPiPController forWindow:event.window] : nil;
+      ZenPiPController *controller = (event.window && [event.window isKindOfClass:[NSWindow class]]) ? [ZenPiPController forWindow:event.window] : nil;
       if (!controller) return event;
       [NSMenu popUpContextMenu:[controller menu] withEvent:event forView:controller.overlay];
       return nil;
@@ -494,7 +536,7 @@ void InstallMonitors() {
                                           handler:^NSEvent *(NSEvent *event) {
       if (event.type == NSEventTypeLeftMouseDown) {
         NSWindow *window = event.window;
-        ZenPiPController *controller = window ? [ZenPiPController forWindow:window] : nil;
+        ZenPiPController *controller = (window && [window isKindOfClass:[NSWindow class]]) ? [ZenPiPController forWindow:window] : nil;
         if (!controller) return event;
         gDragged = window;
         [ZenPiPController abandonSwipeOn:window];
@@ -508,7 +550,11 @@ void InstallMonitors() {
         return event;
       }
       NSWindow *window = gDragged;
-      if (!window) return event;
+      if (!window || ![window isKindOfClass:[NSWindow class]]) {
+        gDragged = nil;
+        gDragSamples.clear();
+        return event;
+      }
       if (event.type == NSEventTypeLeftMouseUp) {
         gDragged = nil;
         const NSPoint grabbed = NSMakePoint(NSMinX(window.frame) + gGrabLocal.x, NSMinY(window.frame) + gGrabLocal.y);
@@ -536,6 +582,10 @@ void InstallMonitors() {
 
 BOOL Attach(NSWindow *window) {
   return [ZenPiPController attachToWindow:window];
+}
+
+void Detach(NSWindow *window) {
+  [ZenPiPController detachFromWindow:window];
 }
 
 }

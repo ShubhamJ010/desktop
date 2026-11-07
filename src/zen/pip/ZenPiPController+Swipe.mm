@@ -14,12 +14,13 @@ static __unsafe_unretained NSWindow *gSwipeMomentum = nil;
 + (void)abandonSwipeOn:(NSWindow *)window {
   if (!window) return;
   if (gSwipeWindow == window) gSwipeWindow = nil;
+  if (gSwipeMomentum == window) gSwipeMomentum = nil;
   [[self forWindow:window] abandonSwipe];
 }
 
 + (ZenPiPController *)swipeTargetFor:(NSEvent *)event {
   NSWindow *window = event.window;
-  if (!window) {
+  if (!window || ![window isKindOfClass:[NSWindow class]]) {
     CGPoint point = CGEventGetLocation(event.CGEvent);
     NSPoint p = NSMakePoint(point.x, NSMaxY(NSScreen.screens.firstObject.frame) - point.y);
     for (NSWindow *candidate in NSApp.orderedWindows)
@@ -28,7 +29,7 @@ static __unsafe_unretained NSWindow *gSwipeMomentum = nil;
         break;
       }
   }
-  ZenPiPController *controller = window ? [self forWindow:window] : nil;
+  ZenPiPController *controller = (window && [window isKindOfClass:[NSWindow class]]) ? [self forWindow:window] : nil;
   return controller && window.visible ? controller : nil;
 }
 

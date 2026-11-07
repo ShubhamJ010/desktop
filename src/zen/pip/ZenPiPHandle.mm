@@ -39,4 +39,10 @@ using namespace zen_pip;
                               size.width, size.height);
 }
 
+- (void)dealloc {
+  [_chevron release];
+  _chevron = nil;
+  [super dealloc];
+}
+
 @end
