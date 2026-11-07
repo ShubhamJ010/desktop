@@ -1,3 +1,6 @@
+#ifndef ZEN_PIP_ZENPICTUREINPICTUREINTERNAL_H_
+#define ZEN_PIP_ZENPICTUREINPICTUREINTERNAL_H_
+
 #import <Cocoa/Cocoa.h>
 #include <vector>
 
@@ -128,3 +131,5 @@ BOOL Attach(NSWindow *window);
 void Detach(NSWindow *window);
 
 }
+
+#endif  // ZEN_PIP_ZENPICTUREINPICTUREINTERNAL_H_
