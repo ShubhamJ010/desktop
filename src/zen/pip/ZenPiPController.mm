@@ -75,7 +75,7 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
     _window = window;
     NSView *root = window.contentView;
     _overlay = [[ZenPiPOverlay alloc] initWithFrame:root.bounds];
-    __weak ZenPiPController *weakSelf = self;
+    __unsafe_unretained ZenPiPController *weakSelf = self;
     _overlay.handle.onClick = ^{ [weakSelf unstash]; };
     [root addSubview:_overlay];
     objc_setAssociatedObject(window, kControllerKey, self, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -152,7 +152,7 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
   CALayer *content = _window.contentView.layer, *rim = _overlay.layer;
   if (!content || !rim) return;
   if (animated && content.cornerRadius == radius && rim.cornerRadius == radius) return;
-  __weak NSWindow *window = _window;
+  __unsafe_unretained NSWindow *window = _window;
   [CATransaction begin];
   [CATransaction setDisableActions:YES];
   [CATransaction setCompletionBlock:^{ [window invalidateShadow]; }];
@@ -310,7 +310,7 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
   if (NSEqualRects(from, target)) return;
   _animating = YES;
   CFTimeInterval start = CACurrentMediaTime();
-  __weak ZenPiPController *weakSelf = self;
+  __unsafe_unretained ZenPiPController *weakSelf = self;
   _slide = [NSTimer scheduledTimerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *timer) {
     ZenPiPController *strongSelf = weakSelf;
     double t = MIN((CACurrentMediaTime() - start) / 0.25, 1);
@@ -354,7 +354,7 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
   const NSRect from = _window.frame;
   _animating = YES;
   const CFTimeInterval start = CACurrentMediaTime();
-  __weak ZenPiPController *weakSelf = self;
+  __unsafe_unretained ZenPiPController *weakSelf = self;
   _slide = [NSTimer scheduledTimerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *timer) {
     ZenPiPController *strongSelf = weakSelf;
     NSWindow *window = strongSelf.window;
@@ -459,10 +459,10 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
 
 namespace {
 
-__weak NSWindow *gDragged;
+static __unsafe_unretained NSWindow *gDragged = nil;
 NSPoint gLastMouse;
 NSPoint gGrabLocal;
-__weak NSScreen *gDragHome;
+static __unsafe_unretained NSScreen *gDragHome = nil;
 std::vector<zen_pip_throw::Sample> gDragSamples;
 
 NSPoint ScreenLocation(NSEvent *event) {

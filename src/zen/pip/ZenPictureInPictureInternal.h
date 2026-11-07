@@ -80,9 +80,9 @@ typedef NS_ENUM(NSInteger, ZenPiPEdge) { ZenPiPEdgeNone = 0, ZenPiPEdgeLeft = -1
   NSDictionary *_lastSwipe;
   NSMutableDictionary *_lastThrow;
   NSDictionary *_lastScreenFit;
-  __weak NSScreen *_lastScreen;
-  __weak NSScreen *_swipeHome;
-  __weak NSScreen *_stashScreen;
+  __unsafe_unretained NSScreen *_lastScreen;
+  __unsafe_unretained NSScreen *_swipeHome;
+  __unsafe_unretained NSScreen *_stashScreen;
 }
 - (void)detach;
 - (void)toggleKeepOnTop:(id)sender;

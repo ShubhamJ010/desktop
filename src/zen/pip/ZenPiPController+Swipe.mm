@@ -8,8 +8,8 @@ using namespace zen_pip;
 
 @implementation ZenPiPController (Swipe)
 
-static __weak NSWindow *gSwipeWindow;
-static __weak NSWindow *gSwipeMomentum;
+static __unsafe_unretained NSWindow *gSwipeWindow = nil;
+static __unsafe_unretained NSWindow *gSwipeMomentum = nil;
 
 + (void)abandonSwipeOn:(NSWindow *)window {
   if (!window) return;

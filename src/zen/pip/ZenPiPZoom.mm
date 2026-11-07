@@ -11,7 +11,7 @@ const void *const kZoomKey = &kZoomKey;
 }
 
 @implementation ZenPiPZoom {
-  __weak NSWindow *_window;
+  __unsafe_unretained NSWindow *_window;
   NSRect _last;
   double _width;
   double _aspect;
@@ -37,7 +37,7 @@ const void *const kZoomKey = &kZoomKey;
   return zoom;
 }
 
-static __weak NSWindow *gZoomGesture;
+static __unsafe_unretained NSWindow *gZoomGesture = nil;
 
 + (BOOL)handle:(NSEvent *)event {
   return [self route:event];
@@ -101,7 +101,7 @@ static __weak NSWindow *gZoomGesture;
   zen_pip_zoom::WidthLimits(_aspect, [self minSize], [self maxSize], [self visible], &low, &high);
   _target = MIN(MAX((_target > 0 ? _target : _width) * factor, low), high);
   if (_ease) return;
-  __weak ZenPiPZoom *weakSelf = self;
+  __unsafe_unretained ZenPiPZoom *weakSelf = self;
   _ease = [NSTimer timerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *timer) {
     ZenPiPZoom *strongSelf = weakSelf;
     if (!strongSelf || !strongSelf->_window.visible || !NSEqualRects(strongSelf->_window.frame, strongSelf->_last)) {
