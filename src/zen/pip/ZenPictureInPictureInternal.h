@@ -74,6 +74,7 @@ typedef NS_ENUM(NSInteger, ZenPiPEdge) { ZenPiPEdgeNone = 0, ZenPiPEdgeLeft = -1
   BOOL _animating;
   BOOL _sawDrag;
   BOOL _swiping;
+  BOOL _cursorHidden;
   NSPoint _swipeGrab;
   NSPoint _swipeLastDelta;
   NSPoint _swipePointer;
@@ -108,6 +109,8 @@ typedef NS_ENUM(NSInteger, ZenPiPEdge) { ZenPiPEdgeNone = 0, ZenPiPEdgeLeft = -1
 - (void)moveBy:(zen_pip_throw::Point)delta;
 - (void)swipeMoved:(NSEvent *)event;
 - (void)swipeEnded:(NSEvent *)event cancelled:(BOOL)cancelled;
+- (void)hideCursorIfNeeded;
+- (void)showCursorIfNeeded;
 @end
 
 @interface ZenPiPController (Swipe)

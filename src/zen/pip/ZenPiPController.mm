@@ -140,6 +140,7 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
 
 - (void)detach {
   [self retain];
+  [self showCursorIfNeeded];
   [ZenPiPController abandonSwipeOn:_window];
   [ZenPiPZoom abandonZoomOn:_window];
   if (gDragged == _window) {
@@ -169,6 +170,7 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
 }
 
 - (void)dealloc {
+  [self showCursorIfNeeded];
   [self detach];
   [super dealloc];
 }
@@ -463,7 +465,7 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
   _swipePointer = NSEvent.mouseLocation;
   _swipeBeganAt = CACurrentMediaTime();
   _swipeLastDelta = NSZeroPoint;
-  [NSCursor setHiddenUntilMouseMoves:YES];
+  [self hideCursorIfNeeded];
   [self swipeMoved:event];
 }
 
@@ -479,7 +481,7 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
 - (void)abandonSwipe {
   if (!_swiping) return;
   _swiping = NO;
-  [NSCursor setHiddenUntilMouseMoves:NO];
+  [self showCursorIfNeeded];
 }
 
 - (void)swipeMoved:(NSEvent *)event {
@@ -509,8 +511,20 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
     const auto velocity = zen_pip_throw::SwipeVelocity({last.x, last.y});
     thrown = flings && [self throwFrom:grab velocity:NSMakePoint(velocity.x, velocity.y)];
   }
-  [NSCursor setHiddenUntilMouseMoves:NO];
+  [self showCursorIfNeeded];
   [self rescueIfLost];
+}
+
+- (void)hideCursorIfNeeded {
+  if (_cursorHidden) return;
+  [NSCursor hide];
+  _cursorHidden = YES;
+}
+
+- (void)showCursorIfNeeded {
+  if (!_cursorHidden) return;
+  [NSCursor unhide];
+  _cursorHidden = NO;
 }
 
 - (NSDictionary *)throwInfo {
