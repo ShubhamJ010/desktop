@@ -1,0 +1,140 @@
+name: Build Zen PiP macOS (POC)
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "Target architecture"
+        required: true
+        type: choice
+        options:
+          - aarch64
+          - x86_64
+        default: aarch64
+
+jobs:
+  build-macos-pip:
+    name: Build Zen PiP macOS - ${{ inputs.arch }}
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+
+    steps:
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip zstd yasm nasm build-essential \
+            libgtk2.0-dev libpython3-dev m4 uuid libasound2-dev libcurl4-openssl-dev \
+            libdbus-1-dev libdrm-dev libdbus-glib-1-dev libgtk-3-dev libpulse-dev \
+            libx11-xcb-dev libxt-dev xvfb --fix-missing
+
+      - name: Load Surfer CI setup
+        run: npm run surfer -- ci --brand release --display-version "1.24.1b-pip"
+
+      - name: Download Firefox engine and dependencies
+        run: npm run download
+
+      - name: mac-cross Cache
+        id: cache-mac-cross
+        uses: actions/cache@v4
+        with:
+          path: ~/mac-cross
+          key: mac-cross-${{ runner.os }}
+
+      - name: Setup for macOS (cctools and DMG tools)
+        if: steps.cache-mac-cross.outputs.cache-hit != 'true'
+        run: |
+          set -ex
+          mkdir -p ~/mac-cross
+          cd engine/
+          ./mach artifact toolchain --from-build linux64-cctools-port linux64-libdmg linux64-hfsplus
+          mv cctools dmg hfsplus ~/mac-cross/
+          ls ~/mac-cross/cctools/bin/x86_64-apple-darwin-ld ~/mac-cross/cctools/bin/aarch64-apple-darwin-ld ~/mac-cross/dmg/dmg ~/mac-cross/hfsplus/newfs_hfs
+
+      - name: Setup Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          source $HOME/.cargo/env
+          rustup target add ${{ inputs.arch }}-apple-darwin
+
+      - name: Import & Apply Zen Patches
+        env:
+          SURFER_COMPAT: ${{ inputs.arch }}
+          SURFER_PLATFORM: darwin
+        run: |
+          . "$HOME/.cargo/env"
+          npm run import -- --verbose
+
+      - name: Bootstrap
+        run: |
+          set -x
+          export SURFER_PLATFORM="darwin"
+          npm run bootstrap
+
+      - name: Build language packs
+        run: sh scripts/download-language-packs.sh
+
+      - name: Compile Zen Browser (Cross-compile macOS)
+        env:
+          SURFER_COMPAT: ${{ inputs.arch }}
+          ZEN_RELEASE_BRANCH: release
+          SURFER_PLATFORM: darwin
+          ZEN_CROSS_COMPILING: 1
+          ZEN_GA_DISABLE_PGO: 1
+        run: |
+          set -x
+          bash .github/workflows/src/release-build.sh
+
+      - name: Package DMG
+        env:
+          SURFER_COMPAT: ${{ inputs.arch }}
+          ZEN_GA_DISABLE_PGO: true
+          SURFER_PLATFORM: darwin
+          ZEN_CROSS_COMPILING: 1
+          ZEN_RELEASE: 1
+        run: |
+          set -x
+          npm run package
+
+      - name: Prepare Artifact
+        run: |
+          mkdir -p ./output
+          mv ./dist/*.dmg ./output/Zen-PiP-macOS-${{ inputs.arch }}.dmg
+
+      - name: Upload DMG Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zen-PiP-macOS-${{ inputs.arch }}
+          path: ./output/Zen-PiP-macOS-${{ inputs.arch }}.dmg
+          retention-days: 14

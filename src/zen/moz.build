@@ -28,4 +28,5 @@ DIRS += [
     "sync",
     "tabs",
     "window-drag",
+    "pip",
 ]

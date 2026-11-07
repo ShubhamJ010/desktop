@@ -2,7 +2,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
 index cd1cbea4e..478bcb670 100644
 --- a/widget/cocoa/nsCocoaWindow.mm
 +++ b/widget/cocoa/nsCocoaWindow.mm
-@@ -90,9 +90,11 @@
+@@ -90,9 +90,12 @@
  #include "mozilla/StaticPrefs_mozilla.h"
  #include "mozilla/StaticPrefs_ui.h"
  #include "mozilla/StaticPrefs_widget.h"
@@ -11,6 +11,7 @@ index cd1cbea4e..478bcb670 100644
  #include "mozilla/dom/Document.h"
  #include "mozilla/layers/CompositorBridgeChild.h"
 +#include "mozilla/nsZenDragAndDrop.h"
++#import "ZenPictureInPictureInternal.h"
  #include "mozilla/widget/Screen.h"
  
  #ifdef ACCESSIBILITY
@@ -162,18 +163,21 @@ index cd1cbea4e..478bcb670 100644
    RemoveAllChildren();
    if (mWindow && mWindowMadeHere) {
      CancelAllTransitions();
-@@ -5752,7 +5872,9 @@ static void SyncPopoverBounds(NSPopover* aPopover,
+@@ -5752,7 +5873,12 @@ static void SyncPopoverBounds(NSPopover* aPopover,
      } else {
        NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
        EnsureFrameIsOnScreen();
 -      if (mWindowType == WindowType::TopLevel &&
++      if ([mWindow level] >= NSFloatingWindowLevel) {
++        zen_pip::Attach(mWindow);
++      }
 +      if ((mWindowType == WindowType::TopLevel ||
 +           (mWindowType == WindowType::Dialog &&
 +            mAnimationType == nsIWidget::eDocumentWindowAnimation)) &&
            [mWindow respondsToSelector:@selector(setAnimationBehavior:)]) {
          NSWindowAnimationBehavior behavior;
          if (mIsAnimationSuppressed) {
-@@ -8316,6 +8438,17 @@ + (NSUInteger)_validateStyleMask:(NSUInteger)aStyleMask {
+@@ -8316,6 +8442,17 @@ + (NSUInteger)_validateStyleMask:(NSUInteger)aStyleMask {
    return [super _validateStyleMask:(aStyleMask & ~keep)] | keep;
  }
  

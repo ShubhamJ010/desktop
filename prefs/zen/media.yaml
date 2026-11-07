@@ -4,3 +4,9 @@
 
 - name: media.eme.enabled
   value: true
+
+- name: media.videocontrols.picture-in-picture.enable-when-switching-tabs.enabled
+  value: true
+
+- name: media.videocontrols.picture-in-picture.respect-disablePictureInPicture
+  value: false
