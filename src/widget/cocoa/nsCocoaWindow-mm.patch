@@ -15,7 +15,7 @@ index cd1cbea4e..478bcb670 100644
  #include "mozilla/widget/Screen.h"
  
  #ifdef ACCESSIBILITY
-@@ -1420,6 +1422,115 @@ - (NSRect)_opaqueRectForWindowMoveWhenInTitlebar {
+@@ -1420,6 +1422,120 @@ - (NSRect)_opaqueRectForWindowMoveWhenInTitlebar {
  }
  @end
  
@@ -176,8 +176,7 @@ index cd1cbea4e..478bcb670 100644
        NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
        EnsureFrameIsOnScreen();
 -      if (mWindowType == WindowType::TopLevel &&
-+      if (mWindow && [mWindow level] == NSFloatingWindowLevel &&
-+          [mWindow.title containsString:@"Picture"]) {
++      if (mWindow && [mWindow level] == NSFloatingWindowLevel && [mWindow.title containsString:@"Picture"]) {
 +        zen_pip::Attach(mWindow);
 +      }
 +      if ((mWindowType == WindowType::TopLevel ||
