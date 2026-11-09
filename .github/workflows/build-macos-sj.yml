@@ -86,7 +86,7 @@ jobs:
           test -d configs/branding/sj || cp -r configs/branding/release configs/branding/sj
           jq '.appId = "zen-sj" | .updateHostname = "127.0.0.1"' surfer.json > surfer.json.tmp && mv surfer.json.tmp surfer.json
 
-      - name: Load Surfer CI setup (Brand: sj)
+      - name: "Load Surfer CI setup (Brand: sj)"
         run: npm run surfer -- ci --brand sj --display-version "1.24.1b"
 
       - name: Download Firefox engine and dependencies
