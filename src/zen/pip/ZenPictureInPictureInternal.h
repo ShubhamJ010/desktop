@@ -33,27 +33,6 @@ constexpr unsigned short kKeyRightArrow = 124;
 constexpr unsigned short kKeyDownArrow = 125;
 constexpr unsigned short kKeyUpArrow = 126;
 constexpr unsigned short kKeyM = 46;
-constexpr unsigned short kKeyJ = 38;
-constexpr unsigned short kKeyK = 40;
-constexpr unsigned short kKeyL = 37;
-constexpr unsigned short kKeyC = 8;
-constexpr unsigned short kKeyZ = 6;
-constexpr unsigned short kKeyX = 7;
-constexpr unsigned short kKeyW = 13;
-constexpr unsigned short kKeyQ = 12;
-constexpr unsigned short kKeyEscape = 53;
-constexpr unsigned short kKey0 = 29;
-constexpr unsigned short kKey1 = 18;
-constexpr unsigned short kKey2 = 19;
-constexpr unsigned short kKey3 = 20;
-constexpr unsigned short kKey4 = 21;
-constexpr unsigned short kKey5 = 23;
-constexpr unsigned short kKey6 = 22;
-constexpr unsigned short kKey7 = 26;
-constexpr unsigned short kKey8 = 28;
-constexpr unsigned short kKey9 = 25;
-constexpr unsigned short kKeyComma = 43;
-constexpr unsigned short kKeyPeriod = 47;
 
 }
 
@@ -115,6 +94,7 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 @interface ZenPiPController () {
   NSWindow *_window;
   NSString *_host;
+  BOOL _detached;
   ZenPiPOverlay *_overlay;
   ZenPiPEdge _stashedEdge;
   BOOL _keepOnTop;

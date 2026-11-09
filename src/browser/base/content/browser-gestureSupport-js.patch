@@ -1,24 +1,323 @@
 diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/content/browser-gestureSupport.js
-index f94b39d26a1a9626b3e1f518e2395bc394d1262d..15e198f4bb440cff0bbfb8ccd97c2ce180d5724f 100644
 --- a/browser/base/content/browser-gestureSupport.js
 +++ b/browser/base/content/browser-gestureSupport.js
-@@ -247,6 +247,10 @@ var gGestureSupport = {
-         : aEvent.DIRECTION_LEFT;
+@@ -237,6 +237,16 @@
+       return false;
      }
  
-+    if (!gHistorySwipeAnimation._isSupported()) {
-+      return;
++    const toolbox = document.getElementById("navigator-toolbox");
++    const sidebar = document.getElementById("sidebar-box");
++    if (
++      toolbox?.matches(":hover") ||
++      sidebar?.matches(":hover") ||
++      aEvent.target?.closest?.("#navigator-toolbox, #sidebar-box")
++    ) {
++      return false;
 +    }
 +
-     return canGoBack || canGoForward;
+     const leftCommand = this._getCommand(aEvent, ["swipe", "left"]);
+     const rightCommand = this._getCommand(aEvent, ["swipe", "right"]);
+ 
+@@ -736,6 +746,10 @@
+    *        Whether we're dealing with a vertical swipe or not.
+    */
+   startAnimation: function HSA_startAnimation() {
++    if (!this.active && this._isSupported()) {
++      this.init();
++    }
++
+     // old boxes can still be around (if completing fade out for example), we
+     // always want to remove them and recreate them because they can be
+     // attached to an old browser stack that's no longer in use.
+@@ -766,16 +780,20 @@
+     } else if (this._lastVisibleBox) {
+       box = this._lastVisibleBox;
+       box.collapsed = false;
+-      box.style.translate = this._lastVisibleTranslate;
++      box.style.transform = this._lastVisibleTranslate;
+       isCancelPath = true;
+     }
+     if (box != null) {
+       this._isStoppingAnimation = true;
+       box.style.transition = isCancelPath
+-        ? "opacity 0.2s linear"
+-        : "opacity 0.35s 0.35s cubic-bezier(.25,.1,0.25,1)";
++        ? "opacity 0.2s cubic-bezier(0.25, 0.1, 0.25, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1)"
++        : "opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1)";
+       box.addEventListener("transitionend", this, true);
+       box.style.opacity = 0;
++      if (isCancelPath) {
++        box.style.transform =
++          box === this._prevBox ? "translateX(-72px)" : "translateX(72px)";
++      }
+       window.getComputedStyle(box).opacity;
+     } else {
+       this._isStoppingAnimation = false;
+@@ -784,24 +802,44 @@
    },
  
-@@ -848,7 +852,7 @@ var gHistorySwipeAnimation = {
+   _swipeCommand: function HSA_swipeCommand(aSwipeUpdate) {
+-    if (!aSwipeUpdate.event || aSwipeUpdate.delta == 0) {
++    if (!aSwipeUpdate.event || aSwipeUpdate.delta === 0) {
+       return "";
+     }
+-    const direction = aSwipeUpdate.delta < 0 == this.isLTR ? "right" : "left";
+-    return gGestureSupport._getCommand(aSwipeUpdate.event, [
+-      "swipe",
+-      direction,
+-    ]);
++    const direction = aSwipeUpdate.delta < 0 === this.isLTR ? "right" : "left";
++    return (
++      gGestureSupport._getCommand(aSwipeUpdate.event, [
++        "swipe",
++        direction,
++      ]) || ""
++    );
+   },
+ 
+   _willGoBack: function HSA_willGoBack(aSwipeUpdate) {
+-    return this._swipeCommand(aSwipeUpdate) == BACK_COMMAND && this._canGoBack;
++    if (!aSwipeUpdate.event || aSwipeUpdate.delta === 0) {
++      return false;
++    }
++    const cmd = this._swipeCommand(aSwipeUpdate);
++    if (cmd) {
++      return cmd === BACK_COMMAND && this._canGoBack;
++    }
++    const isBackDirection = this.isLTR
++      ? aSwipeUpdate.delta > 0
++      : aSwipeUpdate.delta < 0;
++    return isBackDirection && this._canGoBack;
+   },
+ 
+   _willGoForward: function HSA_willGoForward(aSwipeUpdate) {
+-    return (
+-      this._swipeCommand(aSwipeUpdate) == FORWARD_COMMAND && this._canGoForward
+-    );
++    if (!aSwipeUpdate.event || aSwipeUpdate.delta === 0) {
++      return false;
++    }
++    const cmd = this._swipeCommand(aSwipeUpdate);
++    if (cmd) {
++      return cmd === FORWARD_COMMAND && this._canGoForward;
++    }
++    const isForwardDirection = this.isLTR
++      ? aSwipeUpdate.delta < 0
++      : aSwipeUpdate.delta > 0;
++    return isForwardDirection && this._canGoForward;
+   },
+ 
+   /**
+@@ -819,70 +857,60 @@
+       return;
+     }
+ 
+-    // Convert `aVal` into [0, 1] range.
+-    // Note that absolute values of 0.25 (or greater) trigger history
+-    // navigation, hence we multiply the value by 4 here.
+-    const progress = Math.min(Math.abs(aSwipeUpdate.delta) * 4, 1.0);
++    const rawProgress = Math.min(Math.abs(aSwipeUpdate.delta) * 4.0, 2.0);
++    const limit = 86;
++    const val = rawProgress * limit;
++    let offset;
++    if (val <= limit) {
++      offset = val - 72;
++    } else {
++      offset =
++        limit +
++        (1 - 1 / (((val - limit) * 0.15) / limit + 1)) * limit -
++        72;
++    }
+ 
+-    // Compute the icon position based on preferences.
+-    let translate =
+-      this.translateStartPosition +
+-      progress * (this.translateEndPosition - this.translateStartPosition);
+-    if (!this.isLTR) {
+-      translate = -translate;
++    const isConfirmed = Math.abs(aSwipeUpdate.delta) >= 0.25;
++    if (isConfirmed !== this._wasConfirmed) {
++      this._wasConfirmed = isConfirmed;
++      if (this._wasConfirmed) {
++        try {
++          Services.zen.playHapticFeedback();
++        } catch (e) {}
++      }
+     }
+ 
+-    // Compute the icon radius based on preferences.
+-    const radius =
+-      this.minRadius + progress * (this.maxRadius - this.minRadius);
+     if (this._willGoBack(aSwipeUpdate)) {
+       this._prevBox.collapsed = false;
+       this._nextBox.collapsed = true;
+-      this._prevBox.style.translate = `${translate}px 0px`;
+-      if (radius >= 0) {
+-        this._prevBox
+-          .querySelectorAll("circle")[1]
+-          .setAttribute("r", `${radius}`);
+-      }
+-
+-      if (Math.abs(aSwipeUpdate.delta) >= 0.25) {
+-        // If `delta` goes above 0.25, it means history navigation will be
+-        // triggered once after the user lifts their fingers, it's time to
+-        // trigger __indicator__ animations by adding `will-navigate` class.
+-        this._prevBox.querySelector("svg").classList.add("will-navigate");
++      this._prevBox.style.transform = `translateX(${offset}px)`;
++      if (isConfirmed) {
++        this._prevBox.classList.add("will-navigate");
+       } else {
+-        this._prevBox.querySelector("svg").classList.remove("will-navigate");
++        this._prevBox.classList.remove("will-navigate");
+       }
+     } else if (this._willGoForward(aSwipeUpdate)) {
+-      // The intention is to go forward.
+       this._nextBox.collapsed = false;
+       this._prevBox.collapsed = true;
+-      this._nextBox.style.translate = `${-translate}px 0px`;
+-      if (radius >= 0) {
+-        this._nextBox
+-          .querySelectorAll("circle")[1]
+-          .setAttribute("r", `${radius}`);
+-      }
+-
+-      if (Math.abs(aSwipeUpdate.delta) >= 0.25) {
+-        // Same as above "go back" case.
+-        this._nextBox.querySelector("svg").classList.add("will-navigate");
++      this._nextBox.style.transform = `translateX(${-offset}px)`;
++      if (isConfirmed) {
++        this._nextBox.classList.add("will-navigate");
+       } else {
+-        this._nextBox.querySelector("svg").classList.remove("will-navigate");
++        this._nextBox.classList.remove("will-navigate");
+       }
+     } else {
+       // Preserve a fade target for the aVal == 0 cancel-collapse path.
+       if (!this._prevBox.collapsed) {
+         this._lastVisibleBox = this._prevBox;
+-        this._lastVisibleTranslate = this._prevBox.style.translate;
++        this._lastVisibleTranslate = this._prevBox.style.transform;
+       } else if (!this._nextBox.collapsed) {
+         this._lastVisibleBox = this._nextBox;
+-        this._lastVisibleTranslate = this._nextBox.style.translate;
++        this._lastVisibleTranslate = this._nextBox.style.transform;
+       }
+       this._prevBox.collapsed = true;
+       this._nextBox.collapsed = true;
+-      this._prevBox.style.translate = "none";
+-      this._nextBox.style.translate = "none";
++      this._prevBox.style.transform = "none";
++      this._nextBox.style.transform = "none";
+     }
+   },
+ 
+@@ -901,7 +929,11 @@
     * @return true if there is a previous page in history, false otherwise.
     */
    canGoBack: function HSA_canGoBack() {
 -    return gBrowser.webNavigation.canGoBack;
-+    return gBrowser.webNavigation.canGoBack || gZenCommonActions.shouldCloseTabOnBack();
++    return (
++      gBrowser.webNavigation.canGoBack ||
++      (typeof gZenCommonActions !== "undefined" &&
++        Boolean(gZenCommonActions?.shouldCloseTabOnBack?.()))
++    );
    },
  
    /**
+@@ -929,7 +961,14 @@
+    * return true if supported, false otherwise.
+    */
+   _isSupported: function HSA__isSupported() {
+-    return window.matchMedia("(-moz-swipe-animation-enabled)").matches;
++    return (
++      (Services.appinfo.OS == "Darwin" &&
++        Services.prefs.getBoolPref(
++          "zen.widget.macos.back-gesture-indicator",
++          true
++        )) ||
++      window.matchMedia("(-moz-swipe-animation-enabled)").matches
++    );
+   },
+ 
+   handleEvent: function HSA_handleEvent(aEvent) {
+@@ -954,32 +993,65 @@
+    * Adds the boxes that contain the arrows used during the swipe animation.
+    */
+   _addBoxes: function HSA__addBoxes() {
+-    let browserStack = gBrowser.getPanel().querySelector(".browserStack");
++    let panel = gBrowser.getPanel();
++    let browserStack = panel ? panel.querySelector(".browserStack") : null;
++    if (!browserStack && gBrowser.selectedBrowser) {
++      browserStack = gBrowser.selectedBrowser.closest(".browserStack");
++    }
++    if (!browserStack) {
++      return;
++    }
+     this._container = this._createElement(
+       "historySwipeAnimationContainer",
+       "stack"
+     );
+     browserStack.appendChild(this._container);
+ 
++    const HTML_NS = "http://www.w3.org/1999/xhtml";
++    const SVG_NS = "http://www.w3.org/2000/svg";
++
++    const buildCapsule = chevronPath => {
++      let capsule = document.createElementNS(HTML_NS, "div");
++      capsule.className = "zen-swipe-capsule";
++
++      let wash = document.createElementNS(HTML_NS, "div");
++      wash.className = "zen-swipe-capsule-wash";
++      capsule.appendChild(wash);
++
++      let svg = document.createElementNS(SVG_NS, "svg");
++      svg.setAttribute("class", "zen-swipe-chevron");
++      svg.setAttribute("viewBox", "0 0 24 24");
++      svg.setAttribute("width", "28");
++      svg.setAttribute("height", "28");
++
++      let path = document.createElementNS(SVG_NS, "path");
++      path.setAttribute("d", chevronPath);
++      path.setAttribute("fill", "none");
++      path.setAttribute("stroke", "currentColor");
++      path.setAttribute("stroke-width", "2.85");
++      path.setAttribute("stroke-linecap", "round");
++      path.setAttribute("stroke-linejoin", "round");
++      svg.appendChild(path);
++
++      capsule.appendChild(svg);
++      return capsule;
++    };
++
+     this._prevBox = this._createElement(
+       "historySwipeAnimationPreviousArrow",
+       "box"
+     );
+     this._prevBox.collapsed = true;
++    this._prevBox.appendChild(buildCapsule("M15 18l-6-6 6-6"));
+     this._container.appendChild(this._prevBox);
+-    let icon = this._icon.cloneNode(true);
+-    icon.classList.add("swipe-nav-icon");
+-    this._prevBox.appendChild(icon);
+ 
+     this._nextBox = this._createElement(
+       "historySwipeAnimationNextArrow",
+       "box"
+     );
+     this._nextBox.collapsed = true;
++    this._nextBox.appendChild(buildCapsule("M9 18l6-6-6-6"));
+     this._container.appendChild(this._nextBox);
+-    icon = this._icon.cloneNode(true);
+-    icon.classList.add("swipe-nav-icon");
+-    this._nextBox.appendChild(icon);
+   },
+ 
+   /**
+@@ -990,6 +1062,7 @@
+     this._nextBox = null;
+     this._lastVisibleBox = null;
+     this._lastVisibleTranslate = "";
++    this._wasConfirmed = false;
+     if (this._container) {
+       this._container.remove();
+     }
