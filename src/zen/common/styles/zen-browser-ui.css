@@ -446,6 +446,23 @@ body,
 }
 
 #historySwipeAnimationContainer {
+  /* Ardia spring(response: 0.2, damping: 0.9) sampled as a CSS spring curve. */
+  --zen-swipe-spring: linear(
+    0,
+    0.136 10%,
+    0.378 20%,
+    0.598 30%,
+    0.761 40%,
+    0.868 50%,
+    0.933 60%,
+    0.969 70%,
+    0.988 80%,
+    0.997 90%,
+    1
+  );
+  --zen-swipe-spring-duration: 200ms;
+  --zen-swipe-fade: 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+
   position: absolute !important;
   inset: 0 !important;
   overflow: hidden !important;
@@ -453,30 +470,32 @@ body,
   z-index: 99999 !important;
 }
 
+/* Full-height edge rails: the capsule stays anchored to its window edge and
+   vertically centred while it grows, exactly like Ardia's `top` + size spring. */
 #historySwipeAnimationPreviousArrow,
 #historySwipeAnimationNextArrow {
   position: absolute !important;
-  top: 50% !important;
-  margin-top: -36px !important;
+  inset-block: 0 !important;
   width: 72px !important;
-  height: 72px !important;
+  margin: 0 !important;
+  padding: 0 !important;
   pointer-events: none !important;
   display: flex !important;
   align-items: center !important;
-  justify-content: center !important;
-  will-change: transform, margin-top !important;
+  will-change: transform, opacity !important;
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
-  transition: margin-top 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 #historySwipeAnimationPreviousArrow {
   left: 0 !important;
+  justify-content: flex-start !important;
 }
 
 #historySwipeAnimationNextArrow {
   right: 0 !important;
+  justify-content: flex-end !important;
 }
 
 #historySwipeAnimationPreviousArrow[collapsed="true"],
@@ -487,45 +506,50 @@ body,
 .zen-swipe-capsule {
   width: 72px;
   height: 72px;
+  /* Never let the 72px rail shrink the confirmed 82px capsule into an oval. */
+  flex: none;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   position: relative;
   overflow: hidden;
+  /* Stand-in for Ardia's NSVisualEffectView material="popover" */
+  background-color: light-dark(rgba(255, 255, 255, 0.75), rgba(40, 38, 39, 0.85));
   backdrop-filter: blur(25px) saturate(190%) contrast(105%);
   -webkit-backdrop-filter: blur(25px) saturate(190%) contrast(105%);
-  background-color: light-dark(rgba(255, 255, 255, 0.75), rgba(40, 38, 39, 0.85));
-  box-shadow: 0 4px 20px light-dark(rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.35)),
-              0 1px 4px light-dark(rgba(0, 0, 0, 0.10), rgba(0, 0, 0, 0.20));
+  /* Ardia SHADOWS.swipe: black, radius 8, offset [0, 2] */
+  box-shadow: 0 2px 8px light-dark(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.25));
+  /* Ardia windowColors().swipeRim */
   border: 1px solid light-dark(rgba(0, 0, 0, 0.125), rgba(255, 255, 255, 0.15));
   box-sizing: border-box;
-  transition: width 0.22s cubic-bezier(0.16, 1, 0.3, 1),
-              height 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: width var(--zen-swipe-spring-duration) var(--zen-swipe-spring),
+              height var(--zen-swipe-spring-duration) var(--zen-swipe-spring);
 }
 
 .zen-swipe-capsule-wash {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background-color: light-dark(rgba(255, 255, 255, 0.40), rgba(255, 255, 255, 0.15));
+  /* Ardia SWIPE_CONFIRMED_WASH — light appearance only */
+  background-color: light-dark(rgba(255, 255, 255, 0.4), transparent);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.18s ease-out;
+  transition: opacity var(--zen-swipe-fade);
 }
 
 .zen-swipe-chevron {
-  color: light-dark(rgba(0, 0, 0, 0.85), rgba(255, 255, 255, 0.85));
-  opacity: 0.50;
-  transition: opacity 0.18s ease-out, transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  /* Ardia windowColors().swipeChevron: #000000D9 / #FFFFFFD9 */
+  color: light-dark(rgba(0, 0, 0, 0.851), rgba(255, 255, 255, 0.851));
+  /* SF Symbol chevron at pointSize 28 weight bold */
+  width: 15px;
+  height: 25px;
+  opacity: 0.5;
+  transition: opacity var(--zen-swipe-fade),
+              transform var(--zen-swipe-spring-duration) var(--zen-swipe-spring);
 }
 
 /* Confirmed state (when Math.abs(delta) >= 0.25) */
-#historySwipeAnimationPreviousArrow.will-navigate,
-#historySwipeAnimationNextArrow.will-navigate {
-  margin-top: -41px !important;
-}
-
 #historySwipeAnimationPreviousArrow.will-navigate .zen-swipe-capsule,
 #historySwipeAnimationNextArrow.will-navigate .zen-swipe-capsule {
   width: 82px;
@@ -540,7 +564,7 @@ body,
 #historySwipeAnimationPreviousArrow.will-navigate .zen-swipe-chevron,
 #historySwipeAnimationNextArrow.will-navigate .zen-swipe-chevron {
   opacity: 1.0;
-  transform: scale(1.214); /* 28px * 1.214 = 34px */
+  transform: scale(1.214); /* Ardia ICON_CONFIRMED / ICON = 34 / 28 */
 }
 
 /* Ensure any legacy Firefox SVG icon is never shown */

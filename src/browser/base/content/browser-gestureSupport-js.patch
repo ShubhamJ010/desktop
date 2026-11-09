@@ -1,7 +1,7 @@
 diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/content/browser-gestureSupport.js
 --- a/browser/base/content/browser-gestureSupport.js
 +++ b/browser/base/content/browser-gestureSupport.js
-@@ -237,6 +237,16 @@
+@@ -237,6 +237,16 @@ var gGestureSupport = {
        return false;
      }
  
@@ -18,7 +18,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
      const leftCommand = this._getCommand(aEvent, ["swipe", "left"]);
      const rightCommand = this._getCommand(aEvent, ["swipe", "right"]);
  
-@@ -736,6 +746,10 @@
+@@ -736,6 +746,10 @@ var gHistorySwipeAnimation = {
     *        Whether we're dealing with a vertical swipe or not.
     */
    startAnimation: function HSA_startAnimation() {
@@ -29,7 +29,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
      // old boxes can still be around (if completing fade out for example), we
      // always want to remove them and recreate them because they can be
      // attached to an old browser stack that's no longer in use.
-@@ -766,16 +780,20 @@
+@@ -766,16 +780,26 @@ var gHistorySwipeAnimation = {
      } else if (this._lastVisibleBox) {
        box = this._lastVisibleBox;
        box.collapsed = false;
@@ -39,21 +39,28 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
      }
      if (box != null) {
        this._isStoppingAnimation = true;
-       box.style.transition = isCancelPath
+-      box.style.transition = isCancelPath
 -        ? "opacity 0.2s linear"
 -        : "opacity 0.35s 0.35s cubic-bezier(.25,.1,0.25,1)";
-+        ? "opacity 0.2s cubic-bezier(0.25, 0.1, 0.25, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1)"
-+        : "opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1)";
++      // Ardia SWIPE_MOTION.dismiss: the capsule fades and shrinks in place
++      // instead of sliding back into the edge. Navigating keeps Ardia's
++      // dismiss(120) beat so the capsule stays up while the page starts sliding.
++      const DISMISS_MS = 150;
++      const DISMISS_DELAY_MS = isCancelPath ? 0 : 120;
++      const DISMISS_EASE = "cubic-bezier(0.55, 0.085, 0.68, 0.53)";
++      box.style.transition =
++        `opacity ${DISMISS_MS}ms ${DISMISS_EASE} ${DISMISS_DELAY_MS}ms, ` +
++        `transform ${DISMISS_MS}ms ${DISMISS_EASE} ${DISMISS_DELAY_MS}ms`;
        box.addEventListener("transitionend", this, true);
        box.style.opacity = 0;
-+      if (isCancelPath) {
-+        box.style.transform =
-+          box === this._prevBox ? "translateX(-72px)" : "translateX(72px)";
-+      }
++      const shownTranslate = box.style.transform;
++      box.style.transform = `${
++        shownTranslate && shownTranslate !== "none" ? `${shownTranslate} ` : ""
++      }scale(0.01)`;
        window.getComputedStyle(box).opacity;
      } else {
        this._isStoppingAnimation = false;
-@@ -784,24 +802,44 @@
+@@ -784,24 +808,44 @@ var gHistorySwipeAnimation = {
    },
  
    _swipeCommand: function HSA_swipeCommand(aSwipeUpdate) {
@@ -108,7 +115,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
    },
  
    /**
-@@ -819,70 +857,60 @@
+@@ -819,70 +863,60 @@ var gHistorySwipeAnimation = {
        return;
      }
  
@@ -116,6 +123,13 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
 -    // Note that absolute values of 0.25 (or greater) trigger history
 -    // navigation, hence we multiply the value by 4 here.
 -    const progress = Math.min(Math.abs(aSwipeUpdate.delta) * 4, 1.0);
+-
+-    // Compute the icon position based on preferences.
+-    let translate =
+-      this.translateStartPosition +
+-      progress * (this.translateEndPosition - this.translateStartPosition);
+-    if (!this.isLTR) {
+-      translate = -translate;
 +    const rawProgress = Math.min(Math.abs(aSwipeUpdate.delta) * 4.0, 2.0);
 +    const limit = 86;
 +    const val = rawProgress * limit;
@@ -128,13 +142,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
 +        (1 - 1 / (((val - limit) * 0.15) / limit + 1)) * limit -
 +        72;
 +    }
- 
--    // Compute the icon position based on preferences.
--    let translate =
--      this.translateStartPosition +
--      progress * (this.translateEndPosition - this.translateStartPosition);
--    if (!this.isLTR) {
--      translate = -translate;
++
 +    const isConfirmed = Math.abs(aSwipeUpdate.delta) >= 0.25;
 +    if (isConfirmed !== this._wasConfirmed) {
 +      this._wasConfirmed = isConfirmed;
@@ -211,7 +219,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
      }
    },
  
-@@ -901,7 +929,11 @@
+@@ -901,7 +935,11 @@ var gHistorySwipeAnimation = {
     * @return true if there is a previous page in history, false otherwise.
     */
    canGoBack: function HSA_canGoBack() {
@@ -224,7 +232,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
    },
  
    /**
-@@ -929,7 +961,14 @@
+@@ -929,7 +967,14 @@ var gHistorySwipeAnimation = {
     * return true if supported, false otherwise.
     */
    _isSupported: function HSA__isSupported() {
@@ -240,7 +248,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
    },
  
    handleEvent: function HSA_handleEvent(aEvent) {
-@@ -954,32 +993,65 @@
+@@ -954,32 +999,67 @@ var gHistorySwipeAnimation = {
     * Adds the boxes that contain the arrows used during the swipe animation.
     */
    _addBoxes: function HSA__addBoxes() {
@@ -272,15 +280,17 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
 +
 +      let svg = document.createElementNS(SVG_NS, "svg");
 +      svg.setAttribute("class", "zen-swipe-chevron");
-+      svg.setAttribute("viewBox", "0 0 24 24");
-+      svg.setAttribute("width", "28");
-+      svg.setAttribute("height", "28");
++      // Geometry of the SF Symbol chevron at pointSize 28 weight bold, which is
++      // what Ardia renders: an ink box of 15x25pt and a ~4.6pt stroke.
++      svg.setAttribute("viewBox", "0 0 15 25");
++      svg.setAttribute("width", "15");
++      svg.setAttribute("height", "25");
 +
 +      let path = document.createElementNS(SVG_NS, "path");
 +      path.setAttribute("d", chevronPath);
 +      path.setAttribute("fill", "none");
 +      path.setAttribute("stroke", "currentColor");
-+      path.setAttribute("stroke-width", "2.85");
++      path.setAttribute("stroke-width", "4.6");
 +      path.setAttribute("stroke-linecap", "round");
 +      path.setAttribute("stroke-linejoin", "round");
 +      svg.appendChild(path);
@@ -294,7 +304,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
        "box"
      );
      this._prevBox.collapsed = true;
-+    this._prevBox.appendChild(buildCapsule("M15 18l-6-6 6-6"));
++    this._prevBox.appendChild(buildCapsule("M12.7 2.3L2.3 12.5L12.7 22.7"));
      this._container.appendChild(this._prevBox);
 -    let icon = this._icon.cloneNode(true);
 -    icon.classList.add("swipe-nav-icon");
@@ -305,7 +315,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
        "box"
      );
      this._nextBox.collapsed = true;
-+    this._nextBox.appendChild(buildCapsule("M9 18l6-6-6-6"));
++    this._nextBox.appendChild(buildCapsule("M2.3 2.3L12.7 12.5L2.3 22.7"));
      this._container.appendChild(this._nextBox);
 -    icon = this._icon.cloneNode(true);
 -    icon.classList.add("swipe-nav-icon");
@@ -313,7 +323,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
    },
  
    /**
-@@ -990,6 +1062,7 @@
+@@ -990,6 +1070,7 @@ var gHistorySwipeAnimation = {
      this._nextBox = null;
      this._lastVisibleBox = null;
      this._lastVisibleTranslate = "";
