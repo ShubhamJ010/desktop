@@ -1,4 +1,4 @@
-name: Build Zen macOS (POC)
+name: Build Zen macOS - SJ
 
 permissions:
   contents: write
@@ -16,8 +16,8 @@ on:
         default: aarch64
 
 jobs:
-  build-macos-zen:
-    name: Build Zen macOS - ${{ inputs.arch }}
+  build-macos-zen-sj:
+    name: Build Zen macOS SJ - ${{ inputs.arch }}
     runs-on: ubuntu-24.04
     env:
       SCCACHE_GHA_ENABLED: "true"
@@ -73,10 +73,6 @@ jobs:
 
       - name: Install dependencies (npm)
         run: |
-          # sharp (pulled in by surfer) downloads a prebuilt libvips from GitHub
-          # releases. That download regularly 504s on shared runners. libvips-dev
-          # is installed above so sharp's source fallback compiles, and a retry
-          # covers the transient failure before it gets there.
           for attempt in 1 2 3; do
             if npm ci; then exit 0; fi
             echo "::warning::npm ci failed (attempt $attempt); retrying"
@@ -85,14 +81,13 @@ jobs:
           done
           exit 1
 
-      - name: Configure POC Environment (Side-by-Side & Anti-Auto-Update)
+      - name: Configure Zen SJ Environment
         run: |
-          # Isolate profile to zen-custom so POC does not collide with user's official Zen profile
-          # Also point updateHostname to 127.0.0.1 to kill update checks at build time
-          jq '.appId = "zen-custom" | .updateHostname = "127.0.0.1"' surfer.json > surfer.json.tmp && mv surfer.json.tmp surfer.json
+          test -d configs/branding/sj || cp -r configs/branding/release configs/branding/sj
+          jq '.appId = "zen-sj" | .updateHostname = "127.0.0.1"' surfer.json > surfer.json.tmp && mv surfer.json.tmp surfer.json
 
-      - name: Load Surfer CI setup
-        run: npm run surfer -- ci --brand release --display-version "1.24.1b-pip"
+      - name: Load Surfer CI setup (Brand: sj)
+        run: npm run surfer -- ci --brand sj --display-version "1.24.1b"
 
       - name: Download Firefox engine and dependencies
         run: npm run download
@@ -137,7 +132,7 @@ jobs:
       - name: Build language packs
         run: sh scripts/download-language-packs.sh
 
-      - name: Compile Zen Browser (Cross-compile macOS)
+      - name: Compile Zen Browser (Production macOS Release Build)
         env:
           SURFER_COMPAT: ${{ inputs.arch }}
           ZEN_RELEASE_BRANCH: release
@@ -148,27 +143,32 @@ jobs:
           set -x
           bash .github/workflows/src/release-build.sh
 
-      - name: Disable Auto-Updates in POC App Bundle
+      - name: Configure Bundle Identity & Disable Updates in App Bundle
         run: |
           set -x
-          # `surfer package` re-runs `mach package`, which rebuilds dist/Zen.app from
-          # the macOS bundle template. Injecting into dist/Zen.app before packaging is
-          # therefore wiped. The template survives:
           tpl="engine/browser/app/macbuild/Contents"
           mkdir -p "$tpl/Resources/distribution" "$tpl/Resources/defaults/pref"
-          echo '{"policies":{"DisableAppUpdate":true}}' > "$tpl/Resources/distribution/policies.json"
+          cat << 'EOF' > "$tpl/Resources/distribution/policies.json"
+          {
+            "policies": {
+              "DisableAppUpdate": true,
+              "ManualAppUpdateOnly": true
+            }
+          }
+          EOF
           printf '%s\n' \
             'pref("app.update.auto", false);' \
             'pref("app.update.enabled", false);' \
             'pref("app.update.background.scheduling.enabled", false);' \
-            > "$tpl/Resources/defaults/pref/pip-poc-no-update.js"
+            > "$tpl/Resources/defaults/pref/zen-sj-no-update.js"
 
-          # Belt and braces: the updater binary is copied verbatim from
-          # dist/bin/updater.app into the packaged app. Remove it so a MAR that does
-          # get downloaded can never be applied.
-          find engine/obj-*/dist/bin/updater.app -type f -name "org.mozilla.updater" -delete
+          # Remove updater binary
+          find engine/obj-*/dist/bin/updater.app -type f -name "org.mozilla.updater" -delete 2>/dev/null || true
 
-      - name: Package DMG
+          # Inject dummy update URL
+          find engine/obj-*/dist -name "application.ini" -exec sed -i 's|^URL=https://updates.zen-browser.app.*|URL=http://127.0.0.1/no-update|g' {} + 2>/dev/null || true
+
+      - name: Package DMG (Zen SJ)
         env:
           SURFER_COMPAT: ${{ inputs.arch }}
           ZEN_GA_DISABLE_PGO: true
@@ -179,39 +179,30 @@ jobs:
           set -x
           npm run package
 
-      - name: Verify POC bundle cannot self-update
+      - name: Verify Bundle Integrity
         run: |
-          app="$(find engine/obj-*/dist -maxdepth 1 -name Zen.app -type d | head -1)"
+          app="$(find engine/obj-*/dist -maxdepth 1 -name "*.app" -type d | head -1)"
           test -n "$app"
+          echo "Packaged app bundle: $app"
           if [ -f "$app/Contents/MacOS/updater.app/Contents/MacOS/org.mozilla.updater" ]; then
             echo "::error::updater binary still present in the packaged app"
             exit 1
           fi
           if [ -f "$app/Contents/Resources/distribution/policies.json" ]; then
-            echo "policy present in the packaged app"
+            echo "policies.json successfully verified in $app"
           else
-            echo "::warning::no distribution/policies.json in the packaged app; the removed updater is the only guard"
+            echo "::error::missing distribution/policies.json"
+            exit 1
           fi
 
       - name: Prepare Artifact
         run: |
           mkdir -p ./output
-          mv ./dist/*.dmg ./output/Zen-macOS-${{ inputs.arch }}.dmg
+          mv ./dist/*.dmg ./output/Zen-SJ-macOS-${{ inputs.arch }}.dmg
 
       - name: Upload DMG Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Zen-macOS-${{ inputs.arch }}
-          path: ./output/Zen-macOS-${{ inputs.arch }}.dmg
+          name: Zen-SJ-macOS-${{ inputs.arch }}
+          path: ./output/Zen-SJ-macOS-${{ inputs.arch }}.dmg
           retention-days: 14
-
-      - name: Publish GitHub Release
-        if: false
-        uses: softprops/action-gh-release@v2
-        continue-on-error: true
-        with:
-          tag_name: v1.24.1b-poc
-          name: "Zen macOS POC (${{ inputs.arch }})"
-          files: ./output/Zen-macOS-${{ inputs.arch }}.dmg
-          draft: false
-          prerelease: true

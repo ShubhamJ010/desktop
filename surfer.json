@@ -1,7 +1,7 @@
 {
-  "name": "Zen Browser",
-  "vendor": "Zen OSS Team",
-  "appId": "zen-custom",
+  "name": "Zen SJ",
+  "vendor": "SJ",
+  "appId": "zen-sj",
   "binaryName": "zen",
   "version": {
     "product": "firefox",
@@ -34,6 +34,18 @@
         }
       }
     },
+    "sj": {
+      "backgroundColor": "#282A33",
+      "brandShorterName": "Zen SJ",
+      "brandShortName": "Zen SJ",
+      "brandFullName": "Zen SJ",
+      "release": {
+        "displayVersion": "1.24.1b",
+        "github": {
+          "repo": "ShubhamJ010/desktop"
+        }
+      }
+    },
     "twilight": {
       "backgroundColor": "#282A33",
       "brandShorterName": "Zen",
@@ -53,5 +65,5 @@
     ],
     "licenseType": "MPL-2.0"
   },
-  "updateHostname": "updates.zen-browser.app"
+  "updateHostname": "127.0.0.1"
 }
