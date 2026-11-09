@@ -2,7 +2,7 @@ diff --git a/toolkit/themes/shared/pictureinpicture/player.css b/toolkit/themes/
 index 2e502fb075546bab4349f3da97069e764528d763..4ff7f2ee47085c2d2131f54a647468fab81c7d88 100644
 --- a/toolkit/themes/shared/pictureinpicture/player.css
 +++ b/toolkit/themes/shared/pictureinpicture/player.css
-@@ -738,3 +738,17 @@ input:checked + .slider::before {
+@@ -738,3 +738,25 @@ input:checked + .slider::before {
      justify-self: center;
    }
  }
@@ -19,4 +19,13 @@ index 2e502fb075546bab4349f3da97069e764528d763..4ff7f2ee47085c2d2131f54a647468fa
 +#minimize[mac="true"] {
 +  right: auto;
 +  left: 50px;
++}
++
++body.pip-gesture-active .control-item,
++body.pip-gesture-active #controls,
++body.pip-gesture-active #controls-bottom,
++body.pip-gesture-active #controls-bottom-gradient {
++  opacity: 0 !important;
++  pointer-events: none !important;
++  transition: opacity 120ms ease-out !important;
 +}

@@ -60,6 +60,15 @@ inline Rect CornerFrame(Corner corner, double w, double h, Rect visible) {
   return {std::round(left ? inner.x : inner.maxX() - w), std::round(top ? inner.maxY() - h : inner.y), w, h};
 }
 
+inline Corner NearestCorner(Rect frame, Rect visible) {
+  const Point center = {frame.x + frame.w / 2.0, frame.y + frame.h / 2.0};
+  const Point visCenter = {visible.x + visible.w / 2.0, visible.y + visible.h / 2.0};
+  const bool left = center.x <= visCenter.x;
+  const bool top = center.y >= visCenter.y;
+  if (top) return left ? kTopLeft : kTopRight;
+  return left ? kBottomLeft : kBottomRight;
+}
+
 inline Corner SnappedCorner(Rect frame, Rect visible) {
   for (Corner corner : {kTopLeft, kTopRight, kBottomLeft, kBottomRight}) {
     const Rect at = CornerFrame(corner, frame.w, frame.h, visible);
