@@ -2,15 +2,70 @@ diff --git a/toolkit/components/pictureinpicture/content/player.js b/toolkit/com
 index dfa666aa0a3ab457a6766bf518506e61089893c5..a1671164fb4340afd976fc0407bc409c7327cbdd 100644
 --- a/toolkit/components/pictureinpicture/content/player.js
 +++ b/toolkit/components/pictureinpicture/content/player.js
-@@ -975,6 +975,11 @@ let Player = {
-         });
-         break;
-       }
+@@ -421,6 +421,9 @@
+     if (Services.prefs.getBoolPref(SEETHROUGH_MODE_ENABLED_PREF, false)) {
+       document.documentElement.classList.add("seethrough-mode");
+     }
++
++    Services.obs.addObserver(this, "zen-pip-gesture-begin");
++    Services.obs.addObserver(this, "zen-pip-gesture-end");
+ 
+     this._isInitialized = true;
+ 
+@@ -428,10 +431,28 @@
+   },
+ 
+   uninit() {
++    Services.obs.removeObserver(this, "zen-pip-gesture-begin");
++    Services.obs.removeObserver(this, "zen-pip-gesture-end");
++    if (this._gestureResizeTimeout) {
++      clearTimeout(this._gestureResizeTimeout);
++      this._gestureResizeTimeout = null;
++    }
+     this.resizeDebouncer.disarm();
+     PictureInPicture.unload(window, this.actor);
+   },
+ 
++  observe(subject, topic, data) {
++    if (!document || !document.body) return;
++    switch (topic) {
++      case "zen-pip-gesture-begin":
++        document.body.classList.add("pip-gesture-active");
++        break;
++      case "zen-pip-gesture-end":
++        document.body.classList.remove("pip-gesture-active");
++        break;
++    }
++  },
++
+   setupTooltip(elId, l10nId, shortcutId) {
+     const el = document.getElementById(elId);
+     const shortcut = document.getElementById(shortcutId);
+@@ -955,6 +976,11 @@
+ 
+       case "unpip": {
+         PictureInPicture.focusTabAndClosePip(window, this.actor);
++        break;
++      }
 +
 +      case "minimize": {
 +        this.closePipWindow({ reason: "CloseButton" });
-+        break;
-+      }
-     }
-     // If the click came from a element that is not inside the subtitles settings panel
-     // then we want to hide the panel
+         break;
+       }
+ 
+@@ -1435,6 +1461,15 @@
+   onResize() {
+     this.toggleSubtitlesSettingsPanel({ forceHide: true });
+     this.togglePlaybackRatePanel({ forceHide: true });
++    if (document && document.body && !document.body.classList.contains("pip-gesture-active")) {
++      document.body.classList.add("pip-gesture-active");
++      clearTimeout(this._gestureResizeTimeout);
++      this._gestureResizeTimeout = setTimeout(() => {
++        if (document && document.body) {
++          document.body.classList.remove("pip-gesture-active");
++        }
++      }, 180);
++    }
+     this.resizeDebouncer.disarm();
+     this.resizeDebouncer.arm();
+   },

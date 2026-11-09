@@ -19,18 +19,7 @@ static __unsafe_unretained NSWindow *gSwipeMomentum = nil;
 }
 
 + (ZenPiPController *)swipeTargetFor:(NSEvent *)event {
-  NSWindow *window = event.window;
-  if (!window || ![window isKindOfClass:[NSWindow class]]) {
-    CGPoint point = CGEventGetLocation(event.CGEvent);
-    NSPoint p = NSMakePoint(point.x, NSMaxY(NSScreen.screens.firstObject.frame) - point.y);
-    for (NSWindow *candidate in NSApp.orderedWindows)
-      if (candidate.visible && NSPointInRect(p, candidate.frame)) {
-        window = candidate;
-        break;
-      }
-  }
-  ZenPiPController *controller = (window && [window isKindOfClass:[NSWindow class]]) ? [self forWindow:window] : nil;
-  return controller && window.visible ? controller : nil;
+  return [self controllerUnderPointer];
 }
 
 + (BOOL)handleSwipe:(NSEvent *)event {
@@ -42,14 +31,27 @@ static __unsafe_unretained NSWindow *gSwipeMomentum = nil;
     return ours;
   }
   if (phase == NSEventPhaseNone) return NO;
-  if (phase & (NSEventPhaseBegan | NSEventPhaseMayBegin)) {
-    gSwipeMomentum = nil;
-    [self abandonSwipeOn:gSwipeWindow];
-    if (phase != NSEventPhaseBegan || !event.hasPreciseScrollingDeltas ||
-        (event.modifierFlags & NSEventModifierFlagCommand))
+  if (phase & NSEventPhaseMayBegin) {
+    if (!event.hasPreciseScrollingDeltas || (event.modifierFlags & NSEventModifierFlagCommand)) {
+      ZenPiPController *controller = [self swipeTargetFor:event];
+      if (controller) [controller disarmSwipe];
       return NO;
+    }
+    ZenPiPController *controller = [self swipeTargetFor:event];
+    return controller != nil;
+  }
+  if (phase & NSEventPhaseBegan) {
+    gSwipeMomentum = nil;
+    if (!event.hasPreciseScrollingDeltas || (event.modifierFlags & NSEventModifierFlagCommand)) {
+      ZenPiPController *controller = [self swipeTargetFor:event];
+      if (controller) [controller disarmSwipe];
+      return NO;
+    }
     ZenPiPController *controller = [self swipeTargetFor:event];
     if (!controller) return NO;
+    if (gSwipeWindow != controller.window) {
+      [self abandonSwipeOn:gSwipeWindow];
+    }
     gSwipeWindow = controller.window;
     [controller swipeBegan:event];
     return YES;
