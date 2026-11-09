@@ -92,8 +92,9 @@ inline Result Zoom(Rect frame, double width, double aspect, double factor, Point
   double low, high;
   WidthLimits(aspect, minSize, maxSize, visible, &low, &high);
   double w = std::clamp(width * factor, low, high);
+  const double safeAspect = (aspect > 0.01) ? aspect : (16.0 / 9.0);
   double rw = std::clamp(std::round(w), std::ceil(low), std::max(std::ceil(low), std::floor(high)));
-  double rh = std::round(rw / aspect);
+  double rh = std::round(rw / safeAspect);
 
   double x, y;
   switch (corner) {
@@ -140,8 +141,9 @@ inline Result ZoomFromBase(Rect baseFrame, Point baseCenter, double aspect, doub
   const double scaleCeiling = high / baseW;
   const double clampedScale = std::clamp(scale, scaleFloor, scaleCeiling);
 
+  const double safeAspect = (aspect > 0.01) ? aspect : (16.0 / 9.0);
   const double rw = std::clamp(std::round(baseW * clampedScale), std::ceil(low), std::max(std::ceil(low), std::floor(high)));
-  const double rh = std::round(rw / aspect);
+  const double rh = std::round(rw / safeAspect);
 
   double x, y;
   switch (corner) {

@@ -439,3 +439,111 @@ body,
     contain: none;
   }
 }
+
+/* Ardia-style History Swipe Capsule for macOS Trackpad Gestures */
+.browserStack {
+  position: relative !important;
+}
+
+#historySwipeAnimationContainer {
+  position: absolute !important;
+  inset: 0 !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+  z-index: 99999 !important;
+}
+
+#historySwipeAnimationPreviousArrow,
+#historySwipeAnimationNextArrow {
+  position: absolute !important;
+  top: 50% !important;
+  margin-top: -36px !important;
+  width: 72px !important;
+  height: 72px !important;
+  pointer-events: none !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  will-change: transform, margin-top !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  transition: margin-top 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#historySwipeAnimationPreviousArrow {
+  left: 0 !important;
+}
+
+#historySwipeAnimationNextArrow {
+  right: 0 !important;
+}
+
+#historySwipeAnimationPreviousArrow[collapsed="true"],
+#historySwipeAnimationNextArrow[collapsed="true"] {
+  display: none !important;
+}
+
+.zen-swipe-capsule {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  backdrop-filter: blur(25px) saturate(190%) contrast(105%);
+  -webkit-backdrop-filter: blur(25px) saturate(190%) contrast(105%);
+  background-color: light-dark(rgba(255, 255, 255, 0.75), rgba(40, 38, 39, 0.85));
+  box-shadow: 0 4px 20px light-dark(rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.35)),
+              0 1px 4px light-dark(rgba(0, 0, 0, 0.10), rgba(0, 0, 0, 0.20));
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.125), rgba(255, 255, 255, 0.15));
+  box-sizing: border-box;
+  transition: width 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              height 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.zen-swipe-capsule-wash {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background-color: light-dark(rgba(255, 255, 255, 0.40), rgba(255, 255, 255, 0.15));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease-out;
+}
+
+.zen-swipe-chevron {
+  color: light-dark(rgba(0, 0, 0, 0.85), rgba(255, 255, 255, 0.85));
+  opacity: 0.50;
+  transition: opacity 0.18s ease-out, transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Confirmed state (when Math.abs(delta) >= 0.25) */
+#historySwipeAnimationPreviousArrow.will-navigate,
+#historySwipeAnimationNextArrow.will-navigate {
+  margin-top: -41px !important;
+}
+
+#historySwipeAnimationPreviousArrow.will-navigate .zen-swipe-capsule,
+#historySwipeAnimationNextArrow.will-navigate .zen-swipe-capsule {
+  width: 82px;
+  height: 82px;
+}
+
+#historySwipeAnimationPreviousArrow.will-navigate .zen-swipe-capsule-wash,
+#historySwipeAnimationNextArrow.will-navigate .zen-swipe-capsule-wash {
+  opacity: 1;
+}
+
+#historySwipeAnimationPreviousArrow.will-navigate .zen-swipe-chevron,
+#historySwipeAnimationNextArrow.will-navigate .zen-swipe-chevron {
+  opacity: 1.0;
+  transform: scale(1.214); /* 28px * 1.214 = 34px */
+}
+
+/* Ensure any legacy Firefox SVG icon is never shown */
+.swipe-nav-icon {
+  display: none !important;
+}

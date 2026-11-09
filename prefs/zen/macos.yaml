@@ -35,3 +35,13 @@
 - name: zen.widget.macos.override-system-swipe-gestures
   value: true
   condition: "defined(XP_MACOSX)"
+
+# Enable visual back/forward gesture capsule indicator on macOS trackpads.
+- name: zen.widget.macos.back-gesture-indicator
+  value: true
+  condition: "defined(XP_MACOSX)"
+  cpptype: bool
+  mirror: always
+  type: static
+
+

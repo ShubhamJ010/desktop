@@ -29,4 +29,5 @@ DIRS += [
     "tabs",
     "window-drag",
     "pip",
+    "gesture",
 ]

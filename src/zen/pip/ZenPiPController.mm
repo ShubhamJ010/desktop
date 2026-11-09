@@ -174,6 +174,8 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
 }
 
 - (void)detach {
+  if (_detached) return;
+  _detached = YES;
   [self retain];
   [self disarmSwipe];
   [self showCursorIfNeeded];
@@ -207,7 +209,13 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
 
 - (void)dealloc {
   [self showCursorIfNeeded];
-  [self detach];
+  if (!_detached) {
+    [self detach];
+  }
+  [_lastScreenFit release];
+  _lastScreenFit = nil;
+  [_host release];
+  _host = nil;
   [super dealloc];
 }
 
@@ -379,7 +387,7 @@ static void NotifyPiPGestureActive(bool active) {
 }
 
 - (NSMenu *)menu {
-  NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
+  NSMenu *menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
   NSMenuItem *back = [menu addItemWithTitle:@"Back to Tab" action:@selector(backToTabFromMenu:) keyEquivalent:@""];
   back.target = self;
   [menu addItem:NSMenuItem.separatorItem];
@@ -401,11 +409,12 @@ static void NotifyPiPGestureActive(bool active) {
   NSScreen *screen = [self homeScreen];
   if (_animating || _swiping) return;
   [self fitCorners:YES];
-  _lastScreenFit = @{
+  [_lastScreenFit release];
+  _lastScreenFit = [@{
     @"radius" : @([self cornerRadius]),
     @"frame" : NSStringFromRect(_window.frame),
     @"visibleFrame" : NSStringFromRect(screen.visibleFrame),
-  };
+  } retain];
 }
 
 - (void)windowMoved {
@@ -992,43 +1001,6 @@ static void NotifyPiPGestureActive(bool active) {
   [self beginGestureChrome:ZenPiPGesturePinch chained:NO];
 }
 
-static bool IsMediaKeyCode(unsigned short code, NSEventModifierFlags flags) {
-  // If Command, Control, or Option is held, this is a system/browser shortcut (e.g. Cmd+C, Cmd+,, Cmd+L), not a media control
-  const NSEventModifierFlags filtered = flags & NSEventModifierFlagDeviceIndependentFlagsMask;
-  if ((filtered & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption)) != 0) {
-    return false;
-  }
-  switch (code) {
-    case kKeySpace:
-    case kKeyLeftArrow:
-    case kKeyRightArrow:
-    case kKeyDownArrow:
-    case kKeyUpArrow:
-    case kKeyM:
-    case kKeyJ:
-    case kKeyK:
-    case kKeyL:
-    case kKeyC:
-    case kKeyZ:
-    case kKeyX:
-    case kKeyComma:
-    case kKeyPeriod:
-    case kKey0:
-    case kKey1:
-    case kKey2:
-    case kKey3:
-    case kKey4:
-    case kKey5:
-    case kKey6:
-    case kKey7:
-    case kKey8:
-    case kKey9:
-      return true;
-    default:
-      return false;
-  }
-}
-
 - (void)pinchEnded {
   [self pinchEndedAtAnchor:zen_pip_zoom::kAnchorNone];
 }
@@ -1116,73 +1088,10 @@ static bool IsMediaKeyCode(unsigned short code, NSEventModifierFlags flags) {
 }
 
 - (BOOL)handleKeyDown:(NSEvent *)event {
-  const unsigned short code = event.keyCode;
-  const NSEventModifierFlags filtered = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
-
-  // 1. Dismiss / Return to Tab / Stop shortcuts (W, Esc, Q) with no modifier keys
-  if (filtered == 0) {
-    if (code == kKeyW || code == kKeyEscape) {
-      // Return video to parent tab
-      [self backToTab];
-      return YES;
-    }
-    if (code == kKeyQ) {
-      // Pause playback and close PiP
-      NSEvent *pauseEvent = [NSEvent keyEventWithType:NSEventTypeKeyDown
-                                             location:NSZeroPoint
-                                        modifierFlags:0
-                                            timestamp:event.timestamp
-                                         windowNumber:_window.windowNumber
-                                              context:nil
-                                           characters:@" "
-                          charactersIgnoringModifiers:@" "
-                                            isARepeat:NO
-                                              keyCode:kKeySpace];
-      [_window sendEvent:pauseEvent];
-      [_window performClose:nil];
-      return YES;
-    }
-  }
-
-  // 2. Skip Intro (Shift+C: +85s)
-  if (code == kKeyC && filtered == NSEventModifierFlagShift) {
-    const BOOL prevented = [_window _preventsActivation];
-    if (prevented) [_window _setPreventsActivation:NO];
-    [_window makeKeyWindow];
-    if (!NSApp.isActive) {
-      [NSRunningApplication.currentApplication activateWithOptions:0];
-    }
-    // 8x 10s seeks (kKeyL) + 1x 5s seek (kKeyRightArrow) = 85s skip
-    for (int i = 0; i < 8; ++i) {
-      NSEvent *seek10 = [NSEvent keyEventWithType:NSEventTypeKeyDown
-                                         location:NSZeroPoint
-                                    modifierFlags:0
-                                        timestamp:event.timestamp
-                                     windowNumber:_window.windowNumber
-                                          context:nil
-                                       characters:@"l"
-                      charactersIgnoringModifiers:@"l"
-                                        isARepeat:NO
-                                          keyCode:kKeyL];
-      [_window sendEvent:seek10];
-    }
-    NSEvent *seek5 = [NSEvent keyEventWithType:NSEventTypeKeyDown
-                                      location:NSZeroPoint
-                                 modifierFlags:0
-                                     timestamp:event.timestamp
-                                  windowNumber:_window.windowNumber
-                                       context:nil
-                                    characters:@""
-                   charactersIgnoringModifiers:@""
-                                     isARepeat:NO
-                                       keyCode:kKeyRightArrow];
-    [_window sendEvent:seek5];
-    if (prevented) [_window _setPreventsActivation:YES];
-    return YES;
-  }
-
-  // 3. Media shortcuts (Space, Arrows, J/K/L, Z/X, 0-9, etc.)
-  if (IsMediaKeyCode(code, event.modifierFlags)) {
+  unsigned short code = event.keyCode;
+  // Space (play/pause), Left (seek -5s), Right (seek +5s), Down (vol -), Up (vol +), M (mute)
+  if (code == kKeySpace || code == kKeyLeftArrow || code == kKeyRightArrow ||
+      code == kKeyDownArrow || code == kKeyUpArrow || code == kKeyM) {
     // The only path that needs app activation. Lift prevents-activation first so
     // the PiP can become key, then activate: AppKit raises the key window (the PiP),
     // not the browser window.
