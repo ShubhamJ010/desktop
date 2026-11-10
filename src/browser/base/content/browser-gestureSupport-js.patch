@@ -1,7 +1,6 @@
-diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/content/browser-gestureSupport.js
 --- a/browser/base/content/browser-gestureSupport.js
 +++ b/browser/base/content/browser-gestureSupport.js
-@@ -237,6 +237,16 @@ var gGestureSupport = {
+@@ -237,6 +237,16 @@
        return false;
      }
  
@@ -18,7 +17,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
      const leftCommand = this._getCommand(aEvent, ["swipe", "left"]);
      const rightCommand = this._getCommand(aEvent, ["swipe", "right"]);
  
-@@ -501,6 +511,13 @@ var gGestureSupport = {
+@@ -501,6 +511,13 @@
     */
    _coordinateSwipeEventWithAnimation:
      function GS__coordinateSwipeEventWithAnimation(aEvent, aDir) {
@@ -32,7 +31,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
        gHistorySwipeAnimation.stopAnimation();
        this.processSwipeEvent(aEvent, aDir);
      },
-@@ -687,6 +704,65 @@ var gGestureSupport = {
+@@ -687,6 +704,68 @@
  };
  
  // History Swipe Animation Support (bug 678392)
@@ -73,6 +72,9 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
 +//             decimal string.
 +const ZEN_SWIPE_PHASE_PREF = "zen.widget.macos.back-gesture-phase";
 +const ZEN_SWIPE_VERTICAL_TOPIC = "zen-swipe-vertical";
++// When the native debug pref is on, mirror each vertical sample into the browser
++// console so the JS side of the channel can be traced alongside the native NSLog.
++const ZEN_SWIPE_DEBUG_PREF = "zen.widget.macos.back-gesture-debug";
 +
 +/**
 + * Mirrors Ardia's `listSelection`: maps the vertical finger travel recorded
@@ -98,7 +100,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
  var gHistorySwipeAnimation = {
    active: false,
    isLTR: false,
-@@ -736,6 +812,10 @@ var gHistorySwipeAnimation = {
+@@ -736,6 +815,10 @@
     *        Whether we're dealing with a vertical swipe or not.
     */
    startAnimation: function HSA_startAnimation() {
@@ -109,7 +111,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
      // old boxes can still be around (if completing fade out for example), we
      // always want to remove them and recreate them because they can be
      // attached to an old browser stack that's no longer in use.
-@@ -743,6 +823,9 @@ var gHistorySwipeAnimation = {
+@@ -743,6 +826,9 @@
      this._isStoppingAnimation = false;
      this._canGoBack = this.canGoBack();
      this._canGoForward = this.canGoForward();
@@ -119,7 +121,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
      if (this.active) {
        this._addBoxes();
      }
-@@ -766,16 +849,26 @@ var gHistorySwipeAnimation = {
+@@ -766,16 +852,26 @@
      } else if (this._lastVisibleBox) {
        box = this._lastVisibleBox;
        box.collapsed = false;
@@ -150,7 +152,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
        window.getComputedStyle(box).opacity;
      } else {
        this._isStoppingAnimation = false;
-@@ -784,24 +877,44 @@ var gHistorySwipeAnimation = {
+@@ -784,24 +880,44 @@
    },
  
    _swipeCommand: function HSA_swipeCommand(aSwipeUpdate) {
@@ -205,7 +207,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
    },
  
    /**
-@@ -819,70 +932,72 @@ var gHistorySwipeAnimation = {
+@@ -819,70 +935,72 @@
        return;
      }
  
@@ -320,7 +322,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
      }
    },
  
-@@ -901,7 +1016,11 @@ var gHistorySwipeAnimation = {
+@@ -901,7 +1019,11 @@
     * @return true if there is a previous page in history, false otherwise.
     */
    canGoBack: function HSA_canGoBack() {
@@ -333,7 +335,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
    },
  
    /**
-@@ -919,7 +1038,418 @@ var gHistorySwipeAnimation = {
+@@ -919,17 +1041,446 @@
     * any. This will also result in the animation overlay to be torn down.
     */
    swipeEndEventReceived: function HSA_swipeEndEventReceived() {
@@ -345,9 +347,9 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
 +      this.commitSwipeHistorySelection();
 +      return;
 +    }
-+    this.stopAnimation();
-+  },
-+
+     this.stopAnimation();
+   },
+ 
 +  // ---------------------------------------------------------------------------
 +  // Ardia history sheet (hold after the gesture is confirmed)
 +  // ---------------------------------------------------------------------------
@@ -366,7 +368,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
 +  //   5. Releasing navigates straight to the highlighted entry and the overlay
 +  //      fades out with the normal dismissal animation.
 +
-+  /**
+   /**
 +   * Publishes the current gesture phase for the native scroll monitor.
 +   *
 +   * @param aPhase 0 = idle, 1 = swipe tracked, 2 = history sheet visible.
@@ -643,6 +645,17 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
 +    if (!state || !Number.isFinite(aDy)) {
 +      return;
 +    }
++    // Mirror each sample into the browser console when the native debug pref is
++    // on, so the JS side of the channel can be traced alongside the native log.
++    try {
++      if (Services.prefs.getBoolPref(ZEN_SWIPE_DEBUG_PREF)) {
++        Services.console.logStringMessage(
++          "ZenSwipe vertical sample: dy=" + aDy +
++          " selected=" + state.selected +
++          " items=" + state.items.length +
++          " dyBase=" + state.dyBase);
++      }
++    } catch (e) {}
 +    if (state.dyBase === null) {
 +      // The first sample defines "no vertical travel yet", so picking up the
 +      // sheet never jumps the selection.
@@ -725,7 +738,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
 +    // Keep the sheet on screen for the fade so the dismissal matches Ardia's
 +    // `dismiss()`; `_removeBoxes()` drops the nodes when the fade is over.
 +    this._dismissSwipeHistory(true);
-     this.stopAnimation();
++    this.stopAnimation();
 +    if (target) {
 +      // `gotoIndex` is the jump the sheet exists for: Ardia's
 +      // `goToHistoryItem()` goes straight to the picked entry, not one step.
@@ -749,10 +762,12 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
 +      }
 +    }
 +    return true;
-   },
- 
-   /**
-@@ -929,7 +1459,14 @@ var gHistorySwipeAnimation = {
++  },
++
++  /**
+    * Checks to see if history swipe animations are supported by this
+    * platform/configuration.
+    *
     * return true if supported, false otherwise.
     */
    _isSupported: function HSA__isSupported() {
@@ -768,7 +783,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
    },
  
    handleEvent: function HSA_handleEvent(aEvent) {
-@@ -954,42 +1491,82 @@ var gHistorySwipeAnimation = {
+@@ -954,42 +1505,82 @@
     * Adds the boxes that contain the arrows used during the swipe animation.
     */
    _addBoxes: function HSA__addBoxes() {
@@ -858,7 +873,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
      if (this._container) {
        this._container.remove();
      }
-@@ -1011,10 +1588,14 @@ var gHistorySwipeAnimation = {
+@@ -1011,10 +1602,14 @@
      return element;
    },
  

@@ -52,4 +52,14 @@
   value: 0
   condition: "defined(XP_MACOSX)"
 
+# When true, the native vertical monitor (src/zen/gesture/ZenSwipeController.mm)
+# logs every monitor event and every zen-swipe-vertical notification to the system
+# log (Console.app, filter on the Zen SJ process). Used to trace why the Ardia-style
+# hold-to-pick history sheet's vertical selection is not moving. Set true via
+# about:config, reproduce the flow, and read the log.
+- name: zen.widget.macos.back-gesture-debug
+  value: false
+  condition: "defined(XP_MACOSX)"
+  cpptype: bool
+
 

@@ -24,6 +24,7 @@
 #endif
 
 #import <objc/runtime.h>
+#import <Foundation/Foundation.h>
 
 using namespace zen_swipe;
 
@@ -79,6 +80,11 @@ const char* const kZenSwipePhasePref = "zen.widget.macos.back-gesture-phase";
 // Observer topic consumed in browser-gestureSupport.js `observe()`.
 const char* const kZenSwipeVerticalTopic = "zen-swipe-vertical";
 
+// When true, the native vertical monitor logs every event and every notification
+// to the system log (visible in Console.app filtered on the Zen SJ process) so
+// the Ardia-style sheet channel can be traced without a debugger.
+const char* const kZenSwipeDebugPref = "zen.widget.macos.back-gesture-debug";
+
 // Cumulative vertical travel (scrollingDeltaY) of the in-flight gesture.
 double gZenSwipeVertical = 0.0;
 
@@ -119,6 +125,24 @@ void NotifySwipeVertical(double aDy) {
 
 } // namespace
 
+// Debug logging for the native vertical side channel. When the debug pref is on,
+// every monitor event and every observer notification is written to the system log
+// (Console.app, filter on the Zen SJ process) so the channel can be traced without
+// a debugger.
+void ZenSwipeDebugLog(NSString *format, ...) {
+#if __has_include("mozilla/Preferences.h")
+  if (mozilla::Preferences::GetInt(kZenSwipeDebugPref, 0) == 0) {
+    return;
+  }
+#endif
+  va_list ap;
+  va_start(ap, format);
+  NSString *msg = [[NSString alloc] initWithFormat:format arguments:ap];
+  va_end(ap);
+  NSLog(@"%@", msg);
+  [msg release];
+}
+
 @implementation ZenSwipeController {
   NSWindow *_window;
   ZenSwipeCapsuleView *_capsuleView;
@@ -138,11 +162,12 @@ void NotifySwipeVertical(double aDy) {
     return;
   }
   gZenSwipeScrollMonitor =
-      [[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel
+      [[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel | NSEventMaskSwipe
                                              handler:^NSEvent *(NSEvent *event) {
                                                return [ZenSwipeController
                                                    handleVerticalScroll:event];
                                              }] retain];
+  ZenSwipeDebugLog(@"ZenSwipeMonitor installed (ScrollWheel|Swipe)");
 }
 
 /**
@@ -166,18 +191,26 @@ void NotifySwipeVertical(double aDy) {
  * dead: it opened, and then nothing could ever be selected.
  */
 + (NSEvent *)handleVerticalScroll:(NSEvent *)event {
-  if (event.type != NSEventTypeScrollWheel) {
+  ZenSwipeDebugLog(@"ZenSwipeMonitorEntry: type=%u phase=%u momentumPhase=%u windowNumber=%ld scrollingDeltaY=%.3f deltaY=%.3f scrollingDeltaX=%.3f deltaX=%.3f",
+                   (unsigned)event.type, (unsigned)event.phase, (unsigned)event.momentumPhase,
+                   event.window ? (long)event.window.windowNumber : -1L,
+                   event.scrollingDeltaY, event.deltaY,
+                   event.scrollingDeltaX, event.deltaX);
+
+  if (event.type != NSEventTypeScrollWheel && event.type != NSEventTypeSwipe) {
     return event;
   }
 
   // Both Ardia and the sheet measure travel from the start of the gesture.
   if (event.phase == NSEventPhaseBegan) {
     gZenSwipeVertical = 0.0;
+    ZenSwipeDebugLog(@"-> reset dy=0 (phase began)");
   }
 
   const int phase = ZenSwipePhase();
   if (phase <= 0) {
     gZenSwipeVertical = 0.0;
+    ZenSwipeDebugLog(@"-> idle (pref phase=%d): dropping", phase);
     return event;
   }
 
@@ -185,12 +218,17 @@ void NotifySwipeVertical(double aDy) {
   // a row. The end phase itself carries no travel either.
   if (event.momentumPhase != NSEventPhaseNone ||
       event.phase == NSEventPhaseEnded) {
+    ZenSwipeDebugLog(@"-> dropping (momentumPhase=%u phase=%u)",
+                     (unsigned)event.momentumPhase, (unsigned)event.phase);
     return event;
   }
 
   gZenSwipeVertical += event.scrollingDeltaY;
+  ZenSwipeDebugLog(@"-> accumulated dy=%.3f (pref phase=%d)", gZenSwipeVertical, phase);
+
   if (phase >= 2) {
     NotifySwipeVertical(gZenSwipeVertical);
+    ZenSwipeDebugLog(@"-> notified zen-swipe-vertical dy=%.3f", gZenSwipeVertical);
   }
 
   return event;
@@ -328,6 +366,8 @@ BOOL Attach(NSWindow *window) {
     return NO;
   }
 #endif
+  ZenSwipeDebugLog(@"ZenSwipeAttach: window=%p windowNumber=%ld",
+                   window, window ? (long)window.windowNumber : -1L);
   return [ZenSwipeController attachToWindow:window];
 }
 
