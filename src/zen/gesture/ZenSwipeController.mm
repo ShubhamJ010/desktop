@@ -173,7 +173,8 @@ void NotifySwipeVertical(double aDy) {
     return event;
   }
 
-  if (ZenSwipePhase() <= 0) {
+  const int phase = ZenSwipePhase();
+  if (phase <= 0) {
     gZenSwipeVertical = 0.0;
     return event;
   }
@@ -186,7 +187,7 @@ void NotifySwipeVertical(double aDy) {
   }
 
   gZenSwipeVertical += event.scrollingDeltaY;
-  if (ZenSwipePhase() >= 2) {
+  if (phase >= 2) {
     NotifySwipeVertical(gZenSwipeVertical);
   }
 

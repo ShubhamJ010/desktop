@@ -122,18 +122,16 @@ def get_redirect_url(download_api_url, token):
 
 
 def download_with_aria2(url, out_dir, out_file):
-    url_file = os.path.join(out_dir, "url.txt")
-    with open(url_file, "w") as f:
-        f.write(url)
-
     cmd = [
         "aria2c",
         "-x", "16",
         "-s", "16",
         "-k", "1M",
-        "-i", url_file,
+        "--auto-file-renaming=false",
+        "--allow-overwrite=true",
         "-d", out_dir,
         "-o", out_file,
+        url,
     ]
     print(f"[*] Downloading {out_file} via aria2c (16 parallel connections)...")
     run(cmd)
@@ -243,10 +241,19 @@ def main():
     app_name = os.path.splitext(os.path.basename(target_app))[0]
 
     with tempfile.TemporaryDirectory(prefix="zen_update_") as tmpdir:
-        zip_path = os.path.join(tmpdir, "artifact.zip")
         download_with_aria2(redirect_url, tmpdir, "artifact.zip")
 
-        print("[*] Extracting downloaded artifact...")
+        # Find any zip in tmpdir
+        zip_path = None
+        for f in os.listdir(tmpdir):
+            if f.endswith(".zip"):
+                zip_path = os.path.join(tmpdir, f)
+                break
+
+        if not zip_path:
+            sys.exit("[-] Downloaded zip file not found in tmpdir.")
+
+        print(f"[*] Extracting downloaded artifact ({os.path.basename(zip_path)})...")
         run(["unzip", "-q", "-o", zip_path, "-d", tmpdir])
 
         # Find DMG or .app inside artifact

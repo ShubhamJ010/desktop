@@ -333,7 +333,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
    },
  
    /**
-@@ -919,7 +1038,393 @@ var gHistorySwipeAnimation = {
+@@ -919,7 +1038,418 @@ var gHistorySwipeAnimation = {
     * any. This will also result in the animation overlay to be torn down.
     */
    swipeEndEventReceived: function HSA_swipeEndEventReceived() {
@@ -664,10 +664,15 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
 +  },
 +
 +  /**
-+   * Tears the sheet down without animating it. The overlay itself is dismissed
-+   * by `stopAnimation()`, which owns the Ardia fade/scale dismissal.
++   * Stops the sheet from receiving input and forgets its state.
++   *
++   * @param aKeepDOM When true the sheet DOM is left in place so the dismissal
++   *        animation in `stopAnimation()` can fade it out, exactly like Ardia
++   *        dismisses the whole overlay (fade + scale) rather than collapsing it
++   *        back into a capsule first. The nodes are then removed by
++   *        `_removeBoxes()` once the fade finishes.
 +   */
-+  _dismissSwipeHistory: function HSA__dismissSwipeHistory() {
++  _dismissSwipeHistory: function HSA__dismissSwipeHistory(aKeepDOM) {
 +    this._cancelSwipeHold();
 +    const state = this._swipeList;
 +    this._swipeList = null;
@@ -677,6 +682,9 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
 +    try {
 +      Services.obs.removeObserver(this, ZEN_SWIPE_VERTICAL_TOPIC);
 +    } catch (e) {}
++    if (aKeepDOM) {
++      return;
++    }
 +    if (state.box) {
 +      state.box.classList.remove("has-list");
 +    }
@@ -712,22 +720,39 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
 +      return true;
 +    }
 +    const target = state.items[state.selected] || null;
++    const direction = this._swipeDirection;
 +    this._swipeCommitted = true;
-+    this._dismissSwipeHistory();
++    // Keep the sheet on screen for the fade so the dismissal matches Ardia's
++    // `dismiss()`; `_removeBoxes()` drops the nodes when the fade is over.
++    this._dismissSwipeHistory(true);
      this.stopAnimation();
 +    if (target) {
++      // `gotoIndex` is the jump the sheet exists for: Ardia's
++      // `goToHistoryItem()` goes straight to the picked entry, not one step.
++      let jumped = false;
 +      try {
-+        gBrowser.webNavigation.gotoIndex(target.index);
++        const navigation = gBrowser.webNavigation;
++        if (navigation && typeof navigation.gotoIndex === "function") {
++          navigation.gotoIndex(target.index);
++          jumped = true;
++        }
 +      } catch (e) {
-+        // A history index can go stale if the tab navigated underneath us; the
-+        // overlay is already gone, so there is nothing left to pick from.
++        // A history index can go stale if the tab navigated underneath us.
++      }
++      if (!jumped) {
++        // Degrade to the plain one-step gesture rather than doing nothing.
++        if (direction === "back") {
++          gBrowser.goBack();
++        } else {
++          gBrowser.goForward();
++        }
 +      }
 +    }
 +    return true;
    },
  
    /**
-@@ -929,7 +1434,14 @@ var gHistorySwipeAnimation = {
+@@ -929,7 +1459,14 @@ var gHistorySwipeAnimation = {
     * return true if supported, false otherwise.
     */
    _isSupported: function HSA__isSupported() {
@@ -743,7 +768,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
    },
  
    handleEvent: function HSA_handleEvent(aEvent) {
-@@ -954,42 +1466,82 @@ var gHistorySwipeAnimation = {
+@@ -954,42 +1491,82 @@ var gHistorySwipeAnimation = {
     * Adds the boxes that contain the arrows used during the swipe animation.
     */
    _addBoxes: function HSA__addBoxes() {
@@ -833,7 +858,7 @@ diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/conte
      if (this._container) {
        this._container.remove();
      }
-@@ -1011,10 +1563,14 @@ var gHistorySwipeAnimation = {
+@@ -1011,10 +1588,14 @@ var gHistorySwipeAnimation = {
      return element;
    },
  
