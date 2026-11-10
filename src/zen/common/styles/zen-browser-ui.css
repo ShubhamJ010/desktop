@@ -514,25 +514,42 @@ body,
   justify-content: center;
   position: relative;
   overflow: hidden;
-  /* Translucent system material: let the page diffuse through the capsule,
-     with a stronger Gaussian blur like native iOS/macOS overlays. */
-  background-color: light-dark(rgba(255, 255, 255, 0.58), rgba(40, 38, 39, 0.62));
-  backdrop-filter: blur(42px) saturate(180%);
-  -webkit-backdrop-filter: blur(42px) saturate(180%);
-  /* Ardia SHADOWS.swipe: black, radius 8, offset [0, 2] */
-  box-shadow: 0 2px 8px light-dark(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.25));
-  /* Ardia windowColors().swipeRim */
-  border: 1px solid light-dark(rgba(0, 0, 0, 0.125), rgba(255, 255, 255, 0.15));
+  /* Native Apple system material (NSVisualEffectMaterialPopover / regularMaterial):
+     rich, frosted Gaussian glass that diffuses high-contrast content behind it so
+     underlying page text does not show through legibly. */
+  background-color: light-dark(rgba(252, 252, 254, 0.86), rgba(34, 34, 37, 0.88));
+  backdrop-filter: blur(32px) saturate(180%) contrast(105%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(180%) contrast(105%) !important;
+  /* Apple-style multi-layer shadow + top specular reflection highlight */
+  box-shadow: 0 4px 16px light-dark(rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.40)),
+              0 1px 4px light-dark(rgba(0, 0, 0, 0.10), rgba(0, 0, 0, 0.25)),
+              inset 0 1px 1px light-dark(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.18)),
+              inset 0 -1px 1px light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.25));
+  /* Apple swipeRim with subtle contrast */
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.16));
   box-sizing: border-box;
   transition: width var(--zen-swipe-spring-duration) var(--zen-swipe-spring),
               height var(--zen-swipe-spring-duration) var(--zen-swipe-spring);
 }
 
+.zen-swipe-capsule::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  background: light-dark(
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0) 60%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0) 60%)
+  );
+}
+
 @media (prefers-reduced-transparency: reduce) {
   .zen-swipe-capsule {
-    background-color: light-dark(rgba(255, 255, 255, 0.94), rgba(40, 38, 39, 0.94));
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+    background-color: light-dark(rgba(245, 245, 247, 0.98), rgba(30, 30, 32, 0.98));
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
   }
 }
 
@@ -540,8 +557,8 @@ body,
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  /* Ardia SWIPE_CONFIRMED_WASH — light appearance only */
-  background-color: light-dark(rgba(255, 255, 255, 0.4), transparent);
+  /* Ardia SWIPE_CONFIRMED_WASH */
+  background-color: light-dark(rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0.12));
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--zen-swipe-fade);
