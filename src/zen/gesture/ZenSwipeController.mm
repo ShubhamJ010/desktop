@@ -149,13 +149,21 @@ void NotifySwipeVertical(double aDy) {
  * Passive scroll-wheel tap used to measure the vertical component of a swipe.
  *
  * Phase 0 (idle): the event is ignored, so ordinary page scrolling costs one
- * pref read and one associated-object lookup.
+ * pref read.
  * Phase 1 (tracking): travel is accumulated but not published; the sheet is not
  * up yet and the capsule does not need it.
  * Phase 2 (sheet visible): travel is accumulated and published, which is what
  * moves the selection in the sheet.
  *
  * The event is always returned unchanged.
+ *
+ * The phase pref is the only gate. An earlier version also required the event to
+ * resolve to a window with an attached ZenSwipeController, which silently threw
+ * every sample away: a local monitor runs inside `-[NSApplication sendEvent:]`,
+ * i.e. *before* AppKit dispatches the event to a window, so `[event window]` is
+ * nil for most scroll-wheel events even though `windowNumber` is set. No samples
+ * meant no vertical travel, which looked exactly like the history sheet being
+ * dead: it opened, and then nothing could ever be selected.
  */
 + (NSEvent *)handleVerticalScroll:(NSEvent *)event {
   if (event.type != NSEventTypeScrollWheel) {
@@ -165,12 +173,6 @@ void NotifySwipeVertical(double aDy) {
   // Both Ardia and the sheet measure travel from the start of the gesture.
   if (event.phase == NSEventPhaseBegan) {
     gZenSwipeVertical = 0.0;
-  }
-
-  NSWindow *window = event.window;
-  if (!window || ![window isKindOfClass:[NSWindow class]] ||
-      ![self controllerForWindow:window]) {
-    return event;
   }
 
   const int phase = ZenSwipePhase();
