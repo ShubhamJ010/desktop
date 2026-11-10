@@ -12,10 +12,15 @@
 #include "mozilla/Services.h"
 #include "nsCOMPtr.h"
 #include "nsIObserverService.h"
+#include "nsString.h"
 #endif
 
 #if __has_include("mozilla/StaticPrefs_zen.h")
 #include "mozilla/StaticPrefs_zen.h"
+#endif
+
+#if __has_include("mozilla/Preferences.h")
+#include "mozilla/Preferences.h"
 #endif
 
 #import <objc/runtime.h>
@@ -32,6 +37,86 @@ enum class GestureState {
   Tracking
 };
 
+// -----------------------------------------------------------------------------
+// Vertical side channel for the Ardia-style history sheet
+// -----------------------------------------------------------------------------
+//
+// The swipe gesture itself stays where it already lives: Gecko's APZ tracks the
+// pan, browser-gestureSupport.js receives the horizontal delta through
+// MozSwipeGestureUpdate, draws the capsule from it and decides when a hold turns
+// the capsule into the history sheet.
+//
+// The one piece Gecko never forwards to chrome is the vertical component of that
+// same gesture. Swiping up/down while holding is what picks an entry in Ardia's
+// sheet (`SwipeOverlay.tsx` `select()` over the `dy` of `ArdiaSwipe.mm`), and it
+// cannot be reconstructed from the horizontal delta. So this controller runs a
+// passive local scroll monitor that mirrors Ardia's accumulator:
+//
+//   dy += event.scrollingDeltaY   (ArdiaSwipe.mm: `gGesture.dy += ...`)
+//   dy reset when a scroll gesture begins
+//
+// Protocol (all on the main thread, one swipe at a time because the trackpad
+// gesture belongs to one window):
+//
+//   chrome JS  --pref-->  native
+//     zen.widget.macos.back-gesture-phase
+//       0 = idle, no swipe on this window           (nothing is accumulated)
+//       1 = swipe tracked, sheet not up yet         (accumulate, do not push)
+//       2 = history sheet visible                   (accumulate and push)
+//
+//   native  --observer-->  chrome JS
+//     topic "zen-swipe-vertical", data = the cumulative scrollingDeltaY of the
+//     current gesture rendered as a decimal string. gHistorySwipeAnimation
+//     parses it with parseFloat and snapshots the first sample as its baseline.
+//
+// The monitor never swallows an event: Gecko has to keep seeing the scroll
+// gesture, including its end phase, or the swipe would never finish and the
+// capsule would be stuck on screen.
+
+// Pref mirrored from browser-gestureSupport.js `_zenSwipePhase()`.
+const char* const kZenSwipePhasePref = "zen.widget.macos.back-gesture-phase";
+
+// Observer topic consumed in browser-gestureSupport.js `observe()`.
+const char* const kZenSwipeVerticalTopic = "zen-swipe-vertical";
+
+// Cumulative vertical travel (scrollingDeltaY) of the in-flight gesture.
+double gZenSwipeVertical = 0.0;
+
+// Retained so the monitor is never collected while the app runs; there is one
+// monitor for the whole process, not one per window.
+id gZenSwipeScrollMonitor = nil;
+
+/**
+ * Reads the gesture phase published by chrome JS.
+ * A missing pref (older profile, non-macOS) means "idle".
+ */
+int ZenSwipePhase() {
+#if __has_include("mozilla/Preferences.h")
+  return mozilla::Preferences::GetInt(kZenSwipePhasePref, 0);
+#else
+  return 0;
+#endif
+}
+
+/**
+ * Pushes the cumulative vertical travel to chrome as an observer notification.
+ * The payload is a plain string so the chrome side needs no XPCOM object and no
+ * extra interface to unpack it.
+ */
+void NotifySwipeVertical(double aDy) {
+#if __has_include("mozilla/Services.h")
+  nsCOMPtr<nsIObserverService> observerService =
+      mozilla::services::GetObserverService();
+  if (!observerService) {
+    return;
+  }
+  nsAutoString payload;
+  payload.AppendFloat(aDy, 2);
+  observerService->NotifyObservers(nullptr, kZenSwipeVerticalTopic,
+                                   payload.get());
+#endif
+}
+
 } // namespace
 
 @implementation ZenSwipeController {
@@ -46,8 +131,66 @@ enum class GestureState {
 }
 
 + (void)ensureGlobalMonitor {
-  // Global scroll monitoring disabled: Gecko APZ manages overscroll swipe tracking
-  // and routes swipe events directly to browser-gestureSupport.js and ZenSpacesSwipe.mjs.
+  // One passive scroll monitor per process. It only reads the vertical travel of
+  // a swipe that chrome already announced through the phase pref; Gecko's APZ
+  // remains the owner of the gesture itself (see the protocol comment above).
+  if (gZenSwipeScrollMonitor) {
+    return;
+  }
+  gZenSwipeScrollMonitor =
+      [[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel
+                                             handler:^NSEvent *(NSEvent *event) {
+                                               return [ZenSwipeController
+                                                   handleVerticalScroll:event];
+                                             }] retain];
+}
+
+/**
+ * Passive scroll-wheel tap used to measure the vertical component of a swipe.
+ *
+ * Phase 0 (idle): the event is ignored, so ordinary page scrolling costs one
+ * pref read and one associated-object lookup.
+ * Phase 1 (tracking): travel is accumulated but not published; the sheet is not
+ * up yet and the capsule does not need it.
+ * Phase 2 (sheet visible): travel is accumulated and published, which is what
+ * moves the selection in the sheet.
+ *
+ * The event is always returned unchanged.
+ */
++ (NSEvent *)handleVerticalScroll:(NSEvent *)event {
+  if (event.type != NSEventTypeScrollWheel) {
+    return event;
+  }
+
+  // Both Ardia and the sheet measure travel from the start of the gesture.
+  if (event.phase == NSEventPhaseBegan) {
+    gZenSwipeVertical = 0.0;
+  }
+
+  NSWindow *window = event.window;
+  if (!window || ![window isKindOfClass:[NSWindow class]] ||
+      ![self controllerForWindow:window]) {
+    return event;
+  }
+
+  if (ZenSwipePhase() <= 0) {
+    gZenSwipeVertical = 0.0;
+    return event;
+  }
+
+  // Momentum keeps arriving long after the fingers are gone; it must never pick
+  // a row. The end phase itself carries no travel either.
+  if (event.momentumPhase != NSEventPhaseNone ||
+      event.phase == NSEventPhaseEnded) {
+    return event;
+  }
+
+  gZenSwipeVertical += event.scrollingDeltaY;
+  if (ZenSwipePhase() >= 2) {
+    NotifySwipeVertical(gZenSwipeVertical);
+  }
+
+  return event;
 }
 
 + (BOOL)attachToWindow:(NSWindow *)window {

@@ -44,4 +44,12 @@
   mirror: always
   type: static
 
+# Gesture phase published by browser-gestureSupport.js for the native macOS
+# scroll monitor (src/zen/gesture/ZenSwipeController.mm): 0 = idle, 1 = a
+# back/forward swipe is being tracked, 2 = the held-swipe history sheet is
+# visible and the monitor should stream vertical travel to chrome.
+- name: zen.widget.macos.back-gesture-phase
+  value: 0
+  condition: "defined(XP_MACOSX)"
+
 

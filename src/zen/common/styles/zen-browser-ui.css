@@ -578,3 +578,124 @@ body,
 .swipe-nav-icon {
   display: none !important;
 }
+
+/* ---------------------------------------------------------------------------
+ * Ardia history sheet: the capsule grows into a list of destinations when the
+ * confirmed swipe is held still. Ported from Ardia's SwipeOverlay
+ * (`DestinationList`, LIST_WIDTH 200, LIST_ROW 38, LIST_PAD 8, LIST_RADIUS 12)
+ * and driven by browser-gestureSupport.js `_presentSwipeHistory`).
+ * ------------------------------------------------------------------------- */
+
+/* The sheet is 200pt wide, so the rail that centres the capsule has to widen
+   with it; without this the capsule would be clipped by the 72pt rail. */
+#historySwipeAnimationPreviousArrow.has-list,
+#historySwipeAnimationNextArrow.has-list {
+  width: 200px !important;
+  /* Ardia pops the list in over the confirmation icon. */
+  --zen-swipe-list-spring: linear(
+    0,
+    0.136 10%,
+    0.377 20%,
+    0.598 30%,
+    0.761 40%,
+    0.868 50%,
+    0.933 60%,
+    0.969 70%,
+    0.988 80%,
+    0.997 90%,
+    1
+  );
+  --zen-swipe-list-spring-duration: 270ms;
+}
+
+/* Ardia's sheet is a rounded rect, not a disc, and clips its rows. */
+.zen-swipe-capsule.has-list {
+  align-items: stretch;
+  justify-content: flex-start;
+  /* Overrides the 82pt confirmed disc; the exact size is set inline because it
+     depends on how many destinations the sheet lists. */
+  width: 200px;
+  transition: width var(--zen-swipe-list-spring-duration) var(--zen-swipe-spring),
+              height var(--zen-swipe-list-spring-duration) var(--zen-swipe-spring),
+              transform var(--zen-swipe-list-spring-duration) var(--zen-swipe-spring);
+}
+
+/* The chevron fades out as the list fades in (Ardia multiplies the icon
+   opacity by the inverse of the list's appear value). */
+.zen-swipe-capsule.has-list .zen-swipe-chevron {
+  opacity: 0;
+}
+
+.zen-swipe-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  padding: 8px 0; /* Ardia LIST_PAD */
+  box-sizing: border-box;
+  /* Ardia SWIPE_MOTION.list: the rows fade and scale in after the morph. */
+  animation: zen-swipe-list-in 180ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+@keyframes zen-swipe-list-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.zen-swipe-list-pill {
+  position: absolute;
+  inset-inline: 8px; /* Ardia space.m */
+  top: 8px;
+  height: 38px; /* Ardia LIST_ROW */
+  border-radius: 8px;
+  pointer-events: none;
+  /* Ardia swipeSelection */
+  background-color: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
+  /* Ardia SWIPE_PILL_SPRING: response 0.27, damping 0.9. */
+  transition: transform 270ms var(--zen-swipe-list-spring);
+}
+
+.zen-swipe-list-row {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 38px; /* Ardia LIST_ROW */
+  padding-inline: 16px;
+  box-sizing: border-box;
+  font-size: 12.5px;
+  /* Ardia textSecondary */
+  color: light-dark(rgba(0, 0, 0, 0.55), rgba(255, 255, 255, 0.6));
+}
+
+.zen-swipe-list-row-selected {
+  /* Ardia textPrimary */
+  color: light-dark(rgba(0, 0, 0, 0.9), rgba(255, 255, 255, 0.95));
+}
+
+.zen-swipe-list-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zen-swipe-list-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .zen-swipe-list-pill {
+    background-color: light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.14));
+  }
+}
