@@ -514,12 +514,15 @@ body,
   justify-content: center;
   position: relative;
   overflow: hidden;
-  /* Flat clean disc matching Safari swipe gesture */
-  background-color: light-dark(#f2f2f7, #252629);
-  backdrop-filter: blur(24px) !important;
-  -webkit-backdrop-filter: blur(24px) !important;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
-  border: none !important;
+  /* Frosted disc: the fill has to stay translucent or `backdrop-filter` has
+     nothing to diffuse and the capsule reads as a flat opaque blob. */
+  background-color: light-dark(rgba(246, 246, 250, 0.62), rgba(44, 45, 49, 0.58));
+  backdrop-filter: blur(28px) saturate(165%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(165%) !important;
+  /* Soft drop shadow plus a faint specular rim so the glass has an edge. */
+  box-shadow: 0 4px 14px light-dark(rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.34)),
+              inset 0 1px 1px light-dark(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.14));
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.10), rgba(255, 255, 255, 0.14));
   box-sizing: border-box;
   transition: width var(--zen-swipe-spring-duration) var(--zen-swipe-spring),
               height var(--zen-swipe-spring-duration) var(--zen-swipe-spring);
