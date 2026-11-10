@@ -6,7 +6,6 @@
 #ifndef ZEN_GESTURE_ZENSWIPEMATH_H_
 #define ZEN_GESTURE_ZENSWIPEMATH_H_
 
-#include <cmath>
 #include <algorithm>
 
 /**

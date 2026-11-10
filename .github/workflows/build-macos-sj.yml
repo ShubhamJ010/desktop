@@ -1,4 +1,4 @@
-name: Build Zen macOS - SJ
+name: Build Zen SJ macOS
 
 permissions:
   contents: write
