@@ -1,11 +1,18 @@
 diff --git a/toolkit/components/pictureinpicture/content/player.js b/toolkit/components/pictureinpicture/content/player.js
-index dfa666aa0a3ab457a6766bf518506e61089893c5..a1671164fb4340afd976fc0407bc409c7327cbdd 100644
+index dfa666a..ce65a98 100644
 --- a/toolkit/components/pictureinpicture/content/player.js
 +++ b/toolkit/components/pictureinpicture/content/player.js
-@@ -102,6 +102,20 @@
- function setIsMutedState(isMuted) {
+@@ -112,6 +112,28 @@ function setIsMutedState(isMuted) {
    Player.isMuted = isMuted;
  }
+ 
++const MEET_ICONS = {
++  micOn: '<svg viewBox="0 0 24 24" width="22" height="22" fill="white" style="pointer-events:none;"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>',
++  micOff: '<svg viewBox="0 0 24 24" width="22" height="22" fill="white" style="pointer-events:none;"><path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.24-5.3-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c1.37-.2 2.63-.78 3.66-1.62l3.07 3.07 1.27-1.27L4.27 3z"/></svg>',
++  camOn: '<svg viewBox="0 0 24 24" width="22" height="22" fill="white" style="pointer-events:none;"><path d="M15 8v8H5V8h10m1-2H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4V7c0-.55-.45-1-1-1z"/></svg>',
++  camOff: '<svg viewBox="0 0 24 24" width="22" height="22" fill="white" style="pointer-events:none;"><path d="M21 6.5l-4 4V7c0-.55-.45-1-1-1H9.82L21 17.18V6.5zM3.27 2L2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.55-.18L19.73 21 21 19.73 3.27 2zM5 16V8.27L12.73 16H5z"/></svg>',
++  hangup: '<svg viewBox="0 0 24 24" width="22" height="22" fill="white" style="pointer-events:none;"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>',
++};
 +
 +function setIsGoogleMeetState(isMeet) {
 +  if (isMeet) {
@@ -20,14 +27,14 @@ index dfa666aa0a3ab457a6766bf518506e61089893c5..a1671164fb4340afd976fc0407bc409c
 +function setMeetState(data) {
 +  Player.setMeetState(data);
 +}
- 
++
  /**
   * Function to resize and reposition the PiP window
-@@ -421,6 +433,18 @@
-     if (Services.prefs.getBoolPref(SEETHROUGH_MODE_ENABLED_PREF, false)) {
+  *
+@@ -422,16 +444,102 @@ let Player = {
        document.documentElement.classList.add("seethrough-mode");
      }
-+
+ 
 +    const isGoogleMeet =
 +      wgp?.documentURI?.spec?.includes("meet.google.com") ||
 +      wgp?.browsingContext?.currentURI?.spec?.includes("meet.google.com");
@@ -39,10 +46,10 @@ index dfa666aa0a3ab457a6766bf518506e61089893c5..a1671164fb4340afd976fc0407bc409c
 +
 +    Services.obs.addObserver(this, "zen-pip-gesture-begin");
 +    Services.obs.addObserver(this, "zen-pip-gesture-end");
- 
++
      this._isInitialized = true;
  
-@@ -428,10 +450,68 @@
+     return { actor: this.actor, setupPromise };
    },
  
    uninit() {
@@ -80,70 +87,88 @@ index dfa666aa0a3ab457a6766bf518506e61089893c5..a1671164fb4340afd976fc0407bc409c
 +    micBtn.id = "meet-mic-btn";
 +    micBtn.className = "control-button meet-btn";
 +    micBtn.setAttribute("title", "Toggle Microphone");
++    micBtn.setAttribute("aria-label", "Toggle Microphone");
++    micBtn.innerHTML = MEET_ICONS.micOn;
 +
 +    let camBtn = document.createElement("button");
 +    camBtn.id = "meet-camera-btn";
 +    camBtn.className = "control-button meet-btn";
 +    camBtn.setAttribute("title", "Toggle Camera");
++    camBtn.setAttribute("aria-label", "Toggle Camera");
++    camBtn.innerHTML = MEET_ICONS.camOn;
 +
 +    let leaveBtn = document.createElement("button");
 +    leaveBtn.id = "meet-leave-btn";
 +    leaveBtn.className = "control-button meet-btn meet-btn-hangup";
 +    leaveBtn.setAttribute("title", "Leave Call");
++    leaveBtn.setAttribute("aria-label", "Leave Call");
++    leaveBtn.innerHTML = MEET_ICONS.hangup;
 +
 +    meetControls.appendChild(micBtn);
 +    meetControls.appendChild(camBtn);
 +    meetControls.appendChild(leaveBtn);
 +    controlsBottom.appendChild(meetControls);
++
++    if (this._meetState) {
++      this.setMeetState(this._meetState);
++    }
 +  },
 +
-+  setMeetState({ isMicMuted, isCamOff }) {
++  setMeetState(data) {
++    if (!data) return;
++    this._meetState = Object.assign(this._meetState || {}, data);
 +    let micBtn = document.getElementById("meet-mic-btn");
-+    if (micBtn) {
-+      micBtn.classList.toggle("is-muted", !!isMicMuted);
++    if (micBtn && typeof data.isMicMuted === "boolean") {
++      micBtn.classList.toggle("is-muted", data.isMicMuted);
++      micBtn.innerHTML = data.isMicMuted ? MEET_ICONS.micOff : MEET_ICONS.micOn;
++      micBtn.setAttribute("aria-label", data.isMicMuted ? "Turn on microphone" : "Turn off microphone");
 +    }
 +    let camBtn = document.getElementById("meet-camera-btn");
-+    if (camBtn) {
-+      camBtn.classList.toggle("is-off", !!isCamOff);
++    if (camBtn && typeof data.isCamOff === "boolean") {
++      camBtn.classList.toggle("is-off", data.isCamOff);
++      camBtn.innerHTML = data.isCamOff ? MEET_ICONS.camOff : MEET_ICONS.camOn;
++      camBtn.setAttribute("aria-label", data.isCamOff ? "Turn on camera" : "Turn off camera");
 +    }
 +  },
 +
    setupTooltip(elId, l10nId, shortcutId) {
      const el = document.getElementById(elId);
      const shortcut = document.getElementById(shortcutId);
-@@ -955,6 +1033,31 @@
+@@ -958,6 +1066,33 @@ let Player = {
+         break;
+       }
  
-       case "unpip": {
-         PictureInPicture.focusTabAndClosePip(window, this.actor);
-+        break;
-+      }
-+
 +      case "minimize": {
 +        this.closePipWindow({ reason: "CloseButton" });
 +        break;
 +      }
 +
 +      case "meet-mic-btn": {
-+        this.actor.sendAsyncMessage("PictureInPicture:MeetToggleMic");
 +        let btn = document.getElementById("meet-mic-btn");
-+        if (btn) btn.classList.toggle("is-muted");
++        let nextMuted = btn ? !btn.classList.contains("is-muted") : true;
++        this.setMeetState({ isMicMuted: nextMuted });
++        this.actor.sendAsyncMessage("PictureInPicture:MeetToggleMic");
 +        break;
 +      }
 +
 +      case "meet-camera-btn": {
-+        this.actor.sendAsyncMessage("PictureInPicture:MeetToggleCam");
 +        let btn = document.getElementById("meet-camera-btn");
-+        if (btn) btn.classList.toggle("is-off");
++        let nextOff = btn ? !btn.classList.contains("is-off") : true;
++        this.setMeetState({ isCamOff: nextOff });
++        this.actor.sendAsyncMessage("PictureInPicture:MeetToggleCam");
 +        break;
 +      }
 +
 +      case "meet-leave-btn": {
 +        this.actor.sendAsyncMessage("PictureInPicture:MeetLeaveCall");
 +        this.closePipWindow({ reason: "CloseButton" });
-         break;
-       }
- 
-@@ -1435,6 +1461,15 @@
++        break;
++      }
++
+       case "closed-caption": {
+         let options = {};
+         if (event.inputSource == MouseEvent.MOZ_SOURCE_KEYBOARD) {
+@@ -1434,6 +1569,15 @@ let Player = {
    onResize() {
      this.toggleSubtitlesSettingsPanel({ forceHide: true });
      this.togglePlaybackRatePanel({ forceHide: true });
