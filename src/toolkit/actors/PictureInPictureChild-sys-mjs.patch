@@ -1,5 +1,5 @@
 diff --git a/toolkit/actors/PictureInPictureChild.sys.mjs b/toolkit/actors/PictureInPictureChild.sys.mjs
-index 0328219..8bafa47 100644
+index 0328219..abcd009 100644
 --- a/toolkit/actors/PictureInPictureChild.sys.mjs
 +++ b/toolkit/actors/PictureInPictureChild.sys.mjs
 @@ -323,6 +323,23 @@ export class PictureInPictureLauncherChild extends JSWindowActorChild {
@@ -62,11 +62,9 @@ index 0328219..8bafa47 100644
      if (isNaN(video.duration) || video.duration < lazy.MIN_VIDEO_LENGTH) {
        return false;
      }
-@@ -2110,6 +2146,64 @@ export class PictureInPictureChild extends JSWindowActorChild {
-       case "PictureInPicture:SetupPlayer": {
-         const { videoRef } = message.data;
-         this.setupPlayer(videoRef);
-         break;
+@@ -2259,6 +2295,64 @@ export class PictureInPictureChild extends JSWindowActorChild {
+         const { videoRef, isPipApiRequest, initDimension } = message.data;
+         return await this.setupPlayer(videoRef, isPipApiRequest, initDimension);
        }
 +      case "PictureInPicture:MeetToggleMic": {
 +        let doc = this.getWeakVideo()?.ownerDocument || this.document;
@@ -127,9 +125,11 @@ index 0328219..8bafa47 100644
 +        break;
 +      }
        case "PictureInPicture:Play": {
-@@ -2392,4 +2477,22 @@ export class PictureInPictureChild extends JSWindowActorChild {
-       return;
-     }
+         this.play();
+         break;
+@@ -2564,6 +2658,24 @@ export class PictureInPictureChild extends JSWindowActorChild {
+     // Now we can lookup this actor, using `video` element, which lives in the web content window
+     gOriginatingVideoMap.set(video, this);
  
 +    let meetDoc = originatingVideo.ownerDocument;
 +    if (meetDoc?.location?.hostname?.endsWith("meet.google.com")) {
@@ -150,3 +150,5 @@ index 0328219..8bafa47 100644
 +    }
 +
      this.videoWrapper = applyWrapper(this, originatingVideo);
+ 
+     if (isPipApiRequest) {
