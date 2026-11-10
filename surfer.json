@@ -1,7 +1,7 @@
 {
   "name": "Zen Browser",
   "vendor": "Zen OSS Team",
-  "appId": "zen-custom",
+  "appId": "zen",
   "binaryName": "zen",
   "version": {
     "product": "firefox",
@@ -22,7 +22,7 @@
       "release": {
         "displayVersion": "1.24.1b",
         "github": {
-          "repo": "ShubhamJ010/desktop"
+          "repo": "zen-browser/desktop"
         },
         "archives": {
           "windows": "windows.mar",
