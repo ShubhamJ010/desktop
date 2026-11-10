@@ -339,7 +339,9 @@ static void NotifyPiPGestureActive(bool active) {
 
   NSWindow *window = [_window retain];
   dispatch_async(dispatch_get_main_queue(), ^{
-    [window invalidateShadow];
+    if (window.isVisible) {
+      [window invalidateShadow];
+    }
     [window release];
   });
 }
@@ -356,10 +358,15 @@ static void NotifyPiPGestureActive(bool active) {
   CALayer *content = _window.contentView.layer, *rim = _overlay.layer;
   if (!content || !rim) return;
   if (animated && content.cornerRadius == radius && rim.cornerRadius == radius) return;
-  __unsafe_unretained NSWindow *window = _window;
+  NSWindow *window = [_window retain];
   [CATransaction begin];
   [CATransaction setDisableActions:YES];
-  [CATransaction setCompletionBlock:^{ [window invalidateShadow]; }];
+  [CATransaction setCompletionBlock:^{
+    if (window.isVisible) {
+      [window invalidateShadow];
+    }
+    [window release];
+  }];
   for (CALayer *layer in @[ content, rim ]) {
     if (animated) {
       CABasicAnimation *bend = [CABasicAnimation animationWithKeyPath:@"cornerRadius"];

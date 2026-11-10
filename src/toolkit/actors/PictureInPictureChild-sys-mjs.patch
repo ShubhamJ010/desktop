@@ -1,8 +1,8 @@
 diff --git a/toolkit/actors/PictureInPictureChild.sys.mjs b/toolkit/actors/PictureInPictureChild.sys.mjs
-index 49dd388d8304245e9e840cc32577eed45d36d62c..dde63be2eb6c442acb387b14bf05c18ce9419fa4 100644
+index 0328219..8bafa47 100644
 --- a/toolkit/actors/PictureInPictureChild.sys.mjs
 +++ b/toolkit/actors/PictureInPictureChild.sys.mjs
-@@ -269,6 +269,23 @@
+@@ -323,6 +323,23 @@ export class PictureInPictureLauncherChild extends JSWindowActorChild {
    findVideoToPiP(doc) {
      let video = doc.activeElement;
      if (!HTMLVideoElement.isInstance(video)) {
@@ -24,9 +24,9 @@ index 49dd388d8304245e9e840cc32577eed45d36d62c..dde63be2eb6c442acb387b14bf05c18c
 +      }
 +
        let listOfVideos = [...doc.querySelectorAll("video")].filter(
-         video => !isNaN(video.duration)
+         v => !isNaN(v.duration)
        );
-@@ -289,9 +306,16 @@
+@@ -343,9 +360,16 @@ export class PictureInPictureLauncherChild extends JSWindowActorChild {
      let doc = this.document;
      if (doc) {
        let video = this.findVideoToPiP(doc);
@@ -43,7 +43,7 @@ index 49dd388d8304245e9e840cc32577eed45d36d62c..dde63be2eb6c442acb387b14bf05c18c
          PictureInPictureChild.videoIsPiPEligible(video)
        ) {
          this.togglePictureInPicture({ video, reason: "AutoPip" }, false);
-@@ -1915,6 +1939,18 @@
+@@ -2035,6 +2059,18 @@ export class PictureInPictureChild extends JSWindowActorChild {
        return true;
      }
  
