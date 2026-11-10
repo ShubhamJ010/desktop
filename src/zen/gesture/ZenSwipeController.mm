@@ -111,7 +111,7 @@ void NotifySwipeVertical(double aDy) {
     return;
   }
   nsAutoString payload;
-  payload.AppendFloat(aDy, 2);
+  payload.AppendFloat(aDy);
   observerService->NotifyObservers(nullptr, kZenSwipeVerticalTopic,
                                    payload.get());
 #endif
