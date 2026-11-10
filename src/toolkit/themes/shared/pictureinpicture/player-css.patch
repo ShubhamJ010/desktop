@@ -1,11 +1,12 @@
 diff --git a/toolkit/themes/shared/pictureinpicture/player.css b/toolkit/themes/shared/pictureinpicture/player.css
-index c808890..9154fdd 100644
+index c808890..142eb4e 100644
 --- a/toolkit/themes/shared/pictureinpicture/player.css
 +++ b/toolkit/themes/shared/pictureinpicture/player.css
-@@ -810,3 +810,131 @@ body:not(:fullscreen) #fullscreen {
+@@ -810,3 +810,156 @@ body:not(:fullscreen) #fullscreen {
      justify-self: center;
    }
  }
++
 +
 +#minimize {
 +  background-image: url("chrome://browser/skin/zen-icons/unpin.svg");
@@ -30,8 +31,23 @@ index c808890..9154fdd 100644
 +  transition: opacity 120ms ease-out !important;
 +}
 +
++/* Google Meet PiP Controls */
 +#meet-controls {
 +  display: none !important;
++}
++
++#meet-controls::after,
++#meet-controls::before,
++.meet-btn::after,
++.meet-btn::before,
++#meet-mic-btn::after,
++#meet-mic-btn::before,
++#meet-camera-btn::after,
++#meet-camera-btn::before,
++#meet-leave-btn::after,
++#meet-leave-btn::before {
++  display: none !important;
++  content: none !important;
 +}
 +
 +body.is-google-meet #controls-bottom-gradient {
@@ -67,6 +83,7 @@ index c808890..9154fdd 100644
 +
 +body.is-google-meet #meet-controls {
 +  display: flex !important;
++  flex-direction: row !important;
 +  align-items: center !important;
 +  justify-content: center !important;
 +  gap: 14px !important;
@@ -82,21 +99,32 @@ index c808890..9154fdd 100644
 +  height: 44px !important;
 +  min-width: 44px !important;
 +  min-height: 44px !important;
++  max-width: 44px !important;
++  max-height: 44px !important;
 +  border-radius: 50% !important;
 +  border: none !important;
++  outline: none !important;
 +  background-color: rgba(60, 64, 67, 0.88) !important;
-+  background-repeat: no-repeat !important;
-+  background-position: center !important;
-+  background-size: 22px 22px !important;
 +  cursor: pointer !important;
 +  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35) !important;
 +  transition: background-color 150ms ease, transform 150ms cubic-bezier(0.2, 0, 0, 1) !important;
++  padding: 0 !important;
++  margin: 0 !important;
++  position: relative !important;
 +}
 +
 +.meet-btn svg {
 +  width: 22px !important;
 +  height: 22px !important;
++  min-width: 22px !important;
++  min-height: 22px !important;
++  display: block !important;
++  fill: #ffffff !important;
 +  pointer-events: none !important;
++}
++
++.meet-btn svg path {
++  fill: #ffffff !important;
 +}
 +
 +.meet-btn:hover {
@@ -108,27 +136,24 @@ index c808890..9154fdd 100644
 +  transform: scale(0.94) !important;
 +}
 +
-+#meet-mic-btn {
-+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAxNGMxLjY2IDAgMy0xLjM0IDMtM1Y1YzAtMS42Ni0xLjM0LTMtMy0zUzkgMy4zNCA5IDV2NmMwIDEuNjYgMS4zNCAzIDMgM3oiLz48cGF0aCBkPSJNMTcgMTFjMCAyLjc2LTIuMjQgNS01IDVzLTUtMi4yNC01LTVINWMwIDMuNTMgMi42MSA2LjQzIDYgNi45MlYyMWgydi0zLjA4YzMuMzktLjQ5IDYtMy4zOSA2LTYuOTJoLTJ6Ii8+PC9zdmc+") !important;
-+}
-+
 +#meet-mic-btn.is-muted {
 +  background-color: #ea4335 !important;
-+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xOSAxMWgtMS43YzAgLjc0LS4xNiAxLjQzLS40MyAyLjA1bDEuMjMgMS4yM2MuNTYtLjk4LjktMi4wOS45LTMuMjh6bS00LjAyLjE3YzAtLjA2LjAyLS4xMS4wMi0uMTdWNWMwLTEuNjYtMS4zNC0zLTMtM1M5IDMuMzQgOSA1di4xOGw1Ljk4IDUuOTl6TTQuMjcgM0wzIDQuMjdsNi4wMSA2LjAxVjExYzAgMS42NiAxLjMzIDMgMi45OSAzIC4yMiAwIC40NC0uMDMuNjUtLjA4bDEuNjYgMS42NmMtLjcxLjMzLTEuNS41Mi0yLjMxLjUyLTIuNzYgMC01LjMtMi4yNC01LjMtNUg1YzAgMy41MyAyLjYxIDYuNDMgNiA2LjkyVjIxaDJ2LTMuMDhjMS4zNy0uMiAyLjYzLS43OCAzLjY2LTEuNjJsMy4wNyAzLjA3IDEuMjctMS4yN0w0LjI3IDN6Ii8+PC9zdmc+") !important;
 +}
 +
-+#meet-camera-btn {
-+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xNSA4djhINVY4aDEwbTEtMkg0Yy0uNTUgMC0xIC40NS0xIDF2MTBjMCAuNTUuNDUgMSAxIDFoMTJjLjU1IDAgMS0uNDUgMS0xdi0zLjVsNCA0di0xMWwtNCA0VjdjMC0uNTUtLjQ1LTEtMS0xeiIvPjwvc3ZnPg==") !important;
++#meet-mic-btn.is-muted:hover {
++  background-color: #d93025 !important;
 +}
 +
 +#meet-camera-btn.is-off {
 +  background-color: #ea4335 !important;
-+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0yMSA2LjVsLTQgNFY3YzAtLjU1LS40NS0xLTEtMUg5LjgyTDIxIDE3LjE4VjYuNXpNMy4yNyAyTDIgMy4yNyA0LjczIDZINGMtLjU1IDAtMSAuNDUtMSAxdjEwYzAgLjU1LjQ1IDEgMSAxaDEyYy4yMSAwIC4zOS0uMDguNTUtLjE4TDE5LjczIDIxIDIxIDE5LjczIDMuMjcgMnpNNSAxNlY4LjI3TDEyLjczIDE2SDV6Ii8+PC9zdmc+") !important;
++}
++
++#meet-camera-btn.is-off:hover {
++  background-color: #d93025 !important;
 +}
 +
 +.meet-btn-hangup {
 +  background-color: #ea4335 !important;
-+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiA5Yy0xLjYgMC0zLjE1LjI1LTQuNi43MnYzLjFjMCAuMzktLjIzLjc0LS41Ni45LS45OC40OS0xLjg3IDEuMTItMi42NiAxLjg1LS4xOC4xOC0uNDMuMjgtLjcuMjgtLjI4IDAtLjUzLS4xMS0uNzEtLjI5TC4yOSAxMy4wOGMtLjE4LS4xNy0uMjktLjQyLS4yOS0uNyAwLS4yOC4xMS0uNTMuMjktLjcxQzMuMzQgOC43OCA3LjQ2IDcgMTIgN3M4LjY2IDEuNzggMTEuNzEgNC42N2MuMTguMTguMjkuNDMuMjkuNzEgMCAuMjgtLjExLjUzLS4yOS43MWwtMi40OCAyLjQ4Yy0uMTguMTgtLjQzLjI5LS43MS4yOS0uMjcgMC0uNTItLjExLS43LS4yOC0uNzktLjc0LTEuNjktMS4zNi0yLjY3LTEuODUtLjMzLS4xNi0uNTYtLjUtLjU2LS45di0zLjFDMTUuMTUgOS4yNSAxMy42IDkgMTIgOXoiLz48L3N2Zz4=") !important;
 +}
 +
 +.meet-btn-hangup:hover {
