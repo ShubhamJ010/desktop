@@ -629,9 +629,13 @@ body,
 }
 
 /* The chevron fades out as the list fades in (Ardia multiplies the icon
-   opacity by the inverse of the list's appear value). */
-.zen-swipe-capsule.has-list .zen-swipe-chevron {
-  opacity: 0;
+   opacity by the inverse of the list's appear value). This has to be as
+   specific as the `will-navigate` rule that raises the chevron to full
+   opacity, otherwise the confirmed icon stays painted in the sheet's corner. */
+.zen-swipe-capsule.has-list .zen-swipe-chevron,
+#historySwipeAnimationPreviousArrow.has-list .zen-swipe-chevron,
+#historySwipeAnimationNextArrow.has-list .zen-swipe-chevron {
+  opacity: 0 !important;
 }
 
 .zen-swipe-list {
