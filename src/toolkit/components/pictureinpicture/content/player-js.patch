@@ -2,17 +2,47 @@ diff --git a/toolkit/components/pictureinpicture/content/player.js b/toolkit/com
 index dfa666aa0a3ab457a6766bf518506e61089893c5..a1671164fb4340afd976fc0407bc409c7327cbdd 100644
 --- a/toolkit/components/pictureinpicture/content/player.js
 +++ b/toolkit/components/pictureinpicture/content/player.js
-@@ -421,6 +421,9 @@
+@@ -102,6 +102,20 @@
+ function setIsMutedState(isMuted) {
+   Player.isMuted = isMuted;
+ }
++
++function setIsGoogleMeetState(isMeet) {
++  if (isMeet) {
++    Player.isGoogleMeet = true;
++    if (document.body) {
++      document.body.classList.add("is-google-meet");
++    }
++    Player.setupMeetControls();
++  }
++}
++
++function setMeetState(data) {
++  Player.setMeetState(data);
++}
+ 
+ /**
+  * Function to resize and reposition the PiP window
+@@ -421,6 +433,18 @@
      if (Services.prefs.getBoolPref(SEETHROUGH_MODE_ENABLED_PREF, false)) {
        document.documentElement.classList.add("seethrough-mode");
      }
++
++    const isGoogleMeet =
++      wgp?.documentURI?.spec?.includes("meet.google.com") ||
++      wgp?.browsingContext?.currentURI?.spec?.includes("meet.google.com");
++    if (isGoogleMeet) {
++      this.isGoogleMeet = true;
++      document.body.classList.add("is-google-meet");
++      this.setupMeetControls();
++    }
 +
 +    Services.obs.addObserver(this, "zen-pip-gesture-begin");
 +    Services.obs.addObserver(this, "zen-pip-gesture-end");
  
      this._isInitialized = true;
  
-@@ -428,10 +431,28 @@
+@@ -428,10 +450,68 @@
    },
  
    uninit() {
@@ -38,10 +68,50 @@ index dfa666aa0a3ab457a6766bf518506e61089893c5..a1671164fb4340afd976fc0407bc409c
 +    }
 +  },
 +
++  setupMeetControls() {
++    let controlsBottom = document.getElementById("controls-bottom");
++    if (!controlsBottom || document.getElementById("meet-controls")) return;
++
++    let meetControls = document.createElement("div");
++    meetControls.id = "meet-controls";
++    meetControls.className = "control-item";
++
++    let micBtn = document.createElement("button");
++    micBtn.id = "meet-mic-btn";
++    micBtn.className = "control-button meet-btn";
++    micBtn.setAttribute("title", "Toggle Microphone");
++
++    let camBtn = document.createElement("button");
++    camBtn.id = "meet-camera-btn";
++    camBtn.className = "control-button meet-btn";
++    camBtn.setAttribute("title", "Toggle Camera");
++
++    let leaveBtn = document.createElement("button");
++    leaveBtn.id = "meet-leave-btn";
++    leaveBtn.className = "control-button meet-btn meet-btn-hangup";
++    leaveBtn.setAttribute("title", "Leave Call");
++
++    meetControls.appendChild(micBtn);
++    meetControls.appendChild(camBtn);
++    meetControls.appendChild(leaveBtn);
++    controlsBottom.appendChild(meetControls);
++  },
++
++  setMeetState({ isMicMuted, isCamOff }) {
++    let micBtn = document.getElementById("meet-mic-btn");
++    if (micBtn) {
++      micBtn.classList.toggle("is-muted", !!isMicMuted);
++    }
++    let camBtn = document.getElementById("meet-camera-btn");
++    if (camBtn) {
++      camBtn.classList.toggle("is-off", !!isCamOff);
++    }
++  },
++
    setupTooltip(elId, l10nId, shortcutId) {
      const el = document.getElementById(elId);
      const shortcut = document.getElementById(shortcutId);
-@@ -955,6 +976,11 @@
+@@ -955,6 +1033,31 @@
  
        case "unpip": {
          PictureInPicture.focusTabAndClosePip(window, this.actor);
@@ -49,6 +119,26 @@ index dfa666aa0a3ab457a6766bf518506e61089893c5..a1671164fb4340afd976fc0407bc409c
 +      }
 +
 +      case "minimize": {
++        this.closePipWindow({ reason: "CloseButton" });
++        break;
++      }
++
++      case "meet-mic-btn": {
++        this.actor.sendAsyncMessage("PictureInPicture:MeetToggleMic");
++        let btn = document.getElementById("meet-mic-btn");
++        if (btn) btn.classList.toggle("is-muted");
++        break;
++      }
++
++      case "meet-camera-btn": {
++        this.actor.sendAsyncMessage("PictureInPicture:MeetToggleCam");
++        let btn = document.getElementById("meet-camera-btn");
++        if (btn) btn.classList.toggle("is-off");
++        break;
++      }
++
++      case "meet-leave-btn": {
++        this.actor.sendAsyncMessage("PictureInPicture:MeetLeaveCall");
 +        this.closePipWindow({ reason: "CloseButton" });
          break;
        }

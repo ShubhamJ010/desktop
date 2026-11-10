@@ -514,42 +514,23 @@ body,
   justify-content: center;
   position: relative;
   overflow: hidden;
-  /* Native Apple system material (NSVisualEffectMaterialPopover / regularMaterial):
-     rich, frosted Gaussian glass that diffuses high-contrast content behind it so
-     underlying page text does not show through legibly. */
-  background-color: light-dark(rgba(252, 252, 254, 0.86), rgba(34, 34, 37, 0.88));
-  backdrop-filter: blur(32px) saturate(180%) contrast(105%) !important;
-  -webkit-backdrop-filter: blur(32px) saturate(180%) contrast(105%) !important;
-  /* Apple-style multi-layer shadow + top specular reflection highlight */
-  box-shadow: 0 4px 16px light-dark(rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.40)),
-              0 1px 4px light-dark(rgba(0, 0, 0, 0.10), rgba(0, 0, 0, 0.25)),
-              inset 0 1px 1px light-dark(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.18)),
-              inset 0 -1px 1px light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.25));
-  /* Apple swipeRim with subtle contrast */
-  border: 1px solid light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.16));
+  /* Flat clean disc matching Safari swipe gesture */
+  background-color: light-dark(#f2f2f7, #252629);
+  backdrop-filter: blur(24px) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  border: none !important;
   box-sizing: border-box;
   transition: width var(--zen-swipe-spring-duration) var(--zen-swipe-spring),
               height var(--zen-swipe-spring-duration) var(--zen-swipe-spring);
 }
 
-.zen-swipe-capsule::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  pointer-events: none;
-  background: light-dark(
-    linear-gradient(180deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0) 60%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0) 60%)
-  );
-}
-
 @media (prefers-reduced-transparency: reduce) {
   .zen-swipe-capsule {
-    background-color: light-dark(rgba(245, 245, 247, 0.98), rgba(30, 30, 32, 0.98));
+    background-color: light-dark(#f2f2f7, #252629);
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
   }
 }
 
@@ -565,12 +546,12 @@ body,
 }
 
 .zen-swipe-chevron {
-  /* Ardia windowColors().swipeChevron: #000000D9 / #FFFFFFD9 */
-  color: light-dark(rgba(0, 0, 0, 0.851), rgba(255, 255, 255, 0.851));
+  /* Safari swipeChevron grey tone */
+  color: light-dark(rgba(0, 0, 0, 0.7), rgba(200, 203, 208, 0.95));
   /* SF Symbol chevron at pointSize 28 weight bold */
   width: 15px;
   height: 25px;
-  opacity: 0.5;
+  opacity: 0.85;
   transition: opacity var(--zen-swipe-fade),
               transform var(--zen-swipe-spring-duration) var(--zen-swipe-spring);
 }

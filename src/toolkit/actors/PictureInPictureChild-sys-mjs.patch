@@ -62,3 +62,91 @@ index 0328219..8bafa47 100644
      if (isNaN(video.duration) || video.duration < lazy.MIN_VIDEO_LENGTH) {
        return false;
      }
+@@ -2110,6 +2146,64 @@ export class PictureInPictureChild extends JSWindowActorChild {
+       case "PictureInPicture:SetupPlayer": {
+         const { videoRef } = message.data;
+         this.setupPlayer(videoRef);
+         break;
+       }
++      case "PictureInPicture:MeetToggleMic": {
++        let doc = this.getWeakVideo()?.ownerDocument || this.document;
++        if (doc) {
++          let btn =
++            doc.querySelector('button[aria-label*="microphone" i]') ||
++            doc.querySelector('button[data-is-muted][aria-label*="mic" i]') ||
++            doc.querySelector('[data-tooltip*="microphone" i]');
++          if (btn) {
++            btn.click();
++          } else {
++            let win = doc.defaultView;
++            win.dispatchEvent(
++              new win.KeyboardEvent("keydown", {
++                key: "d",
++                code: "KeyD",
++                metaKey: true,
++                bubbles: true,
++              })
++            );
++          }
++        }
++        break;
++      }
++      case "PictureInPicture:MeetToggleCam": {
++        let doc = this.getWeakVideo()?.ownerDocument || this.document;
++        if (doc) {
++          let btn =
++            doc.querySelector('button[aria-label*="camera" i]') ||
++            doc.querySelector('[data-tooltip*="camera" i]');
++          if (btn) {
++            btn.click();
++          } else {
++            let win = doc.defaultView;
++            win.dispatchEvent(
++              new win.KeyboardEvent("keydown", {
++                key: "e",
++                code: "KeyE",
++                metaKey: true,
++                bubbles: true,
++              })
++            );
++          }
++        }
++        break;
++      }
++      case "PictureInPicture:MeetLeaveCall": {
++        let doc = this.getWeakVideo()?.ownerDocument || this.document;
++        if (doc) {
++          let btn =
++            doc.querySelector('button[aria-label*="Leave call" i]') ||
++            doc.querySelector('button[aria-label*="leave call" i]') ||
++            doc.querySelector('[data-tooltip*="Leave call" i]');
++          if (btn) {
++            btn.click();
++          }
++        }
++        break;
++      }
+       case "PictureInPicture:Play": {
+@@ -2392,4 +2477,22 @@ export class PictureInPictureChild extends JSWindowActorChild {
+       return;
+     }
+ 
++    let meetDoc = originatingVideo.ownerDocument;
++    if (meetDoc?.location?.hostname?.endsWith("meet.google.com")) {
++      let micBtn =
++        meetDoc.querySelector('button[aria-label*="microphone" i]') ||
++        meetDoc.querySelector('button[data-is-muted][aria-label*="mic" i]');
++      let isMicMuted = micBtn
++        ? micBtn.getAttribute("data-is-muted") === "true" ||
++          micBtn.getAttribute("aria-label")?.toLowerCase().includes("turn on mic")
++        : false;
++      let camBtn =
++        meetDoc.querySelector('button[aria-label*="camera" i]') ||
++        meetDoc.querySelector('[data-tooltip*="camera" i]');
++      let isCamOff = camBtn
++        ? camBtn.getAttribute("aria-label")?.toLowerCase().includes("turn on cam")
++        : false;
++      this.sendAsyncMessage("PictureInPicture:MeetState", { isMicMuted, isCamOff });
++    }
++
+     this.videoWrapper = applyWrapper(this, originatingVideo);
