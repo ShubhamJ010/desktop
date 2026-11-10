@@ -128,10 +128,11 @@ void NotifySwipeVertical(double aDy) {
 // Debug logging for the native vertical side channel. When the debug pref is on,
 // every monitor event and every observer notification is written to the system log
 // (Console.app, filter on the Zen SJ process) so the channel can be traced without
-// a debugger.
+// a debugger. The pref is a bool: reading it as an int returns the default, which
+// silently disabled this whole channel.
 void ZenSwipeDebugLog(NSString *format, ...) {
 #if __has_include("mozilla/Preferences.h")
-  if (mozilla::Preferences::GetInt(kZenSwipeDebugPref, 0) == 0) {
+  if (!mozilla::Preferences::GetBool(kZenSwipeDebugPref, false)) {
     return;
   }
 #endif

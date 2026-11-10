@@ -1,9 +1,12 @@
 --- a/browser/base/content/browser-gestureSupport.js
 +++ b/browser/base/content/browser-gestureSupport.js
-@@ -237,6 +237,16 @@
-       return false;
-     }
- 
+@@ -234,6 +234,16 @@
+     // keys disabled. Swipes run the command directly rather than through the
+     // keyset, so they have to be turned away here too.
+     if (document.documentElement.hasAttribute("cropped-mini-window")) {
++      return false;
++    }
++
 +    const toolbox = document.getElementById("navigator-toolbox");
 +    const sidebar = document.getElementById("sidebar-box");
 +    if (
@@ -11,11 +14,8 @@
 +      sidebar?.matches(":hover") ||
 +      aEvent.target?.closest?.("#navigator-toolbox, #sidebar-box")
 +    ) {
-+      return false;
-+    }
-+
-     const leftCommand = this._getCommand(aEvent, ["swipe", "left"]);
-     const rightCommand = this._getCommand(aEvent, ["swipe", "right"]);
+       return false;
+     }
  
 @@ -501,6 +511,13 @@
     */
@@ -207,9 +207,17 @@
    },
  
    /**
-@@ -819,70 +935,72 @@
+@@ -818,71 +934,80 @@
+     if (!this.isAnimationRunning() || this._isStoppingAnimation) {
        return;
      }
++    // Once the sheet is up it owns the gesture: the remaining finger travel is
++    // vertical, so any horizontal delta that still arrives is noise. Running the
++    // capsule layout here would also collapse both rails as soon as the
++    // horizontal delta reads as zero, which hid the sheet mid-hold.
++    if (this._swipeList) {
++      return;
++    }
  
 -    // Convert `aVal` into [0, 1] range.
 -    // Note that absolute values of 0.25 (or greater) trigger history
@@ -322,7 +330,7 @@
      }
    },
  
-@@ -901,7 +1019,11 @@
+@@ -901,7 +1026,11 @@
     * @return true if there is a previous page in history, false otherwise.
     */
    canGoBack: function HSA_canGoBack() {
@@ -335,7 +343,7 @@
    },
  
    /**
-@@ -919,17 +1041,446 @@
+@@ -919,17 +1048,491 @@
     * any. This will also result in the animation overlay to be torn down.
     */
    swipeEndEventReceived: function HSA_swipeEndEventReceived() {
@@ -383,6 +391,22 @@
 +      // A locked-down profile can refuse the write; the sheet then simply
 +      // stays keyboard/mouse free rather than breaking the swipe itself.
 +    }
++  },
++
++  /**
++   * Mirrors one diagnostic line into the browser console when the native debug
++   * pref is on. The sheet declines to present silently by design - a held swipe
++   * must never break the gesture - so this is the only way to see why it
++   * stepped aside.
++   *
++   * @param aMessage Human readable description of the step or the bail-out.
++   */
++  _zenSwipeDebug: function HSA__zenSwipeDebug(aMessage) {
++    try {
++      if (Services.prefs.getBoolPref(ZEN_SWIPE_DEBUG_PREF)) {
++        Services.console.logStringMessage("ZenSwipe: " + aMessage);
++      }
++    } catch (e) {}
 +  },
 +
 +  /**
@@ -443,10 +467,20 @@
 +   * @return Array of { index, url, title } in gesture order, or null.
 +   */
 +  _readSwipeHistory: function HSA__readSwipeHistory(aDirection) {
++    // Session history lives in the parent process. `gBrowser.webNavigation` is
++    // a RemoteWebNavigation, whose `sessionHistory` getter deliberately throws
++    // NS_ERROR_NOT_IMPLEMENTED (bug 1233803), which is why the sheet used to
++    // read null here and silently decline to present at all. The in-parent
++    // nsISHistory hangs off the browsing context and offers the same
++    // count/index/getEntryAtIndex API, synchronously.
 +    let history = null;
 +    try {
-+      history = gBrowser.webNavigation.sessionHistory;
++      const browser = gBrowser.selectedBrowser;
++      history = browser.browsingContext
++        ? browser.browsingContext.sessionHistory
++        : gBrowser.webNavigation.sessionHistory;
 +    } catch (e) {
++      this._zenSwipeDebug("history read failed: " + e);
 +      return null;
 +    }
 +    if (!history || history.count < 2) {
@@ -511,16 +545,32 @@
 +      this._isStoppingAnimation ||
 +      !this.isAnimationRunning()
 +    ) {
++      this._zenSwipeDebug(
++        "present skipped: active=" +
++          this.active +
++          " confirmed=" +
++          this._confirmed +
++          " dir=" +
++          this._swipeDirection +
++          " list=" +
++          Boolean(this._swipeList) +
++          " stopping=" +
++          this._isStoppingAnimation
++      );
 +      return;
 +    }
 +    const box =
 +      this._swipeDirection === "back" ? this._prevBox : this._nextBox;
 +    const capsule = box ? box.querySelector(".zen-swipe-capsule") : null;
 +    if (!box || !capsule) {
++      this._zenSwipeDebug("present skipped: no capsule box");
 +      return;
 +    }
 +    const items = this._readSwipeHistory(this._swipeDirection);
 +    if (!items || items.length < 2) {
++      this._zenSwipeDebug(
++        "present skipped: destinations=" + (items ? items.length : "none")
++      );
 +      return;
 +    }
 +
@@ -596,6 +646,9 @@
 +      Services.obs.addObserver(this, ZEN_SWIPE_VERTICAL_TOPIC);
 +    } catch (e) {}
 +    this._zenSwipePhase(2);
++    this._zenSwipeDebug(
++      "presented: rows=" + shown.length + " direction=" + this._swipeDirection
++    );
 +    try {
 +      Services.zen.playHapticFeedback();
 +    } catch (e) {}
@@ -783,7 +836,7 @@
    },
  
    handleEvent: function HSA_handleEvent(aEvent) {
-@@ -954,42 +1505,82 @@
+@@ -954,42 +1557,82 @@
     * Adds the boxes that contain the arrows used during the swipe animation.
     */
    _addBoxes: function HSA__addBoxes() {
@@ -873,7 +926,7 @@
      if (this._container) {
        this._container.remove();
      }
-@@ -1011,10 +1602,14 @@
+@@ -1011,10 +1654,14 @@
      return element;
    },
  
