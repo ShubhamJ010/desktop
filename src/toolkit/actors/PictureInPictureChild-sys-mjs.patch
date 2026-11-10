@@ -2,11 +2,63 @@ diff --git a/toolkit/actors/PictureInPictureChild.sys.mjs b/toolkit/actors/Pictu
 index 49dd388d8304245e9e840cc32577eed45d36d62c..dde63be2eb6c442acb387b14bf05c18ce9419fa4 100644
 --- a/toolkit/actors/PictureInPictureChild.sys.mjs
 +++ b/toolkit/actors/PictureInPictureChild.sys.mjs
-@@ -318,6 +318,7 @@ export class PictureInPictureLauncherChild extends JSWindowActorChild {
+@@ -269,6 +269,23 @@
+   findVideoToPiP(doc) {
+     let video = doc.activeElement;
+     if (!HTMLVideoElement.isInstance(video)) {
++      // For Google Meet (meet.google.com), participant streams and screen shares
++      // are WebRTC MediaStreams with NaN duration. Pick the largest active visible
++      // video element (e.g. presentation screen-share or main active speaker)
++      // rather than a small self-view thumbnail.
++      const isGoogleMeet = doc?.location?.hostname?.endsWith("meet.google.com");
++      if (isGoogleMeet) {
++        let meetVideos = [...doc.querySelectorAll("video")].filter(
++          v => !v.paused && v.clientWidth >= 100 && v.clientHeight >= 100
++        );
++        if (meetVideos.length) {
++          meetVideos.sort(
++            (a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight
++          );
++          return meetVideos[0];
++        }
++      }
++
+       let listOfVideos = [...doc.querySelectorAll("video")].filter(
+         video => !isNaN(video.duration)
+       );
+@@ -289,9 +306,16 @@
+     let doc = this.document;
+     if (doc) {
+       let video = this.findVideoToPiP(doc);
++      // Google Meet sets participant <video> tags to muted to prevent local audio
++      // feedback/loopback (audio is handled via separate WebAudio / AudioContext).
++      // Allow muted videos specifically for Google Meet while maintaining the
++      // !video.muted check for standard websites to avoid popping out muted ads.
++      const isGoogleMeet =
++        video?.ownerDocument?.location?.hostname?.endsWith("meet.google.com");
        if (
          video &&
          PictureInPictureChild.videoIsPlaying(video) &&
-+        !video.muted &&
++        (!video.muted || isGoogleMeet) &&
          PictureInPictureChild.videoIsPiPEligible(video)
        ) {
          this.togglePictureInPicture({ video, reason: "AutoPip" }, false);
+@@ -1915,6 +1939,18 @@
+       return true;
+     }
+ 
++    // Google Meet WebRTC streams have NaN duration and no direct audio track on
++    // the <video> element (audio is handled via separate WebAudio context).
++    const isGoogleMeet =
++      video?.ownerDocument?.location?.hostname?.endsWith("meet.google.com");
++    if (isGoogleMeet) {
++      const MIN_MEET_DIMENSION = 100;
++      return (
++        video.clientWidth >= MIN_MEET_DIMENSION &&
++        video.clientHeight >= MIN_MEET_DIMENSION
++      );
++    }
++
+     if (isNaN(video.duration) || video.duration < lazy.MIN_VIDEO_LENGTH) {
+       return false;
+     }
