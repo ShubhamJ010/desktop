@@ -1,12 +1,9 @@
 --- a/browser/base/content/browser-gestureSupport.js
 +++ b/browser/base/content/browser-gestureSupport.js
-@@ -234,6 +234,16 @@
-     // keys disabled. Swipes run the command directly rather than through the
-     // keyset, so they have to be turned away here too.
-     if (document.documentElement.hasAttribute("cropped-mini-window")) {
-+      return false;
-+    }
-+
+@@ -237,6 +237,16 @@
+       return false;
+     }
+ 
 +    const toolbox = document.getElementById("navigator-toolbox");
 +    const sidebar = document.getElementById("sidebar-box");
 +    if (
@@ -14,8 +11,11 @@
 +      sidebar?.matches(":hover") ||
 +      aEvent.target?.closest?.("#navigator-toolbox, #sidebar-box")
 +    ) {
-       return false;
-     }
++      return false;
++    }
++
+     const leftCommand = this._getCommand(aEvent, ["swipe", "left"]);
+     const rightCommand = this._getCommand(aEvent, ["swipe", "right"]);
  
 @@ -501,6 +511,13 @@
     */
@@ -31,7 +31,7 @@
        gHistorySwipeAnimation.stopAnimation();
        this.processSwipeEvent(aEvent, aDir);
      },
-@@ -687,6 +704,68 @@
+@@ -687,6 +704,69 @@
  };
  
  // History Swipe Animation Support (bug 678392)
@@ -48,10 +48,11 @@
 +const ZEN_SWIPE_UNIT = 75;
 +
 +// Ardia: `SwipeOverlay.tsx` LIST_ROW / LIST_WIDTH / LIST_PAD / LIST_RADIUS.
++// LIST_RADIUS is `radius.sheet` (16), LIST_PAD is `space.m` (8).
 +const ZEN_SWIPE_LIST_ROW = 38;
 +const ZEN_SWIPE_LIST_WIDTH = 200;
 +const ZEN_SWIPE_LIST_PAD = 8;
-+const ZEN_SWIPE_LIST_RADIUS = 12;
++const ZEN_SWIPE_LIST_RADIUS = 16;
 +
 +// Ardia: `historyItems(tabId, direction, max = 15)`. A sheet never lists more
 +// than this many destinations, however long the session history is.
@@ -100,7 +101,7 @@
  var gHistorySwipeAnimation = {
    active: false,
    isLTR: false,
-@@ -736,6 +815,10 @@
+@@ -736,6 +816,10 @@
     *        Whether we're dealing with a vertical swipe or not.
     */
    startAnimation: function HSA_startAnimation() {
@@ -111,7 +112,7 @@
      // old boxes can still be around (if completing fade out for example), we
      // always want to remove them and recreate them because they can be
      // attached to an old browser stack that's no longer in use.
-@@ -743,6 +826,9 @@
+@@ -743,6 +827,9 @@
      this._isStoppingAnimation = false;
      this._canGoBack = this.canGoBack();
      this._canGoForward = this.canGoForward();
@@ -121,7 +122,7 @@
      if (this.active) {
        this._addBoxes();
      }
-@@ -766,16 +852,26 @@
+@@ -766,16 +853,26 @@
      } else if (this._lastVisibleBox) {
        box = this._lastVisibleBox;
        box.collapsed = false;
@@ -152,7 +153,7 @@
        window.getComputedStyle(box).opacity;
      } else {
        this._isStoppingAnimation = false;
-@@ -784,24 +880,44 @@
+@@ -784,24 +881,44 @@
    },
  
    _swipeCommand: function HSA_swipeCommand(aSwipeUpdate) {
@@ -207,7 +208,7 @@
    },
  
    /**
-@@ -818,71 +934,80 @@
+@@ -818,71 +935,80 @@
      if (!this.isAnimationRunning() || this._isStoppingAnimation) {
        return;
      }
@@ -330,7 +331,7 @@
      }
    },
  
-@@ -901,7 +1026,11 @@
+@@ -901,7 +1027,11 @@
     * @return true if there is a previous page in history, false otherwise.
     */
    canGoBack: function HSA_canGoBack() {
@@ -343,7 +344,7 @@
    },
  
    /**
-@@ -919,17 +1048,491 @@
+@@ -919,7 +1049,512 @@
     * any. This will also result in the animation overlay to be torn down.
     */
    swipeEndEventReceived: function HSA_swipeEndEventReceived() {
@@ -355,9 +356,9 @@
 +      this.commitSwipeHistorySelection();
 +      return;
 +    }
-     this.stopAnimation();
-   },
- 
++    this.stopAnimation();
++  },
++
 +  // ---------------------------------------------------------------------------
 +  // Ardia history sheet (hold after the gesture is confirmed)
 +  // ---------------------------------------------------------------------------
@@ -376,7 +377,7 @@
 +  //   5. Releasing navigates straight to the highlighted entry and the overlay
 +  //      fades out with the normal dismissal animation.
 +
-   /**
++  /**
 +   * Publishes the current gesture phase for the native scroll monitor.
 +   *
 +   * @param aPhase 0 = idle, 1 = swipe tracked, 2 = history sheet visible.
@@ -509,8 +510,30 @@
 +  },
 +
 +  /**
++   * First letter of a destination's host, used by the row's fallback tile
++   * (Ardia `FaviconFallback`), so a destination without a cached favicon still
++   * shows a tile instead of an empty slot.
++   *
++   * @param aURL The destination URL.
++   * @return A single uppercase character, or "" when there is no host.
++   */
++  _swipeHostInitial: function HSA__swipeHostInitial(aURL) {
++    if (!aURL) {
++      return "";
++    }
++    let host = "";
++    try {
++      host = Services.io.newURI(aURL).displayHost || "";
++    } catch (e) {
++      return "";
++    }
++    const letter = host.replace(/^www\./i, "").charAt(0);
++    return letter ? letter.toUpperCase() : "";
++  },
++
++  /**
 +   * Loads a favicon into a sheet row, matching Ardia's `historyFavicons()`.
-+   * Best effort: a missing or slow favicon just leaves the slot empty.
++   * Best effort: a missing or slow favicon leaves the fallback tile in place.
 +   */
 +  _loadSwipeHistoryIcon: function HSA__loadSwipeHistoryIcon(aImage, aURL) {
 +    if (!aURL || typeof PlacesUtils === "undefined") {
@@ -604,11 +627,27 @@
 +      const row = document.createElementNS(HTML_NS, "div");
 +      row.className = "zen-swipe-list-row";
 +
-+      const icon = document.createElementNS(HTML_NS, "img");
++      const icon = document.createElementNS(HTML_NS, "span");
 +      icon.className = "zen-swipe-list-icon";
-+      icon.alt = "";
++
++      // Ardia always renders a 16pt tile: the favicon once it resolves,
++      // otherwise the site's initial (`Favicon` / `FaviconFallback`). An empty
++      // <img> left a visible hole in the row.
++      const tile = document.createElementNS(HTML_NS, "span");
++      tile.className = "zen-swipe-list-tile";
++      tile.textContent = this._swipeHostInitial(item.url);
++      icon.appendChild(tile);
++
++      const favicon = document.createElementNS(HTML_NS, "img");
++      favicon.className = "zen-swipe-list-favicon";
++      favicon.alt = "";
++      favicon.addEventListener("load", () => icon.classList.add("has-favicon"), {
++        once: true,
++      });
++      icon.appendChild(favicon);
++
 +      row.appendChild(icon);
-+      this._loadSwipeHistoryIcon(icon, item.url);
++      this._loadSwipeHistoryIcon(favicon, item.url);
 +
 +      const title = document.createElementNS(HTML_NS, "span");
 +      title.className = "zen-swipe-list-title";
@@ -791,7 +830,7 @@
 +    // Keep the sheet on screen for the fade so the dismissal matches Ardia's
 +    // `dismiss()`; `_removeBoxes()` drops the nodes when the fade is over.
 +    this._dismissSwipeHistory(true);
-+    this.stopAnimation();
+     this.stopAnimation();
 +    if (target) {
 +      // `gotoIndex` is the jump the sheet exists for: Ardia's
 +      // `goToHistoryItem()` goes straight to the picked entry, not one step.
@@ -815,12 +854,10 @@
 +      }
 +    }
 +    return true;
-+  },
-+
-+  /**
-    * Checks to see if history swipe animations are supported by this
-    * platform/configuration.
-    *
+   },
+ 
+   /**
+@@ -929,7 +1564,14 @@
     * return true if supported, false otherwise.
     */
    _isSupported: function HSA__isSupported() {
@@ -836,7 +873,7 @@
    },
  
    handleEvent: function HSA_handleEvent(aEvent) {
-@@ -954,42 +1557,82 @@
+@@ -954,42 +1596,82 @@
     * Adds the boxes that contain the arrows used during the swipe animation.
     */
    _addBoxes: function HSA__addBoxes() {
@@ -926,7 +963,7 @@
      if (this._container) {
        this._container.remove();
      }
-@@ -1011,10 +1654,14 @@
+@@ -1011,10 +1693,14 @@
      return element;
    },
  

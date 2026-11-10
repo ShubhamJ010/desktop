@@ -514,15 +514,18 @@ body,
   justify-content: center;
   position: relative;
   overflow: hidden;
-  /* Frosted disc: the fill has to stay translucent or `backdrop-filter` has
-     nothing to diffuse and the capsule reads as a flat opaque blob. */
-  background-color: light-dark(rgba(246, 246, 250, 0.62), rgba(44, 45, 49, 0.58));
-  backdrop-filter: blur(28px) saturate(165%) !important;
-  -webkit-backdrop-filter: blur(28px) saturate(165%) !important;
-  /* Soft drop shadow plus a faint specular rim so the glass has an edge. */
-  box-shadow: 0 4px 14px light-dark(rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.34)),
+  /* Frosted disc: Ardia renders a real `VisualEffect material="popover"`.
+     A CSS backdrop filter can only approximate it, so the fill has to stay
+     translucent enough for the blur to show and opaque enough that page text
+     behind the sheet never reads through it. */
+  background-color: light-dark(rgba(246, 246, 250, 0.8), rgba(38, 39, 43, 0.8));
+  backdrop-filter: blur(36px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(36px) saturate(180%) !important;
+  /* Ardia SHADOWS.swipe: radius 8, offset (0, 2), opacity 0.2 light / 0.25 dark. */
+  box-shadow: 0 2px 8px light-dark(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.25)),
               inset 0 1px 1px light-dark(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.14));
-  border: 1px solid light-dark(rgba(0, 0, 0, 0.10), rgba(255, 255, 255, 0.14));
+  /* Ardia windowColors.swipeRim. */
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.125), rgba(255, 255, 255, 0.15));
   box-sizing: border-box;
   transition: width var(--zen-swipe-spring-duration) var(--zen-swipe-spring),
               height var(--zen-swipe-spring-duration) var(--zen-swipe-spring);
@@ -540,17 +543,19 @@ body,
 .zen-swipe-capsule-wash {
   position: absolute;
   inset: 0;
-  border-radius: 50%;
-  /* Ardia SWIPE_CONFIRMED_WASH */
-  background-color: light-dark(rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0.12));
+  /* Ardia paints SWIPE_CONFIRMED_WASH as a plain fill over the surface; it must
+     not be its own disc, or the sheet shows an ellipse inside the rounded rect. */
+  border-radius: inherit;
+  /* Ardia SWIPE_CONFIRMED_WASH, applied in light mode only. */
+  background-color: light-dark(rgba(255, 255, 255, 0.4), transparent);
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--zen-swipe-fade);
 }
 
 .zen-swipe-chevron {
-  /* Safari swipeChevron grey tone */
-  color: light-dark(rgba(0, 0, 0, 0.7), rgba(200, 203, 208, 0.95));
+  /* Ardia windowColors.swipeChevron: #000000D9 / #FFFFFFD9. */
+  color: light-dark(rgba(0, 0, 0, 0.851), rgba(255, 255, 255, 0.851));
   /* SF Symbol chevron at pointSize 28 weight bold */
   width: 15px;
   height: 25px;
@@ -630,33 +635,42 @@ body,
 }
 
 .zen-swipe-list {
-  position: relative;
+  /* Ardia `DestinationList` is absolutely positioned at the surface origin, so
+     it never shares a flex line with the (faded out) chevron. As a flex child
+     it used to be pushed right by the chevron and clipped by the capsule. */
+  position: absolute;
+  left: 0;
+  top: 0;
   display: flex;
   flex-direction: column;
   flex: none;
-  padding: 8px 0; /* Ardia LIST_PAD */
+  padding: 8px 0; /* Ardia LIST_PAD = space.m */
   box-sizing: border-box;
-  /* Ardia SWIPE_MOTION.list: the rows fade and scale in after the morph. */
-  animation: zen-swipe-list-in 180ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  /* Ardia SWIPE_MOTION.list: duration.slow (250ms), curve.fade, opacity plus a
+     0.9 -> 1 scale (`DestinationList` appear). */
+  animation: zen-swipe-list-in 250ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 @keyframes zen-swipe-list-in {
   from {
     opacity: 0;
+    transform: scale(0.9);
   }
   to {
     opacity: 1;
+    transform: scale(1);
   }
 }
 
 .zen-swipe-list-pill {
   position: absolute;
   inset-inline: 8px; /* Ardia space.m */
-  top: 8px;
+  top: 8px; /* Ardia LIST_PAD */
   height: 38px; /* Ardia LIST_ROW */
+  /* Ardia concentric(LIST_RADIUS 16, space.m 8). */
   border-radius: 8px;
   pointer-events: none;
-  /* Ardia swipeSelection */
+  /* Ardia windowColors.swipeSelection */
   background-color: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
   /* Ardia SWIPE_PILL_SPRING: response 0.27, damping 0.9. */
   transition: transform 270ms var(--zen-swipe-list-spring);
@@ -667,18 +681,20 @@ body,
   display: flex;
   flex: none;
   align-items: center;
-  gap: 8px;
+  gap: 10px; /* Ardia space.ml */
   height: 38px; /* Ardia LIST_ROW */
-  padding-inline: 16px;
+  padding-inline: 16px; /* Ardia space.xl */
   box-sizing: border-box;
-  font-size: 12.5px;
+  /* Ardia font.body 13 / lineHeight.body 16. */
+  font-size: 13px;
+  line-height: 16px;
   /* Ardia textSecondary */
-  color: light-dark(rgba(0, 0, 0, 0.55), rgba(255, 255, 255, 0.6));
+  color: light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.5));
 }
 
 .zen-swipe-list-row-selected {
   /* Ardia textPrimary */
-  color: light-dark(rgba(0, 0, 0, 0.9), rgba(255, 255, 255, 0.95));
+  color: light-dark(#000000, #ffffff);
 }
 
 .zen-swipe-list-title {
@@ -689,12 +705,50 @@ body,
   white-space: nowrap;
 }
 
+/* Ardia's row slot is a fixed 16pt box: the favicon once it resolves, the
+   site initial in a tile otherwise (`Favicon` / `FaviconFallback`). */
 .zen-swipe-list-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
   flex: none;
   width: 16px;
   height: 16px;
-  border-radius: 4px;
+  /* Ardia radius.hair for a 16pt icon. */
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.zen-swipe-list-tile {
+  display: grid;
+  place-items: center;
+  width: 14px; /* round(16 * 14 / 16) */
+  height: 14px;
+  /* Ardia tile * 0.32. */
+  border-radius: 4.5px;
+  /* Ardia faviconTile */
+  background-color: light-dark(rgba(0, 0, 0, 0.13), rgba(247, 245, 255, 0.2));
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.5));
+}
+
+.zen-swipe-list-favicon {
+  position: absolute;
+  inset: 0;
+  width: 16px;
+  height: 16px;
   object-fit: cover;
+  display: none;
+}
+
+.zen-swipe-list-icon.has-favicon .zen-swipe-list-favicon {
+  display: block;
+}
+
+.zen-swipe-list-icon.has-favicon .zen-swipe-list-tile {
+  display: none;
 }
 
 @media (prefers-reduced-transparency: reduce) {
