@@ -2,13 +2,14 @@ diff --git a/toolkit/components/pictureinpicture/content/player.xhtml b/toolkit/
 index 2cbb075..252e099 100644
 --- a/toolkit/components/pictureinpicture/content/player.xhtml
 +++ b/toolkit/components/pictureinpicture/content/player.xhtml
-@@ -12,12 +12,13 @@
+@@ -12,12 +12,14 @@
        >
    <head>
      <meta charset="utf-8"/>
 -    <meta http-equiv="Content-Security-Policy" content="default-src chrome:"/>
 +    <meta http-equiv="Content-Security-Policy" content="default-src chrome:; img-src chrome: data:; style-src chrome: 'unsafe-inline';"/>
      <link rel="stylesheet" href="chrome://global/skin/pictureinpicture/player.css"/>
++    <link rel="stylesheet" href="chrome://browser/content/zen-styles/zen-ardia-glass.css"/>
      <link rel="localization" href="toolkit/pictureinpicture/pictureinpicture.ftl"/>
      <link rel="localization" href="browser/browserSets.ftl"/>
      <script src="chrome://global/content/pictureinpicture/player.js"></script>

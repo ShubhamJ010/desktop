@@ -841,6 +841,8 @@
 %include zen-library-widget.css
 %include zen-library-media-preview.css
 
+%include zen-ardia-glass.css
+
 .zen-swipe-add-space-container {
   position: absolute;
   height: 100%;

@@ -514,30 +514,21 @@ body,
   justify-content: center;
   position: relative;
   overflow: hidden;
-  /* Frosted disc: Ardia renders a real `VisualEffect material="popover"`.
-     A CSS backdrop filter can only approximate it, so the fill has to stay
-     translucent enough for the blur to show and opaque enough that page text
-     behind the sheet never reads through it. */
-  background-color: light-dark(rgba(246, 246, 250, 0.8), rgba(38, 39, 43, 0.8));
-  backdrop-filter: blur(36px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(36px) saturate(180%) !important;
+  /* Frosted disc: Ardia renders a real `VisualEffect material="popover"`. The
+     surface is the shared Ardia glass recipe (zen-ardia-glass.css) so the disc
+     reads as the same material as the sidebar's acrylic panels and the tab
+     hover preview: a heavy blur over a tinted fill that page text never shows
+     through. */
+  background-color: var(--zen-ardia-glass-fill);
+  backdrop-filter: var(--zen-ardia-glass-filter) !important;
+  -webkit-backdrop-filter: var(--zen-ardia-glass-filter) !important;
   /* Ardia SHADOWS.swipe: radius 8, offset (0, 2), opacity 0.2 light / 0.25 dark. */
-  box-shadow: 0 2px 8px light-dark(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.25)),
-              inset 0 1px 1px light-dark(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.14));
+  box-shadow: var(--zen-ardia-glass-shadow);
   /* Ardia windowColors.swipeRim. */
-  border: 1px solid light-dark(rgba(0, 0, 0, 0.125), rgba(255, 255, 255, 0.15));
+  border: var(--zen-ardia-glass-rim);
   box-sizing: border-box;
   transition: width var(--zen-swipe-spring-duration) var(--zen-swipe-spring),
               height var(--zen-swipe-spring-duration) var(--zen-swipe-spring);
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .zen-swipe-capsule {
-    background-color: light-dark(#f2f2f7, #252629);
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
-  }
 }
 
 .zen-swipe-capsule-wash {
@@ -618,6 +609,12 @@ body,
 
 /* Ardia's sheet is a rounded rect, not a disc, and clips its rows. */
 .zen-swipe-capsule.has-list {
+  /* The sheet is denser than the plain disc: rows of text over a live page have
+     to stay legible, so the shared glass gets a more opaque fill here. */
+  --zen-ardia-glass-fill: light-dark(
+    rgba(246, 246, 250, 0.94),
+    rgba(32, 33, 37, 0.94)
+  );
   align-items: stretch;
   justify-content: flex-start;
   /* Overrides the 82pt confirmed disc; the exact size is set inline because it

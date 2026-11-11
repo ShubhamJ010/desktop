@@ -2,7 +2,7 @@ diff --git a/toolkit/themes/shared/pictureinpicture/player.css b/toolkit/themes/
 index c808890..142eb4e 100644
 --- a/toolkit/themes/shared/pictureinpicture/player.css
 +++ b/toolkit/themes/shared/pictureinpicture/player.css
-@@ -810,3 +810,156 @@ body:not(:fullscreen) #fullscreen {
+@@ -810,3 +810,163 @@ body:not(:fullscreen) #fullscreen {
      justify-self: center;
    }
  }
@@ -91,6 +91,10 @@ index c808890..142eb4e 100644
 +  pointer-events: auto !important;
 +}
 +
++/* The call controls float over the video, so they use the same Ardia frosted
++   glass as the swipe capsule (chrome://browser/content/zen-styles/
++   zen-ardia-glass.css, linked from player.xhtml): they blur the frame behind
++   them instead of painting a flat grey disc on top of it. */
 +.meet-btn {
 +  display: flex !important;
 +  align-items: center !important;
@@ -102,11 +106,14 @@ index c808890..142eb4e 100644
 +  max-width: 44px !important;
 +  max-height: 44px !important;
 +  border-radius: 50% !important;
-+  border: none !important;
++  border: var(--zen-ardia-glass-rim-over-video) !important;
 +  outline: none !important;
-+  background-color: rgba(60, 64, 67, 0.88) !important;
++  background-color: var(--zen-ardia-glass-fill-over-video) !important;
++  backdrop-filter: var(--zen-ardia-glass-filter) !important;
++  -webkit-backdrop-filter: var(--zen-ardia-glass-filter) !important;
 +  cursor: pointer !important;
-+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35) !important;
++  box-shadow: var(--zen-ardia-glass-shadow-over-video) !important;
++  box-sizing: border-box !important;
 +  transition: background-color 150ms ease, transform 150ms cubic-bezier(0.2, 0, 0, 1) !important;
 +  padding: 0 !important;
 +  margin: 0 !important;
@@ -128,7 +135,7 @@ index c808890..142eb4e 100644
 +}
 +
 +.meet-btn:hover {
-+  background-color: rgba(95, 99, 104, 0.95) !important;
++  background-color: rgba(95, 99, 104, 0.82) !important;
 +  transform: scale(1.08) !important;
 +}
 +
@@ -137,25 +144,25 @@ index c808890..142eb4e 100644
 +}
 +
 +#meet-mic-btn.is-muted {
-+  background-color: #ea4335 !important;
++  background-color: rgba(234, 67, 53, 0.88) !important;
 +}
 +
 +#meet-mic-btn.is-muted:hover {
-+  background-color: #d93025 !important;
++  background-color: rgba(217, 48, 37, 0.92) !important;
 +}
 +
 +#meet-camera-btn.is-off {
-+  background-color: #ea4335 !important;
++  background-color: rgba(234, 67, 53, 0.88) !important;
 +}
 +
 +#meet-camera-btn.is-off:hover {
-+  background-color: #d93025 !important;
++  background-color: rgba(217, 48, 37, 0.92) !important;
 +}
 +
 +.meet-btn-hangup {
-+  background-color: #ea4335 !important;
++  background-color: rgba(234, 67, 53, 0.88) !important;
 +}
 +
 +.meet-btn-hangup:hover {
-+  background-color: #d93025 !important;
++  background-color: rgba(217, 48, 37, 0.92) !important;
 +}

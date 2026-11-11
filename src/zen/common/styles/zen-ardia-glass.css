@@ -1,0 +1,64 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+/*
+ * Ardia frosted glass.
+ *
+ * One recipe for every translucent surface we add on top of the browser UI, so
+ * the swipe capsule, its history sheet and the Picture-in-Picture call controls
+ * read as the same material as the sidebar's acrylic panels and the tab hover
+ * preview instead of as three different levels of transparency.
+ *
+ * This file is the only place the blur strength, fill, rim and lift shadow are
+ * declared. Browser chrome consumes the tokens from zen-single-components.css
+ * (`%include`); other chrome documents (the PiP player) link this sheet
+ * directly. A consumer may re-declare `--zen-ardia-glass-fill` locally when a
+ * surface needs to be denser, and must not re-declare the blur.
+ */
+
+:root {
+  /* Ardia's `VisualEffect material="popover"`, approximated with the same
+     acrylic recipe the sidebar panels use: a heavy backdrop blur over a tinted
+     fill that keeps text behind the surface from reading through it. */
+  --zen-ardia-glass-filter: blur(42px) saturate(180%);
+  --zen-ardia-glass-fill: light-dark(
+    rgba(246, 246, 250, 0.86),
+    rgba(38, 39, 43, 0.86)
+  );
+  --zen-ardia-glass-rim: 1px solid
+    light-dark(rgba(0, 0, 0, 0.125), rgba(255, 255, 255, 0.15));
+  --zen-ardia-glass-shadow: 0 2px 8px
+      light-dark(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.25)),
+    inset 0 1px 1px
+      light-dark(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.14));
+
+  /* Surfaces that always float over video (the PiP call controls): there is no
+     window scheme to follow there, and the video is what the blur reads
+     through, so these stay a fixed dark tint. */
+  --zen-ardia-glass-fill-over-video: rgba(38, 39, 43, 0.86);
+  --zen-ardia-glass-rim-over-video: 1px solid rgba(255, 255, 255, 0.15);
+  --zen-ardia-glass-shadow-over-video: 0 2px 8px rgba(0, 0, 0, 0.35),
+    inset 0 1px 1px rgba(255, 255, 255, 0.14);
+}
+
+/* No transparency: the blur would be disabled by the platform anyway, so drop
+   it and paint an opaque surface instead of a washed-out one. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --zen-ardia-glass-filter: none;
+    --zen-ardia-glass-fill: light-dark(#f2f2f7, #252629);
+    --zen-ardia-glass-fill-over-video: #252629;
+    --zen-ardia-glass-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+    --zen-ardia-glass-shadow-over-video: 0 4px 14px rgba(0, 0, 0, 0.4);
+  }
+}
+
+.zen-ardia-glass {
+  background-color: var(--zen-ardia-glass-fill);
+  backdrop-filter: var(--zen-ardia-glass-filter) !important;
+  -webkit-backdrop-filter: var(--zen-ardia-glass-filter) !important;
+  border: var(--zen-ardia-glass-rim);
+  box-shadow: var(--zen-ardia-glass-shadow);
+  box-sizing: border-box;
+}
