@@ -65,11 +65,33 @@ jobs:
 
       - name: Install dependencies (system)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3 python3-pip zstd yasm nasm build-essential \
-            libgtk2.0-dev libpython3-dev m4 uuid libasound2-dev libcurl4-openssl-dev \
-            libdbus-1-dev libdrm-dev libdbus-glib-1-dev libgtk-3-dev libpulse-dev \
-            libx11-xcb-dev libxt-dev xvfb libvips-dev pkg-config --fix-missing
+          set -uo pipefail
+          packages=(
+            python3 python3-pip zstd yasm nasm build-essential
+            libgtk2.0-dev libpython3-dev m4 uuid libasound2-dev libcurl4-openssl-dev
+            libdbus-1-dev libdrm-dev libdbus-glib-1-dev libgtk-3-dev libpulse-dev
+            libx11-xcb-dev libxt-dev xvfb libvips-dev pkg-config
+          )
+          apt_opts=(
+            -o Acquire::Retries=10
+            -o Acquire::http::Timeout=30
+            -o Acquire::https::Timeout=30
+          )
+
+          # The Ubuntu mirrors occasionally fail DNS resolution on hosted runners
+          # ("Temporary failure resolving 'azure.archive.ubuntu.com'"), which used to
+          # kill the whole build. Retry the update/install pair a few times instead.
+          for attempt in 1 2 3 4 5; do
+            sudo apt-get "${apt_opts[@]}" update \
+              && sudo apt-get "${apt_opts[@]}" install -y --fix-missing "${packages[@]}" \
+              && { echo "System dependencies installed on attempt $attempt"; exit 0; }
+            echo "::warning::apt-get failed (attempt $attempt of 5); retrying"
+            sudo rm -rf /var/lib/apt/lists/partial
+            sleep $((attempt * 15))
+          done
+
+          echo "::error::Unable to install system dependencies after 5 attempts"
+          exit 1
 
       - name: Install dependencies (npm)
         run: |
