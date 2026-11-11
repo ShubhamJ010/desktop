@@ -66,7 +66,7 @@ index dfa666a..a9656a9 100644
  /**
   * Function to resize and reposition the PiP window
   *
-@@ -422,16 +479,101 @@ let Player = {
+@@ -422,16 +479,105 @@ let Player = {
        document.documentElement.classList.add("seethrough-mode");
      }
  
@@ -117,23 +117,27 @@ index dfa666a..a9656a9 100644
 +    let meetControls = document.createElement("div");
 +    meetControls.id = "meet-controls";
 +
++    // `control-item` is what gives these the same show/hide behaviour as the
++    // window's own buttons (close, minimize, unpip): upstream paints every
++    // .control-item at opacity 0 and only raises it while `#controls` is
++    // [showing]/[keying] or the pointer is over the button.
 +    let micBtn = document.createElement("button");
 +    micBtn.id = "meet-mic-btn";
-+    micBtn.className = "meet-btn";
++    micBtn.className = "meet-btn control-item";
 +    micBtn.setAttribute("title", "Toggle Microphone");
 +    micBtn.setAttribute("aria-label", "Toggle Microphone");
 +    setMeetButtonIcon(micBtn, MEET_PATHS.micOn);
 +
 +    let camBtn = document.createElement("button");
 +    camBtn.id = "meet-camera-btn";
-+    camBtn.className = "meet-btn";
++    camBtn.className = "meet-btn control-item";
 +    camBtn.setAttribute("title", "Toggle Camera");
 +    camBtn.setAttribute("aria-label", "Toggle Camera");
 +    setMeetButtonIcon(camBtn, MEET_PATHS.camOn);
 +
 +    let leaveBtn = document.createElement("button");
 +    leaveBtn.id = "meet-leave-btn";
-+    leaveBtn.className = "meet-btn meet-btn-hangup";
++    leaveBtn.className = "meet-btn meet-btn-hangup control-item";
 +    leaveBtn.setAttribute("title", "Leave Call");
 +    leaveBtn.setAttribute("aria-label", "Leave Call");
 +    setMeetButtonIcon(leaveBtn, MEET_PATHS.hangup);
@@ -168,7 +172,7 @@ index dfa666a..a9656a9 100644
    setupTooltip(elId, l10nId, shortcutId) {
      const el = document.getElementById(elId);
      const shortcut = document.getElementById(shortcutId);
-@@ -910,7 +1052,9 @@ let Player = {
+@@ -910,7 +1056,9 @@ let Player = {
    },
  
    onClick(event) {
@@ -179,7 +183,7 @@ index dfa666a..a9656a9 100644
        case "audio": {
          this.toggleMute();
          break;
-@@ -921,6 +1065,33 @@ let Player = {
+@@ -921,6 +1069,33 @@ let Player = {
          break;
        }
  
@@ -213,7 +217,7 @@ index dfa666a..a9656a9 100644
        case "playpause": {
          if (!this.isPlaying) {
            this.actor.sendAsyncMessage("PictureInPicture:Play");
-@@ -1434,6 +1605,15 @@ let Player = {
+@@ -1434,6 +1609,15 @@ let Player = {
    onResize() {
      this.toggleSubtitlesSettingsPanel({ forceHide: true });
      this.togglePlaybackRatePanel({ forceHide: true });

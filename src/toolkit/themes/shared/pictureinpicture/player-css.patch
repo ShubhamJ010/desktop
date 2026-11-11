@@ -2,7 +2,7 @@ diff --git a/toolkit/themes/shared/pictureinpicture/player.css b/toolkit/themes/
 index c808890..142eb4e 100644
 --- a/toolkit/themes/shared/pictureinpicture/player.css
 +++ b/toolkit/themes/shared/pictureinpicture/player.css
-@@ -810,3 +810,163 @@ body:not(:fullscreen) #fullscreen {
+@@ -810,3 +810,166 @@ body:not(:fullscreen) #fullscreen {
      justify-self: center;
    }
  }
@@ -114,7 +114,10 @@ index c808890..142eb4e 100644
 +  cursor: pointer !important;
 +  box-shadow: var(--zen-ardia-glass-shadow-over-video) !important;
 +  box-sizing: border-box !important;
-+  transition: background-color 150ms ease, transform 150ms cubic-bezier(0.2, 0, 0, 1) !important;
++  /* Keep the upstream .control-item fade in the transition, so the call controls
++     appear and disappear with the rest of the PiP chrome. */
++  transition: background-color 150ms ease, transform 150ms cubic-bezier(0.2, 0, 0, 1),
++    opacity 160ms linear !important;
 +  padding: 0 !important;
 +  margin: 0 !important;
 +  position: relative !important;
