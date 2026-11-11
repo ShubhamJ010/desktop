@@ -625,6 +625,17 @@ body,
               transform var(--zen-swipe-list-spring-duration) var(--zen-swipe-spring);
 }
 
+/* Reversing the swipe takes the sheet back into the chevron it grew out of. The
+   sheet's offset and radius have no transition on the plain capsule, so give it
+   the spring while the collapse is in flight; the sheet geometry is cleared in
+   the same frame the class is added, which is what starts the morph. */
+.zen-swipe-capsule.zen-swipe-capsule-morph {
+  transition: width 270ms var(--zen-swipe-spring),
+              height 270ms var(--zen-swipe-spring),
+              transform 270ms var(--zen-swipe-spring),
+              border-radius 270ms var(--zen-swipe-spring);
+}
+
 /* The chevron fades out as the list fades in (Ardia multiplies the icon
    opacity by the inverse of the list's appear value). This has to be as
    specific as the `will-navigate` rule that raises the chevron to full

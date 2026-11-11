@@ -31,7 +31,7 @@
        gHistorySwipeAnimation.stopAnimation();
        this.processSwipeEvent(aEvent, aDir);
      },
-@@ -687,6 +704,69 @@
+@@ -687,6 +704,75 @@
  };
  
  // History Swipe Animation Support (bug 678392)
@@ -62,6 +62,12 @@
 +// confirmed and the fingers have been still for this long. Every horizontal
 +// update restarts the wait, so a continuous swipe never pops the sheet open.
 +const ZEN_SWIPE_LIST_HOLD_MS = 300;
++
++// Ardia: `swipeMotion.ts` confirmation. |delta| >= 0.25 (75pt of travel)
++// confirms the gesture and arms the sheet. Falling back below it - i.e. swiping
++// the other way - takes the gesture back, so the sheet collapses into the
++// chevron again and nothing is navigated to.
++const ZEN_SWIPE_CONFIRM_DELTA = 0.25;
 +
 +// The vertical component of a macOS swipe never reaches chrome JS (Gecko only
 +// forwards the horizontal delta), so the Cocoa side pushes the gesture's
@@ -101,7 +107,7 @@
  var gHistorySwipeAnimation = {
    active: false,
    isLTR: false,
-@@ -736,6 +816,10 @@
+@@ -736,6 +822,10 @@
     *        Whether we're dealing with a vertical swipe or not.
     */
    startAnimation: function HSA_startAnimation() {
@@ -112,7 +118,7 @@
      // old boxes can still be around (if completing fade out for example), we
      // always want to remove them and recreate them because they can be
      // attached to an old browser stack that's no longer in use.
-@@ -743,6 +827,9 @@
+@@ -743,6 +833,9 @@
      this._isStoppingAnimation = false;
      this._canGoBack = this.canGoBack();
      this._canGoForward = this.canGoForward();
@@ -122,7 +128,7 @@
      if (this.active) {
        this._addBoxes();
      }
-@@ -766,16 +853,26 @@
+@@ -766,16 +859,26 @@
      } else if (this._lastVisibleBox) {
        box = this._lastVisibleBox;
        box.collapsed = false;
@@ -153,7 +159,7 @@
        window.getComputedStyle(box).opacity;
      } else {
        this._isStoppingAnimation = false;
-@@ -784,24 +881,44 @@
+@@ -784,24 +887,44 @@
    },
  
    _swipeCommand: function HSA_swipeCommand(aSwipeUpdate) {
@@ -208,16 +214,22 @@
    },
  
    /**
-@@ -818,71 +935,80 @@
+@@ -818,71 +941,87 @@
      if (!this.isAnimationRunning() || this._isStoppingAnimation) {
        return;
      }
-+    // Once the sheet is up it owns the gesture: the remaining finger travel is
-+    // vertical, so any horizontal delta that still arrives is noise. Running the
-+    // capsule layout here would also collapse both rails as soon as the
-+    // horizontal delta reads as zero, which hid the sheet mid-hold.
++    // Once the sheet is up, vertical travel belongs to it and horizontal travel
++    // is noise - until the user takes the swipe back. Pulling the gesture below
++    // the confirmation threshold morphs the sheet into the chevron it grew out
++    // of, and the unconfirmed path below then dismisses that chevron exactly as
++    // it does for a swipe that was never confirmed. Running the capsule layout
++    // while the sheet is open would also collapse both rails as soon as the
++    // horizontal delta reads zero, which hid the sheet mid-hold.
 +    if (this._swipeList) {
-+      return;
++      if (Math.abs(aSwipeUpdate.delta) >= ZEN_SWIPE_CONFIRM_DELTA) {
++        return;
++      }
++      this._collapseSwipeHistory();
 +    }
  
 -    // Convert `aVal` into [0, 1] range.
@@ -243,7 +255,8 @@
 -      progress * (this.translateEndPosition - this.translateStartPosition);
 -    if (!this.isLTR) {
 -      translate = -translate;
-+    const isConfirmed = Math.abs(aSwipeUpdate.delta) >= 0.25;
++    const isConfirmed =
++      Math.abs(aSwipeUpdate.delta) >= ZEN_SWIPE_CONFIRM_DELTA;
 +    if (isConfirmed !== this._wasConfirmed) {
 +      this._wasConfirmed = isConfirmed;
 +      if (isConfirmed) {
@@ -331,7 +344,7 @@
      }
    },
  
-@@ -901,7 +1027,11 @@
+@@ -901,7 +1040,11 @@
     * @return true if there is a previous page in history, false otherwise.
     */
    canGoBack: function HSA_canGoBack() {
@@ -344,7 +357,7 @@
    },
  
    /**
-@@ -919,7 +1049,512 @@
+@@ -919,7 +1062,534 @@
     * any. This will also result in the animation overlay to be torn down.
     */
    swipeEndEventReceived: function HSA_swipeEndEventReceived() {
@@ -376,6 +389,9 @@
 +  //      row is kept on the window's centre line by sliding the sheet itself.
 +  //   5. Releasing navigates straight to the highlighted entry and the overlay
 +  //      fades out with the normal dismissal animation.
++  //   6. Reversing the swipe instead of releasing takes the gesture back: the
++  //      sheet morphs into the chevron it grew out of and the normal cancel
++  //      animation dismisses that chevron, leaving history untouched.
 +
 +  /**
 +   * Publishes the current gesture phase for the native scroll monitor.
@@ -657,6 +673,7 @@
 +      list.appendChild(row);
 +    }
 +
++    capsule.classList.remove("zen-swipe-capsule-morph");
 +    capsule.classList.add("has-list");
 +    capsule.style.width = `${ZEN_SWIPE_LIST_WIDTH}px`;
 +    capsule.style.height = `${
@@ -769,6 +786,20 @@
 +  },
 +
 +  /**
++   * Takes an open sheet back out of the gesture when the user reverses the
++   * swipe: the sheet shrinks back into the chevron capsule it grew out of, and
++   * the caller's unconfirmed path then dismisses that capsule exactly like a
++   * swipe that was cancelled before it was ever confirmed.
++   */
++  _collapseSwipeHistory: function HSA__collapseSwipeHistory() {
++    if (!this._swipeList) {
++      return;
++    }
++    this._zenSwipeDebug("collapsing sheet: swipe reversed");
++    this._dismissSwipeHistory();
++  },
++
++  /**
 +   * Stops the sheet from receiving input and forgets its state.
 +   *
 +   * @param aKeepDOM When true the sheet DOM is left in place so the dismissal
@@ -797,6 +828,10 @@
 +      state.list.remove();
 +    }
 +    if (state.capsule) {
++      // Let the sheet morph back into the chevron disc instead of snapping: the
++      // morph class puts the sheet's own offset and radius on the capsule's
++      // transition, so clearing the inline geometry animates the collapse.
++      state.capsule.classList.add("zen-swipe-capsule-morph");
 +      state.capsule.classList.remove("has-list");
 +      state.capsule.style.transform = "";
 +      state.capsule.style.width = "";
@@ -857,7 +892,7 @@
    },
  
    /**
-@@ -929,7 +1564,14 @@
+@@ -929,7 +1599,14 @@
     * return true if supported, false otherwise.
     */
    _isSupported: function HSA__isSupported() {
@@ -873,7 +908,7 @@
    },
  
    handleEvent: function HSA_handleEvent(aEvent) {
-@@ -954,42 +1596,82 @@
+@@ -954,42 +1631,82 @@
     * Adds the boxes that contain the arrows used during the swipe animation.
     */
    _addBoxes: function HSA__addBoxes() {
@@ -963,7 +998,7 @@
      if (this._container) {
        this._container.remove();
      }
-@@ -1011,10 +1693,14 @@
+@@ -1011,10 +1728,14 @@
      return element;
    },
  
