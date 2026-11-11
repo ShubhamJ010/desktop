@@ -130,7 +130,7 @@
      // old boxes can still be around (if completing fade out for example), we
      // always want to remove them and recreate them because they can be
      // attached to an old browser stack that's no longer in use.
-@@ -743,6 +845,13 @@
+@@ -743,6 +845,14 @@
      this._isStoppingAnimation = false;
      this._canGoBack = this.canGoBack();
      this._canGoForward = this.canGoForward();
@@ -141,10 +141,11 @@
 +    this._swipePeakDelta = 0;
 +    this._swipeDirSign = 0;
 +    this._swipeReverseCount = 0;
++    this._swipeCancelled = false;
      if (this.active) {
        this._addBoxes();
      }
-@@ -766,16 +875,26 @@
+@@ -766,16 +876,26 @@
      } else if (this._lastVisibleBox) {
        box = this._lastVisibleBox;
        box.collapsed = false;
@@ -175,7 +176,7 @@
        window.getComputedStyle(box).opacity;
      } else {
        this._isStoppingAnimation = false;
-@@ -784,24 +903,44 @@
+@@ -784,24 +904,44 @@
    },
  
    _swipeCommand: function HSA_swipeCommand(aSwipeUpdate) {
@@ -230,7 +231,7 @@
    },
  
    /**
-@@ -818,71 +957,88 @@
+@@ -818,71 +958,107 @@
      if (!this.isAnimationRunning() || this._isStoppingAnimation) {
        return;
      }
@@ -247,6 +248,25 @@
 +        return;
 +      }
 +      this._collapseSwipeHistory();
++    }
++
++    if (this._swipeCancelled) {
++      const rawProgress = Math.min(Math.abs(aSwipeUpdate.delta) * 4.0, 2.0);
++      const limit = 86;
++      const val = rawProgress * limit;
++      const offset =
++        val <= limit
++          ? val - 72
++          : limit +
++            (1 - 1 / (((val - limit) * 0.15) / limit + 1)) * limit -
++            72;
++      const activeBox =
++        this._swipeDirection === "forward" ? this._nextBox : this._prevBox;
++      if (activeBox) {
++        activeBox.style.transform = `translateX(${offset}px)`;
++        activeBox.classList.remove("will-navigate");
++      }
++      return;
 +    }
  
 -    // Convert `aVal` into [0, 1] range.
@@ -361,7 +381,7 @@
      }
    },
  
-@@ -901,7 +1057,11 @@
+@@ -901,7 +1077,11 @@
     * @return true if there is a previous page in history, false otherwise.
     */
    canGoBack: function HSA_canGoBack() {
@@ -374,7 +394,7 @@
    },
  
    /**
-@@ -919,7 +1079,585 @@
+@@ -919,7 +1099,600 @@
     * any. This will also result in the animation overlay to be torn down.
     */
    swipeEndEventReceived: function HSA_swipeEndEventReceived() {
@@ -813,16 +833,16 @@
 +   * Reversal is travel away from the furthest point the gesture reached in its
 +   * confirmed direction. It is deliberately not "the horizontal delta fell
 +   * below the confirmation threshold": the finger stops moving sideways the
-+   * moment it starts picking a row vertically, and that used to collapse the
-+   * sheet as soon as it was scrolled. Once vertical travel has been seen the
-+   * sheet is committed to the pick, so a reverse swipe has to be a new gesture.
++   * moment it starts picking a row vertically. Deliberate horizontal travel
++   * opposite the swipe direction collapses the sheet and cancels navigation,
++   * even after rows have been browsed.
 +   *
 +   * @param aSwipeUpdate The swipe update being processed.
 +   * @return true when the update is a confirmed reverse swipe.
 +   */
 +  _sheetSwipedBack: function HSA__sheetSwipedBack(aSwipeUpdate) {
 +    const state = this._swipeList;
-+    if (!state || state.dyBase !== null) {
++    if (!state) {
 +      this._swipeReverseCount = 0;
 +      return false;
 +    }
@@ -865,6 +885,16 @@
 +    }
 +    this._zenSwipeDebug("collapsing sheet: swipe reversed");
 +    this._dismissSwipeHistory();
++    this._zenSwipePhase(1);
++    this._confirmed = false;
++    this._wasConfirmed = false;
++    this._swipeCancelled = true;
++    if (this._prevBox) {
++      this._prevBox.classList.remove("will-navigate");
++    }
++    if (this._nextBox) {
++      this._nextBox.classList.remove("will-navigate");
++    }
 +  },
 +
 +  /**
@@ -916,6 +946,11 @@
 +   *         so the caller must not process the plain one-step swipe.
 +   */
 +  commitSwipeHistorySelection: function HSA_commitSwipeHistorySelection() {
++    if (this._swipeCancelled) {
++      this._swipeCancelled = false;
++      this.stopAnimation();
++      return true;
++    }
 +    const state = this._swipeList;
 +    if (!state) {
 +      if (!this._swipeCommitted) {
@@ -960,7 +995,7 @@
    },
  
    /**
-@@ -929,7 +1667,14 @@
+@@ -929,7 +1702,14 @@
     * return true if supported, false otherwise.
     */
    _isSupported: function HSA__isSupported() {
@@ -976,7 +1011,7 @@
    },
  
    handleEvent: function HSA_handleEvent(aEvent) {
-@@ -954,42 +1699,82 @@
+@@ -954,42 +1734,83 @@
     * Adds the boxes that contain the arrows used during the swipe animation.
     */
    _addBoxes: function HSA__addBoxes() {
@@ -1061,12 +1096,13 @@
      this._lastVisibleTranslate = "";
 +    this._wasConfirmed = false;
 +    this._confirmed = false;
++    this._swipeCancelled = false;
 +    this._swipeDirection = "";
 +    this._zenSwipePhase(0);
      if (this._container) {
        this._container.remove();
      }
-@@ -1011,10 +1796,14 @@
+@@ -1011,10 +1832,14 @@
      return element;
    },
  
