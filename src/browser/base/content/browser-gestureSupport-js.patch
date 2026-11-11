@@ -31,7 +31,7 @@
        gHistorySwipeAnimation.stopAnimation();
        this.processSwipeEvent(aEvent, aDir);
      },
-@@ -687,6 +704,75 @@
+@@ -687,6 +704,87 @@
  };
  
  // History Swipe Animation Support (bug 678392)
@@ -64,10 +64,22 @@
 +const ZEN_SWIPE_LIST_HOLD_MS = 300;
 +
 +// Ardia: `swipeMotion.ts` confirmation. |delta| >= 0.25 (75pt of travel)
-+// confirms the gesture and arms the sheet. Falling back below it - i.e. swiping
-+// the other way - takes the gesture back, so the sheet collapses into the
-+// chevron again and nothing is navigated to.
++// confirms the gesture and arms the sheet. Taking the swipe back takes the
++// gesture back, so the sheet collapses into the chevron again and nothing is
++// navigated to.
 +const ZEN_SWIPE_CONFIRM_DELTA = 0.25;
++
++// How much travel *against* the confirmed direction, in the same 0..1 swipe
++// delta units (1.0 = 300pt), takes an open sheet back. Reversal is measured
++// from the furthest point the gesture reached, never as "the horizontal delta
++// dropped below ZEN_SWIPE_CONFIRM_DELTA": the finger stops moving sideways as
++// soon as it starts picking a row vertically, and treating that as a reversal
++// collapsed the sheet the moment it was scrolled.
++const ZEN_SWIPE_CANCEL_DELTA = 0.1;
++
++// A reversal also has to survive this many consecutive updates, so one jittery
++// trackpad sample cannot take the sheet back.
++const ZEN_SWIPE_CANCEL_SAMPLES = 3;
 +
 +// The vertical component of a macOS swipe never reaches chrome JS (Gecko only
 +// forwards the horizontal delta), so the Cocoa side pushes the gesture's
@@ -107,7 +119,7 @@
  var gHistorySwipeAnimation = {
    active: false,
    isLTR: false,
-@@ -736,6 +822,10 @@
+@@ -736,6 +834,10 @@
     *        Whether we're dealing with a vertical swipe or not.
     */
    startAnimation: function HSA_startAnimation() {
@@ -118,17 +130,21 @@
      // old boxes can still be around (if completing fade out for example), we
      // always want to remove them and recreate them because they can be
      // attached to an old browser stack that's no longer in use.
-@@ -743,6 +833,9 @@
+@@ -743,6 +845,13 @@
      this._isStoppingAnimation = false;
      this._canGoBack = this.canGoBack();
      this._canGoForward = this.canGoForward();
 +    // A new gesture starts a new history-sheet session, so a commit flag left
 +    // behind by the previous gesture (see commitSwipeHistorySelection) is stale.
 +    this._swipeCommitted = false;
++    // Reversal bookkeeping for the sheet (see ZEN_SWIPE_CANCEL_DELTA).
++    this._swipePeakDelta = 0;
++    this._swipeDirSign = 0;
++    this._swipeReverseCount = 0;
      if (this.active) {
        this._addBoxes();
      }
-@@ -766,16 +859,26 @@
+@@ -766,16 +875,26 @@
      } else if (this._lastVisibleBox) {
        box = this._lastVisibleBox;
        box.collapsed = false;
@@ -159,7 +175,7 @@
        window.getComputedStyle(box).opacity;
      } else {
        this._isStoppingAnimation = false;
-@@ -784,24 +887,44 @@
+@@ -784,24 +903,44 @@
    },
  
    _swipeCommand: function HSA_swipeCommand(aSwipeUpdate) {
@@ -214,19 +230,20 @@
    },
  
    /**
-@@ -818,71 +941,87 @@
+@@ -818,71 +957,88 @@
      if (!this.isAnimationRunning() || this._isStoppingAnimation) {
        return;
      }
-+    // Once the sheet is up, vertical travel belongs to it and horizontal travel
-+    // is noise - until the user takes the swipe back. Pulling the gesture below
-+    // the confirmation threshold morphs the sheet into the chevron it grew out
-+    // of, and the unconfirmed path below then dismisses that chevron exactly as
-+    // it does for a swipe that was never confirmed. Running the capsule layout
-+    // while the sheet is open would also collapse both rails as soon as the
-+    // horizontal delta reads zero, which hid the sheet mid-hold.
++    // Once the sheet is up it owns the gesture: the finger travels vertically to
++    // pick a row, so horizontal samples are no longer progress. Only travel
++    // against the confirmed direction takes the swipe back - the sheet then
++    // morphs into the chevron it grew out of, and the unconfirmed path below
++    // dismisses that chevron exactly as it does for a swipe that was never
++    // confirmed. Running the capsule layout while the sheet is open would also
++    // collapse both rails as soon as the horizontal delta reads zero, which hid
++    // the sheet mid-hold.
 +    if (this._swipeList) {
-+      if (Math.abs(aSwipeUpdate.delta) >= ZEN_SWIPE_CONFIRM_DELTA) {
++      if (!this._sheetSwipedBack(aSwipeUpdate)) {
 +        return;
 +      }
 +      this._collapseSwipeHistory();
@@ -344,7 +361,7 @@
      }
    },
  
-@@ -901,7 +1040,11 @@
+@@ -901,7 +1057,11 @@
     * @return true if there is a previous page in history, false otherwise.
     */
    canGoBack: function HSA_canGoBack() {
@@ -357,7 +374,7 @@
    },
  
    /**
-@@ -919,7 +1062,534 @@
+@@ -919,7 +1079,585 @@
     * any. This will also result in the animation overlay to be torn down.
     */
    swipeEndEventReceived: function HSA_swipeEndEventReceived() {
@@ -437,6 +454,11 @@
 +    if (this._swipeList) {
 +      return;
 +    }
++    // Reversal is measured away from where the gesture was confirmed, so the
++    // furthest point starts here and the direction is the one just confirmed.
++    this._swipeDirSign = Math.sign(aSwipeUpdate.delta) || 1;
++    this._swipePeakDelta = Math.abs(aSwipeUpdate.delta);
++    this._swipeReverseCount = 0;
 +    this._swipeDirection = this._willGoBack(aSwipeUpdate)
 +      ? "back"
 +      : this._willGoForward(aSwipeUpdate)
@@ -786,6 +808,52 @@
 +  },
 +
 +  /**
++   * Tells whether this update takes an open sheet back out of the gesture.
++   *
++   * Reversal is travel away from the furthest point the gesture reached in its
++   * confirmed direction. It is deliberately not "the horizontal delta fell
++   * below the confirmation threshold": the finger stops moving sideways the
++   * moment it starts picking a row vertically, and that used to collapse the
++   * sheet as soon as it was scrolled. Once vertical travel has been seen the
++   * sheet is committed to the pick, so a reverse swipe has to be a new gesture.
++   *
++   * @param aSwipeUpdate The swipe update being processed.
++   * @return true when the update is a confirmed reverse swipe.
++   */
++  _sheetSwipedBack: function HSA__sheetSwipedBack(aSwipeUpdate) {
++    const state = this._swipeList;
++    if (!state || state.dyBase !== null) {
++      this._swipeReverseCount = 0;
++      return false;
++    }
++    const delta = aSwipeUpdate.delta;
++    if (!Number.isFinite(delta) || delta === 0) {
++      return false;
++    }
++    const sign = this._swipeDirSign || Math.sign(delta) || 1;
++    const magnitude = Math.abs(delta);
++    if (sign * delta > 0 && magnitude > this._swipePeakDelta) {
++      this._swipePeakDelta = magnitude;
++    }
++    const travelledBack = this._swipePeakDelta - sign * delta;
++    if (travelledBack < ZEN_SWIPE_CANCEL_DELTA) {
++      this._swipeReverseCount = 0;
++      return false;
++    }
++    this._swipeReverseCount++;
++    if (
++      travelledBack < ZEN_SWIPE_CANCEL_DELTA * 2 &&
++      this._swipeReverseCount < ZEN_SWIPE_CANCEL_SAMPLES
++    ) {
++      return false;
++    }
++    this._zenSwipeDebug(
++      "reverse swipe: " + travelledBack.toFixed(3) + " back from the peak"
++    );
++    return true;
++  },
++
++  /**
 +   * Takes an open sheet back out of the gesture when the user reverses the
 +   * swipe: the sheet shrinks back into the chevron capsule it grew out of, and
 +   * the caller's unconfirmed path then dismisses that capsule exactly like a
@@ -892,7 +960,7 @@
    },
  
    /**
-@@ -929,7 +1599,14 @@
+@@ -929,7 +1667,14 @@
     * return true if supported, false otherwise.
     */
    _isSupported: function HSA__isSupported() {
@@ -908,7 +976,7 @@
    },
  
    handleEvent: function HSA_handleEvent(aEvent) {
-@@ -954,42 +1631,82 @@
+@@ -954,42 +1699,82 @@
     * Adds the boxes that contain the arrows used during the swipe animation.
     */
    _addBoxes: function HSA__addBoxes() {
@@ -998,7 +1066,7 @@
      if (this._container) {
        this._container.remove();
      }
-@@ -1011,10 +1728,14 @@
+@@ -1011,10 +1796,14 @@
      return element;
    },
  
