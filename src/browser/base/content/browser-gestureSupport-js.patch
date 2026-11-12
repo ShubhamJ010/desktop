@@ -75,11 +75,11 @@
 +// dropped below ZEN_SWIPE_CONFIRM_DELTA": the finger stops moving sideways as
 +// soon as it starts picking a row vertically, and treating that as a reversal
 +// collapsed the sheet the moment it was scrolled.
-+const ZEN_SWIPE_CANCEL_DELTA = 0.1;
++const ZEN_SWIPE_CANCEL_DELTA = 0.2;
 +
 +// A reversal also has to survive this many consecutive updates, so one jittery
 +// trackpad sample cannot take the sheet back.
-+const ZEN_SWIPE_CANCEL_SAMPLES = 3;
++const ZEN_SWIPE_CANCEL_SAMPLES = 2;
 +
 +// The vertical component of a macOS swipe never reaches chrome JS (Gecko only
 +// forwards the horizontal delta), so the Cocoa side pushes the gesture's
@@ -231,7 +231,7 @@
    },
  
    /**
-@@ -818,71 +958,107 @@
+@@ -818,71 +958,89 @@
      if (!this.isAnimationRunning() || this._isStoppingAnimation) {
        return;
      }
@@ -248,25 +248,6 @@
 +        return;
 +      }
 +      this._collapseSwipeHistory();
-+    }
-+
-+    if (this._swipeCancelled) {
-+      const rawProgress = Math.min(Math.abs(aSwipeUpdate.delta) * 4.0, 2.0);
-+      const limit = 86;
-+      const val = rawProgress * limit;
-+      const offset =
-+        val <= limit
-+          ? val - 72
-+          : limit +
-+            (1 - 1 / (((val - limit) * 0.15) / limit + 1)) * limit -
-+            72;
-+      const activeBox =
-+        this._swipeDirection === "forward" ? this._nextBox : this._prevBox;
-+      if (activeBox) {
-+        activeBox.style.transform = `translateX(${offset}px)`;
-+        activeBox.classList.remove("will-navigate");
-+      }
-+      return;
 +    }
  
 -    // Convert `aVal` into [0, 1] range.
@@ -293,6 +274,7 @@
 -    if (!this.isLTR) {
 -      translate = -translate;
 +    const isConfirmed =
++      !this._swipeCancelled &&
 +      Math.abs(aSwipeUpdate.delta) >= ZEN_SWIPE_CONFIRM_DELTA;
 +    if (isConfirmed !== this._wasConfirmed) {
 +      this._wasConfirmed = isConfirmed;
@@ -381,7 +363,7 @@
      }
    },
  
-@@ -901,7 +1077,11 @@
+@@ -901,7 +1059,11 @@
     * @return true if there is a previous page in history, false otherwise.
     */
    canGoBack: function HSA_canGoBack() {
@@ -394,7 +376,7 @@
    },
  
    /**
-@@ -919,7 +1099,600 @@
+@@ -919,7 +1081,606 @@
     * any. This will also result in the animation overlay to be torn down.
     */
    swipeEndEventReceived: function HSA_swipeEndEventReceived() {
@@ -817,6 +799,7 @@
 +      aDy - state.dyBase,
 +      state.items.length
 +    );
++    state.lastVerticalTime = Date.now();
 +    state.nudge = nudge;
 +    if (index !== state.selected) {
 +      state.selected = index;
@@ -850,19 +833,24 @@
 +    if (!Number.isFinite(delta) || delta === 0) {
 +      return false;
 +    }
++    const isScrollingVertically =
++      state.lastVerticalTime && Date.now() - state.lastVerticalTime < 250;
 +    const sign = this._swipeDirSign || Math.sign(delta) || 1;
 +    const magnitude = Math.abs(delta);
 +    if (sign * delta > 0 && magnitude > this._swipePeakDelta) {
 +      this._swipePeakDelta = magnitude;
 +    }
 +    const travelledBack = this._swipePeakDelta - sign * delta;
-+    if (travelledBack < ZEN_SWIPE_CANCEL_DELTA) {
++    const requiredDelta = isScrollingVertically
++      ? ZEN_SWIPE_CANCEL_DELTA * 1.4
++      : ZEN_SWIPE_CANCEL_DELTA;
++    if (travelledBack < requiredDelta) {
 +      this._swipeReverseCount = 0;
 +      return false;
 +    }
 +    this._swipeReverseCount++;
 +    if (
-+      travelledBack < ZEN_SWIPE_CANCEL_DELTA * 2 &&
++      travelledBack < requiredDelta * 1.3 &&
 +      this._swipeReverseCount < ZEN_SWIPE_CANCEL_SAMPLES
 +    ) {
 +      return false;
@@ -995,7 +983,7 @@
    },
  
    /**
-@@ -929,7 +1702,14 @@
+@@ -929,7 +1690,14 @@
     * return true if supported, false otherwise.
     */
    _isSupported: function HSA__isSupported() {
@@ -1011,7 +999,7 @@
    },
  
    handleEvent: function HSA_handleEvent(aEvent) {
-@@ -954,42 +1734,83 @@
+@@ -954,42 +1722,83 @@
     * Adds the boxes that contain the arrows used during the swipe animation.
     */
    _addBoxes: function HSA__addBoxes() {
@@ -1102,7 +1090,7 @@
      if (this._container) {
        this._container.remove();
      }
-@@ -1011,10 +1832,14 @@
+@@ -1011,10 +1820,14 @@
      return element;
    },
  
