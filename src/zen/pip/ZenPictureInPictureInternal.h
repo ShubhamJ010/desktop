@@ -16,6 +16,11 @@ struct Screen;
 - (void)_setPreventsActivation:(BOOL)prevents;
 - (BOOL)_preventsActivation;
 - (NSInteger)_resizeDirectionForMouseLocation:(NSPoint)location;
+// The only way into live-resize mode outside AppKit's own resize tracking loop.
+// It runs the same view callbacks (-viewWillStartLiveResize) a user edge drag
+// does, and that is what tells Gecko to stop laying out the picture per tick.
+- (void)_startLiveResize;
+- (void)_endLiveResize;
 @end
 
 namespace zen_pip {
@@ -24,7 +29,6 @@ constexpr CGFloat kPeek = 28;
 constexpr CGFloat kReturnMargin = 16;
 constexpr CGFloat kButtonMargin = 12, kButtonSize = 28;
 constexpr CFTimeInterval kCornerBendDuration = 0.2;
-constexpr CGFloat kRimAlpha = 0.17;
 
 // Virtual key codes for keyboard control
 constexpr unsigned short kKeySpace = 49;
@@ -84,11 +88,21 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (void)mouseExitedWindow;
 - (void)pinchBegan;
 - (void)pinchEnded;
-- (void)pinchEndedAtAnchor:(int)anchorCorner;
+- (void)pinchEndedAtFrame:(NSRect)target;
 - (void)snapToNearestCorner;
 - (void)setElevated:(BOOL)elevated animated:(BOOL)animated;
 - (void)setOverlayVisible:(BOOL)visible animated:(BOOL)animated;
 - (void)setPiPUIVisible:(BOOL)visible;
+// Programmatic live resize for the pinch/scroll session. AppKit treats the
+// gesture exactly like a user dragging an edge, which is what lets the window
+// server scale the last composited frame instead of Gecko re-laying-out the
+// picture on every tick. Both must be paired.
+- (void)beginOwnedLiveResize;
+- (void)endOwnedLiveResize;
+// Lift the card above the frontmost app for the duration of a gesture, without
+// activating the app or ordering the browser window front. Always paired.
+- (void)frontForGesture;
+- (void)standDownAfterGesture;
 @end
 
 @interface ZenPiPController () {
@@ -98,10 +112,27 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
   ZenPiPOverlay *_overlay;
   ZenPiPEdge _stashedEdge;
   BOOL _keepOnTop;
+  // Level the card was lifted from for the current gesture, and whether that
+  // lift is still applied.
+  NSInteger _restingLevel;
+  BOOL _frontedForGesture;
   NSMutableArray *_observers;
   NSTimer *_slide;
-  id _displayLink;  // CADisplayLink on macOS 14+; `id` keeps the API-availability
-                    // check out of the class layout (deployment target is 11.0).
+  id _displayLink;  // CADisplayLink on macOS 14+ for throwTick; `id` keeps the API-availability check out of class layout
+  id _animateDisplayLink;  // CADisplayLink on macOS 14+ for animateTick (120Hz ProMotion)
+  NSRect _animateFrom;
+  NSRect _animateTarget;
+  CFTimeInterval _animateStartAt;
+  BOOL _animateRestoreUI;
+  BOOL _animateSizeChanges;
+  BOOL _animatePinRight;
+  BOOL _animatePinLeft;
+  BOOL _animatePinTop;
+  BOOL _animatePinBottom;
+  CGFloat _animateAspect;
+  double _animateInitialDistX;
+  double _animateInitialDistY;
+  BOOL _awaitingMouseMoveToShowUI;
   BOOL _animating;
   BOOL _sawDrag;
   BOOL _swiping;
@@ -110,6 +141,16 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
   NSRect _unmagnifiedFrame;
   BOOL _isPinching;
   BOOL _isElevated;
+  BOOL _liveResizing;
+  // A live resize this code started (pinch/scroll), as opposed to the user
+  // dragging an edge. Its notifications are ignored and its chrome is applied
+  // by the pinch path instead.
+  BOOL _ownLiveResize;
+  // The owned live resize belongs to a size-changing snap animation, so ending
+  // motion must leave the mode. A pinch/scroll session owns its own and ends it
+  // from the zoom path, because cancelMotion runs on every wheel event.
+  BOOL _ownLiveResizeForAnimation;
+  BOOL _shadowSuppressedForResize;
   // Swipe pre-warm (armed while the pointer rests over the window).
   BOOL _armed;
   __unsafe_unretained NSScreen *_armedHome;
@@ -148,6 +189,8 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (void)toggleKeepOnTop:(id)sender;
 - (void)backToTabFromMenu:(id)sender;
 - (void)windowMoved;
+- (void)appBecameActive;
+- (void)sendOtherWindowsBack;
 - (void)fitCorners:(BOOL)animated;
 - (void)bendCornersTo:(CGFloat)radius animated:(BOOL)animated;
 - (void)screenChanged;
@@ -160,6 +203,10 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (NSRect)frameStashedAt:(ZenPiPEdge)edge;
 - (void)stashAt:(ZenPiPEdge)edge;
 - (void)animateTo:(NSRect)target;
+- (void)animateTo:(NSRect)target restoreUI:(BOOL)restoreUI;
+- (void)animateTick:(id)sender;
+- (void)armUIRestoreOnMouseMove;
+- (void)restoreUIOnMouseMove;
 - (void)cancelMotion;
 - (void)armSwipe;
 - (void)disarmSwipe;
@@ -175,6 +222,8 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (void)swipeEnded:(NSEvent *)event cancelled:(BOOL)cancelled;
 - (void)hideCursorIfNeeded;
 - (void)showCursorIfNeeded;
+- (void)hideShadowForResize;
+- (void)restoreShadowForResizeEnd;
 @end
 
 @interface ZenPiPController (Swipe)

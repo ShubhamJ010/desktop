@@ -1,5 +1,5 @@
 diff --git a/toolkit/components/pictureinpicture/content/player.js b/toolkit/components/pictureinpicture/content/player.js
-index dfa666a..a9656a9 100644
+index dfa666a..797745b 100644
 --- a/toolkit/components/pictureinpicture/content/player.js
 +++ b/toolkit/components/pictureinpicture/content/player.js
 @@ -112,6 +112,63 @@ function setIsMutedState(isMuted) {
@@ -66,7 +66,7 @@ index dfa666a..a9656a9 100644
  /**
   * Function to resize and reposition the PiP window
   *
-@@ -422,16 +479,105 @@ let Player = {
+@@ -422,16 +479,239 @@ let Player = {
        document.documentElement.classList.add("seethrough-mode");
      }
  
@@ -81,6 +81,19 @@ index dfa666a..a9656a9 100644
 +
 +    Services.obs.addObserver(this, "zen-pip-gesture-begin");
 +    Services.obs.addObserver(this, "zen-pip-gesture-end");
++    this._contentFreeze = null;
++    if (Services.prefs.getBoolPref("zen.pip.debug", false)) {
++      document.body.classList.add("pip-debug");
++    }
++    this._onMouseMoveAfterResize = () => {
++      if (this._awaitingMouseMoveAfterResize && !this._inNativeGesture) {
++        this._awaitingMouseMoveAfterResize = false;
++        if (document && document.body) {
++          document.body.classList.remove("pip-gesture-active");
++        }
++      }
++    };
++    window.addEventListener("mousemove", this._onMouseMoveAfterResize, { passive: true });
 +
      this._isInitialized = true;
  
@@ -90,10 +103,13 @@ index dfa666a..a9656a9 100644
    uninit() {
 +    Services.obs.removeObserver(this, "zen-pip-gesture-begin");
 +    Services.obs.removeObserver(this, "zen-pip-gesture-end");
-+    if (this._gestureResizeTimeout) {
-+      clearTimeout(this._gestureResizeTimeout);
-+      this._gestureResizeTimeout = null;
++    this._unpinChildViewport();
++    if (this._onMouseMoveAfterResize) {
++      window.removeEventListener("mousemove", this._onMouseMoveAfterResize);
++      this._onMouseMoveAfterResize = null;
 +    }
++    this._awaitingMouseMoveAfterResize = false;
++    this._inNativeGesture = false;
      this.resizeDebouncer.disarm();
      PictureInPicture.unload(window, this.actor);
    },
@@ -102,11 +118,129 @@ index dfa666a..a9656a9 100644
 +    if (!document || !document.body) return;
 +    switch (topic) {
 +      case "zen-pip-gesture-begin":
++        this._inNativeGesture = true;
++        this._awaitingMouseMoveAfterResize = false;
 +        document.body.classList.add("pip-gesture-active");
++        this._pinChildViewport();
 +        break;
 +      case "zen-pip-gesture-end":
-+        document.body.classList.remove("pip-gesture-active");
++        this._inNativeGesture = false;
++        this._awaitingMouseMoveAfterResize = true;
++        if (this._contentFreeze) {
++          this._contentFreeze.ending = true;
++        }
 +        break;
++    }
++  },
++
++  // The picture does not live in this document: it is a video inside the remote
++  // <browser> child, one process away from this shell. A resize therefore has to
++  // travel window -> shell reflow -> IPC -> child reflow -> child paint, which a
++  // 120 Hz gesture outruns easily. The child's bottom edge arrives late while
++  // enlarging, causing a momentary gap/black band.
++  //
++  // But while shrinking, the larger old picture is simply clipped by the window,
++  // which is completely seamless. Freezing on shrink forces a large layout viewport
++  // to down-scale and then suddenly snap/reflow on release, causing flicker.
++  //
++  // Therefore: only pin and scale the child when enlarging beyond base size.
++  // When shrinking (w <= baseW), let it track down naturally with zero transform.
++  _pinChildViewport() {
++    if (this._contentFreeze) return;
++    let browser = document.getElementById("browser");
++    if (!browser) return;
++    let w = window.innerWidth;
++    let h = window.innerHeight;
++    if (!(w > 0 && h > 0)) return;
++
++    this._contentFreeze = {
++      browser,
++      baseW: w,
++      baseH: h,
++      pinned: false,
++      ending: false,
++      lastW: w,
++      lastH: h,
++      lastChangeAt: performance.now(),
++      raf: 0,
++    };
++
++    this._contentFreeze.raf = window.requestAnimationFrame(() =>
++      this._scaleFrozenChild()
++    );
++  },
++
++  _scaleFrozenChild() {
++    let freeze = this._contentFreeze;
++    if (!freeze) {
++      return;
++    }
++    let now = performance.now();
++    let w = window.innerWidth;
++    let h = window.innerHeight;
++
++    if (w !== freeze.lastW || h !== freeze.lastH) {
++      freeze.lastW = w;
++      freeze.lastH = h;
++      freeze.lastChangeAt = now;
++    }
++
++    let settled = now - freeze.lastChangeAt;
++    if (freeze.ending ? settled > 200 : settled > 2500) {
++      this._unpinChildViewport();
++      return;
++    }
++
++    if (w > freeze.baseW || h > freeze.baseH) {
++      if (!freeze.pinned) {
++        freeze.pinned = true;
++        let style = freeze.browser.style;
++        style.flex = "0 0 auto";
++        style.alignSelf = "flex-start";
++        style.width = `${freeze.baseW}px`;
++        style.height = `${freeze.baseH}px`;
++        style.transformOrigin = "0 0";
++      }
++      let sx = w / freeze.baseW;
++      let sy = h / freeze.baseH;
++      freeze.browser.style.transform = `scale(${sx}, ${sy})`;
++    } else {
++      if (freeze.pinned) {
++        freeze.pinned = false;
++        let style = freeze.browser.style;
++        style.flex = "";
++        style.alignSelf = "";
++        style.width = "";
++        style.height = "";
++        style.transform = "";
++        style.transformOrigin = "";
++      }
++      freeze.baseW = w;
++      freeze.baseH = h;
++    }
++
++    freeze.raf = window.requestAnimationFrame(() =>
++      this._scaleFrozenChild()
++    );
++  },
++
++  _unpinChildViewport() {
++    let freeze = this._contentFreeze;
++    if (!freeze) {
++      return;
++    }
++    this._contentFreeze = null;
++    if (freeze.raf) {
++      window.cancelAnimationFrame(freeze.raf);
++    }
++    if (freeze.pinned) {
++      let style = freeze.browser.style;
++      style.flex = "";
++      style.alignSelf = "";
++      style.width = "";
++      style.height = "";
++      style.transform = "";
++      style.transformOrigin = "";
 +    }
 +  },
 +
@@ -172,7 +306,7 @@ index dfa666a..a9656a9 100644
    setupTooltip(elId, l10nId, shortcutId) {
      const el = document.getElementById(elId);
      const shortcut = document.getElementById(shortcutId);
-@@ -910,7 +1056,9 @@ let Player = {
+@@ -910,7 +1182,9 @@ let Player = {
    },
  
    onClick(event) {
@@ -183,7 +317,7 @@ index dfa666a..a9656a9 100644
        case "audio": {
          this.toggleMute();
          break;
-@@ -921,6 +1069,33 @@ let Player = {
+@@ -921,6 +1195,33 @@ let Player = {
          break;
        }
  
@@ -217,18 +351,21 @@ index dfa666a..a9656a9 100644
        case "playpause": {
          if (!this.isPlaying) {
            this.actor.sendAsyncMessage("PictureInPicture:Play");
-@@ -1434,6 +1609,15 @@ let Player = {
+@@ -1432,8 +1733,18 @@ let Player = {
+    *  Event context data object
+    */
    onResize() {
++    // A native pinch resizes the window up to 120 times a second. Nothing this
++    // handler does (hide two panels, rearm a debouncer) is needed per tick, and
++    // it is all work on the same thread that has to keep the card in step.
++    if (this._inNativeGesture) {
++      return;
++    }
      this.toggleSubtitlesSettingsPanel({ forceHide: true });
      this.togglePlaybackRatePanel({ forceHide: true });
-+    if (document && document.body && !document.body.classList.contains("pip-gesture-active")) {
++    if (document && document.body) {
 +      document.body.classList.add("pip-gesture-active");
-+      clearTimeout(this._gestureResizeTimeout);
-+      this._gestureResizeTimeout = setTimeout(() => {
-+        if (document && document.body) {
-+          document.body.classList.remove("pip-gesture-active");
-+        }
-+      }, 180);
++      this._awaitingMouseMoveAfterResize = true;
 +    }
      this.resizeDebouncer.disarm();
      this.resizeDebouncer.arm();

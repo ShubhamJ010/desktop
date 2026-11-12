@@ -26,6 +26,12 @@ enum AnchorCorner : int {
 };
 
 constexpr double kPerPoint = 0.004, kPerLine = 0.08;
+constexpr double kCornerInset = 10;
+// How far a finished resize may come to rest from a screen corner and still be
+// pulled into it. Measured per axis, so shrinking a docked PiP towards its
+// centre (which backs the window off diagonally) still reads as "near the
+// corner". Beyond this a window in the middle of the screen stays put.
+constexpr double kSnapTolerance = 56.0;
 
 // Base display reference (14" MacBook Pro visible width ~1512pt)
 // Baseline constants from FloatyMPV: min 280pt, max 589pt
@@ -77,9 +83,33 @@ inline void WidthLimits(double aspect, Size minSize, Size maxSize, Rect visible,
   *high = dynamicMax;
 }
 
-inline double Anchor(double origin, double size, double next, double pointer) {
-  double fraction = (size > 0) ? std::clamp((pointer - origin) / size, 0.0, 1.0) : 0.5;
-  return pointer - fraction * next;
+// Screen-corner slot for a window of the given size, matching the inset used by
+// the throw/stash code so a zoom never lands half a pixel away from a docked PiP.
+inline Rect CornerRect(AnchorCorner corner, double w, double h, Rect visible) {
+  const Rect inner{visible.x + kCornerInset, visible.y + kCornerInset, visible.w - 2 * kCornerInset,
+                   visible.h - 2 * kCornerInset};
+  const bool left = corner == kAnchorTopLeft || corner == kAnchorBottomLeft;
+  const bool top = corner == kAnchorTopLeft || corner == kAnchorTopRight;
+  return {std::round(left ? inner.x : inner.maxX() - w), std::round(top ? inner.maxY() - h : inner.y), w, h};
+}
+
+// Closest screen corner whose slot is within `tolerance` of the frame's current
+// position for its own size. Per axis, so a docked window that was shrunk back
+// towards its centre still counts as near its corner. Returns kAnchorNone in
+// the middle of the screen, which is what keeps a free-floating resize from
+// being dragged anywhere.
+inline AnchorCorner NearestDockCorner(Rect frame, Rect visible, double tolerance) {
+  AnchorCorner best = kAnchorNone;
+  double closest = tolerance;
+  for (AnchorCorner corner : {kAnchorTopLeft, kAnchorTopRight, kAnchorBottomLeft, kAnchorBottomRight}) {
+    const Rect slot = CornerRect(corner, frame.w, frame.h, visible);
+    const double distance = std::max(std::fabs(slot.x - frame.x), std::fabs(slot.y - frame.y));
+    if (distance <= closest) {
+      best = corner;
+      closest = distance;
+    }
+  }
+  return best;
 }
 
 struct Result {
@@ -87,94 +117,53 @@ struct Result {
   double width;
 };
 
-inline Result Zoom(Rect frame, double width, double aspect, double factor, Point pointer, Rect visible, Size minSize,
-                   Size maxSize, AnchorCorner corner = kAnchorNone) {
-  double low, high;
-  WidthLimits(aspect, minSize, maxSize, visible, &low, &high);
-  double w = std::clamp(width * factor, low, high);
-  const double safeAspect = (aspect > 0.01) ? aspect : (16.0 / 9.0);
-  double rw = std::clamp(std::round(w), std::ceil(low), std::max(std::ceil(low), std::floor(high)));
-  double rh = std::round(rw / safeAspect);
-
-  double x, y;
-  switch (corner) {
-    case kAnchorTopLeft:
-      x = frame.x;
-      y = frame.maxY() - rh;
-      break;
-    case kAnchorTopRight:
-      x = frame.maxX() - rw;
-      y = frame.maxY() - rh;
-      break;
-    case kAnchorBottomLeft:
-      x = frame.x;
-      y = frame.y;
-      break;
-    case kAnchorBottomRight:
-      x = frame.maxX() - rw;
-      y = frame.y;
-      break;
-    case kAnchorNone:
-    default:
-      x = Anchor(frame.x, frame.w, rw, pointer.x);
-      y = Anchor(frame.y, frame.h, rh, pointer.y);
-      break;
-  }
-
-  x = std::clamp(x, visible.x, std::max(visible.x, visible.maxX() - rw));
-  y = std::clamp(y, visible.y, std::max(visible.y, visible.maxY() - rh));
-  return {{std::round(x), std::round(y), rw, rh}, w};
+// Round to the nearest whole device pixel. The window server lays windows out in
+// pixels, so a frame rounded to whole points moves two pixels at a time on a 2x
+// display, which reads as a stair-step on a slow trackpad zoom.
+inline double SnapToPixel(double v, double quantum) {
+  if (!(quantum > 0)) return std::round(v);
+  return std::round(v / quantum) * quantum;
 }
 
-// Fixed-baseline zoom for trackpad pinch gestures (FloatyMPV pattern).
-// Scaling against an invariant base frame prevents compounded integer rounding drift,
-// ensuring corner-pinned edges never jitter by ±1px during continuous pinch gestures.
-inline Result ZoomFromBase(Rect baseFrame, Point baseCenter, double aspect, double scale, Rect visible, Size minSize,
-                           Size maxSize, AnchorCorner corner = kAnchorNone) {
+// Resize a window around the point the gesture grabbed. `baseFrame` and the
+// anchor fractions are captured once when the gesture begins; every frame is
+// derived from that immutable reference, so integer rounding cannot accumulate
+// into the jitter that an incremental resize produces.
+//
+// The grabbed fraction of the frame stays under the pointer, so the picture
+// expands and shrinks away from the cursor in every direction at once. Nothing
+// is clamped here: pinning an edge to the screen would collapse the gesture
+// into "grow towards the middle" whenever the PiP sits in a corner. A corner
+// dock is not held during the resize either; the magnetic snap is decided once
+// the gesture ends.
+inline Result ResizeFromBase(Rect baseFrame, double aspect, double scale, double anchorX, double anchorY,
+                             Point pointer, Rect visible, Size minSize, Size maxSize, double quantum) {
   double low, high;
   WidthLimits(aspect, minSize, maxSize, visible, &low, &high);
 
   const double baseW = baseFrame.w;
-  if (baseW <= 0) return {{baseFrame.x, baseFrame.y, baseFrame.w, baseFrame.h}, baseFrame.w};
+  if (baseW <= 0) return {baseFrame, baseFrame.w};
 
   const double scaleFloor = low / baseW;
   const double scaleCeiling = high / baseW;
   const double clampedScale = std::clamp(scale, scaleFloor, scaleCeiling);
 
   const double safeAspect = (aspect > 0.01) ? aspect : (16.0 / 9.0);
-  const double rw = std::clamp(std::round(baseW * clampedScale), std::ceil(low), std::max(std::ceil(low), std::floor(high)));
-  const double rh = std::round(rw / safeAspect);
+  const double rw =
+      SnapToPixel(std::clamp(baseW * clampedScale, std::ceil(low), std::max(std::ceil(low), std::floor(high))), quantum);
+  const double rh = std::max(quantum, SnapToPixel(rw / safeAspect, quantum));
 
-  double x, y;
-  switch (corner) {
-    case kAnchorTopLeft:
-      x = baseFrame.x;
-      y = baseFrame.maxY() - rh;
-      break;
-    case kAnchorTopRight:
-      x = baseFrame.maxX() - rw;
-      y = baseFrame.maxY() - rh;
-      break;
-    case kAnchorBottomLeft:
-      x = baseFrame.x;
-      y = baseFrame.y;
-      break;
-    case kAnchorBottomRight:
-      x = baseFrame.maxX() - rw;
-      y = baseFrame.y;
-      break;
-    case kAnchorNone:
-    default:
-      // Invariant center anchor prevents cursor drift from jumping the zoom origin
-      x = baseCenter.x - (rw / 2.0);
-      y = baseCenter.y - (rh / 2.0);
-      break;
-  }
+  const double x = SnapToPixel(pointer.x - anchorX * rw, quantum);
+  const double y = SnapToPixel(pointer.y - anchorY * rh, quantum);
+  return {{x, y, rw, rh}, baseW * clampedScale};
+}
 
-  x = std::clamp(x, visible.x, std::max(visible.x, visible.maxX() - rw));
-  y = std::clamp(y, visible.y, std::max(visible.y, visible.maxY() - rh));
-  return {{std::round(x), std::round(y), rw, rh}, baseW * clampedScale};
+// Pull a frame fully back inside `visible` without changing its size. Used once
+// when a gesture ends, so a picture that grew past the screen edge while it
+// followed the cursor always comes to rest on screen.
+inline Rect KeepOnScreen(Rect frame, Rect visible) {
+  return {std::clamp(frame.x, visible.x, std::max(visible.x, visible.maxX() - frame.w)),
+          std::clamp(frame.y, visible.y, std::max(visible.y, visible.maxY() - frame.h)), frame.w, frame.h};
 }
 
 }
-

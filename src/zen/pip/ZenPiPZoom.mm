@@ -11,25 +11,48 @@ namespace zen_pip {
 const void *const kZoomKey = &kZoomKey;
 }
 
+namespace {
+
+// Safety nets for devices that never report a gesture end phase. They must be
+// well behind the rate of a held gesture, or a short pause mid-pinch would end
+// and snap the window while the fingers are still down.
+constexpr CFTimeInterval kPinchIdle = 0.45;
+constexpr CFTimeInterval kScrollIdle = 0.35;
+// Time constants for the eased approach to the target scale. The pinch one is
+// short enough to feel 1:1 while smoothing the event cadence; the wheel one is
+// long enough to read as a glide.
+constexpr double kPinchTau = 0.022;
+constexpr double kScrollTau = 0.055;
+
+}  // namespace
+
 @implementation ZenPiPZoom {
   __unsafe_unretained NSWindow *_window;
-  NSRect _last;
-  double _width;
+  // Session state. Captured once at gesture start, never mutated, so every
+  // frame is computed from the same reference frame.
+  BOOL _resizing;
+  NSRect _baseFrame;
+  double _anchorX, _anchorY;
   double _aspect;
-  double _target;
+  double _scale;        // applied scale, relative to _baseFrame
+  double _targetScale;  // eased destination for wheel steps
+  double _scaleFloor, _scaleCeiling;
+  NSRect _last;  // frame we last wrote, to notice movement from elsewhere
   NSPoint _pointer;
+  // Corner the window was docked in when the gesture began. Only used to decide
+  // where a finished resize snaps back to; it never constrains the resize.
+  zen_pip_zoom::AnchorCorner _startCorner;
+  // Visible frame of the screen the gesture started on, kept for the session.
+  zen_pip_zoom::Rect _visible;
   NSTimer *_ease;
-  NSTimer *_pinchEndTimer;
-  BOOL _isPinching;
+  id _easeDisplayLink;  // CADisplayLink on macOS 14+ for 120Hz ProMotion
+  CFTimeInterval _easeLastAt;
+  double _easeTau;      // seconds; time constant of the eased approach
+  NSTimer *_idle;
+  BOOL _endPending;
   NSTimeInterval _lastMagnifyAt;
   BOOL _hitMinHaptic;
   BOOL _hitMaxHaptic;
-  zen_pip_zoom::AnchorCorner _anchorCorner;
-
-  // Fixed baseline frame tracking for jitter-free pinch zoom (FloatyMPV pattern)
-  NSRect _pinchBaseFrame;
-  NSPoint _pinchBaseCenter;
-  double _pinchAccumulatedScale;
 }
 
 + (BOOL)zooms:(NSWindow *)window {
@@ -56,8 +79,7 @@ static __unsafe_unretained NSWindow *gZoomGesture = nil;
 + (void)abandonZoomOn:(NSWindow *)window {
   if (gZoomGesture == window) gZoomGesture = nil;
   ZenPiPZoom *zoom = window ? objc_getAssociatedObject(window, kZoomKey) : nil;
-  [zoom stopEase];
-  [zoom cancelPinch];
+  [zoom abandon];
 }
 
 + (BOOL)handle:(NSEvent *)event {
@@ -70,9 +92,9 @@ static __unsafe_unretained NSWindow *gZoomGesture = nil;
   return (window && [self zooms:window]) ? window : nil;
 }
 
-static void CheckBoundaryHaptic(double width, double limit, BOOL isMin, BOOL *latch) {
-  const BOOL hit = isMin ? (width <= limit + 0.5) : (width >= limit - 0.5);
-  const BOOL clear = isMin ? (width > limit + 2.0) : (width < limit - 2.0);
+static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *latch) {
+  const BOOL hit = isMin ? (value <= limit + 0.0005) : (value >= limit - 0.0005);
+  const BOOL clear = isMin ? (value > limit + 0.002) : (value < limit - 0.002);
   if (hit) {
     if (!*latch) {
       [[NSHapticFeedbackManager defaultPerformer] performFeedbackPattern:NSHapticFeedbackPatternAlignment
@@ -93,21 +115,23 @@ static void CheckBoundaryHaptic(double width, double limit, BOOL isMin, BOOL *la
     BOOL wheel = phase == NSEventPhaseNone && momentum == NSEventPhaseNone;
     if (wheel || (phase & (NSEventPhaseBegan | NSEventPhaseMayBegin))) {
       gZoomGesture = nil;
-      [[self forWindow:window] prepareAnchorCorner];
     }
     if (gZoomGesture) window = gZoomGesture;
     if (!window || (!command && gZoomGesture != window)) return NO;
     if (![self zooms:window]) return NO;
+    // Front once per gesture. A precise trackpad scroll arrives at up to 120 Hz
+    // and an orderFront per event is a WindowServer round trip each time.
+    if (gZoomGesture != window) [window orderFrontRegardless];
     if (!wheel) gZoomGesture = window;
-    if (momentum & (NSEventPhaseEnded | NSEventPhaseCancelled)) {
-      gZoomGesture = nil;
-      [[self forWindow:window] resetAnchorCorner];
-    }
+    const BOOL ended = (momentum & (NSEventPhaseEnded | NSEventPhaseCancelled)) != 0;
+    if (ended) gZoomGesture = nil;
     double dy = event.scrollingDeltaY;
-    if (dy == 0) return YES;
-    [[self forWindow:window] zoomBy:zen_pip_zoom::ScrollFactor(dy, event.hasPreciseScrollingDeltas)
-                                 at:[self screenPoint:event]
-                               ease:!event.hasPreciseScrollingDeltas];
+    if (dy != 0) {
+      [[self forWindow:window] zoomBy:zen_pip_zoom::ScrollFactor(dy, event.hasPreciseScrollingDeltas)
+                                   at:[self screenPoint:event]
+                                 ease:!event.hasPreciseScrollingDeltas];
+    }
+    if (ended) [[self forWindow:window] requestEnd];
     return YES;
   }
   if (!window || ![self zooms:window]) return NO;
@@ -119,29 +143,92 @@ static void CheckBoundaryHaptic(double width, double limit, BOOL isMin, BOOL *la
   return event.window ? [event.window convertPointToScreen:event.locationInWindow] : event.locationInWindow;
 }
 
-- (zen_pip_zoom::AnchorCorner)detectAnchorCorner {
+// The PiP window is created with `lockaspectratio`, so AppKit already knows the
+// video's aspect. Honouring it keeps the picture full-bleed: deriving the aspect
+// from a rounded frame instead would drift by a fraction of a pixel and make the
+// video letterbox (the "picture breaking") as the window expands or shrinks.
+- (double)lockedAspect {
+  NSSize locked = _window ? _window.contentAspectRatio : NSZeroSize;
+  if (locked.width > 0 && locked.height > 0) return locked.width / locked.height;
+  const NSRect frame = _window ? _window.frame : NSZeroRect;
+  return NSWidth(frame) / MAX(NSHeight(frame), 1.0);
+}
+
+- (void)beginResizeAt:(NSPoint)pointer {
   NSWindow *window = _window;
-  if (!window) return zen_pip_zoom::kAnchorNone;
-  const zen_pip_throw::Rect frameRect = zen_pip::ThrowRect(window.frame);
-  const zen_pip_throw::Rect visRect = zen_pip::ThrowRect(ScreenFor(window.frame).visibleFrame);
-  for (zen_pip_throw::Corner c :
-       {zen_pip_throw::kTopLeft, zen_pip_throw::kTopRight, zen_pip_throw::kBottomLeft, zen_pip_throw::kBottomRight}) {
-    const zen_pip_throw::Rect target = zen_pip_throw::CornerFrame(c, frameRect.w, frameRect.h, visRect);
-    if (std::hypot(target.x - frameRect.x, target.y - frameRect.y) <= 25.0) {
-      return static_cast<zen_pip_zoom::AnchorCorner>(c);
-    }
+  if (!window || _resizing) return;
+  // One front per gesture, before any frame changes: a PiP that sits behind
+  // another app's window or panel must come forward the moment the gesture
+  // starts, and stay above it until the gesture ends, without activating Zen.
+  [[ZenPiPController forWindow:window] frontForGesture];
+
+  _resizing = YES;
+  _endPending = NO;
+  _pointer = pointer;
+  _baseFrame = window.frame;
+  _last = _baseFrame;
+  // The screen is captured once. A cursor-anchored resize may overflow an edge,
+  // and re-resolving the screen per tick could flip onto a neighbouring display
+  // and change the size limits mid-gesture.
+  const NSRect baseVisible = ScreenFor(_baseFrame).visibleFrame;
+  _visible = {NSMinX(baseVisible), NSMinY(baseVisible), NSWidth(baseVisible), NSHeight(baseVisible)};
+  _aspect = [self lockedAspect];
+  if (!(_aspect > 0.01)) _aspect = 16.0 / 9.0;
+
+  const double baseW = MAX(NSWidth(_baseFrame), 1.0);
+  const double baseH = MAX(NSHeight(_baseFrame), 1.0);
+  _anchorX = std::clamp((pointer.x - NSMinX(_baseFrame)) / baseW, 0.0, 1.0);
+  _anchorY = std::clamp((pointer.y - NSMinY(_baseFrame)) / baseH, 0.0, 1.0);
+
+  double low, high;
+  zen_pip_zoom::WidthLimits(_aspect, [self minSize], [self maxSize], _visible, &low, &high);
+  _scaleFloor = low / baseW;
+  _scaleCeiling = high / baseW;
+  _scale = 1.0;
+  _targetScale = 1.0;
+
+  _hitMinHaptic = (_scaleFloor >= 1.0 - 0.0005);
+  _hitMaxHaptic = (_scaleCeiling <= 1.0 + 0.0005);
+  // Where the window started decides where a finished resize goes: docked pairs
+  // of (corner, frame) are captured from the untouched base frame.
+  _startCorner = zen_pip_zoom::NearestDockCorner(
+      {NSMinX(_baseFrame), NSMinY(_baseFrame), NSWidth(_baseFrame), NSHeight(_baseFrame)}, _visible,
+      zen_pip_zoom::kSnapTolerance);
+
+  ZenPiPController *controller = [ZenPiPController forWindow:window];
+  [controller disarmSwipe];
+  [controller pinchBegan];
+  // Freeze the picture at its current size for the whole gesture. AppKit then
+  // stretches the last composited frame with the card (the same path a mouse
+  // edge-drag takes), so window and video change size in the same frame instead
+  // of Gecko re-laying-out and re-resampling the video a frame or two behind.
+  [controller beginOwnedLiveResize];
+}
+
+- (void)applyScale {
+  NSWindow *window = _window;
+  if (!window || !_resizing) return;
+  // A gesture that has not changed the scale yet must not nudge the window by a
+  // rounding pixel before it has moved.
+  if (_scale == 1.0) return;
+
+  const zen_pip_zoom::Result result = zen_pip_zoom::ResizeFromBase(
+      {NSMinX(_baseFrame), NSMinY(_baseFrame), NSWidth(_baseFrame), NSHeight(_baseFrame)}, _aspect, _scale, _anchorX,
+      _anchorY, {_pointer.x, _pointer.y}, _visible, [self minSize], [self maxSize], [self frameQuantum]);
+
+  const NSRect next = NSMakeRect(result.frame.x, result.frame.y, result.frame.w, result.frame.h);
+  if (!NSEqualRects(next, window.frame)) {
+    // display:NO is critical: forcing a synchronous redraw at 90-120Hz clogs the
+    // Cocoa runloop and drops frames. WindowServer / compositor handles async presentation smoothly.
+    [window setFrame:next display:NO];
   }
-  return zen_pip_zoom::kAnchorNone;
-}
+  // No shadow work here. The shadow is switched off for the gesture (it is the
+  // most expensive thing to rasterise per tick) and the live resize scales what
+  // is already on screen with the card. It is rebuilt once from the final frame.
+  _last = window.frame;
 
-- (void)prepareAnchorCorner {
-  _anchorCorner = [self detectAnchorCorner];
-}
-
-- (void)resetAnchorCorner {
-  _anchorCorner = zen_pip_zoom::kAnchorNone;
-  _hitMinHaptic = NO;
-  _hitMaxHaptic = NO;
+  CheckBoundaryHaptic(_scale, _scaleFloor, YES, &_hitMinHaptic);
+  CheckBoundaryHaptic(_scale, _scaleCeiling, NO, &_hitMaxHaptic);
 }
 
 - (void)stopEase {
@@ -150,108 +237,131 @@ static void CheckBoundaryHaptic(double width, double limit, BOOL isMin, BOOL *la
     [_ease release];
     _ease = nil;
   }
-  _target = 0;
-  _hitMinHaptic = NO;
-  _hitMaxHaptic = NO;
-  if (!_isPinching) {
-    _anchorCorner = zen_pip_zoom::kAnchorNone;
+  if (_easeDisplayLink) {
+    if (@available(macOS 14.0, *)) {
+      [(CADisplayLink *)_easeDisplayLink invalidate];
+    }
+    [_easeDisplayLink release];
+    _easeDisplayLink = nil;
+  }
+  _targetScale = _scale;
+}
+
+- (void)stopIdle {
+  if (_idle) {
+    [_idle invalidate];
+    [_idle release];
+    _idle = nil;
   }
 }
 
-- (void)cancelPinch {
-  if (_pinchEndTimer) {
-    [_pinchEndTimer invalidate];
-    [_pinchEndTimer release];
-    _pinchEndTimer = nil;
-  }
-  _anchorCorner = zen_pip_zoom::kAnchorNone;
+- (void)resetSession {
+  [self stopEase];
+  [self stopIdle];
+  // The gesture is over: leave live-resize mode so Gecko repaints the picture at
+  // the final size. Always paired, including on the abandon/cancel paths.
+  [[ZenPiPController forWindow:_window] endOwnedLiveResize];
+  _resizing = NO;
+  _endPending = NO;
+  _baseFrame = NSZeroRect;
+  _last = NSZeroRect;
+  _scale = _targetScale = 1.0;
+  _startCorner = zen_pip_zoom::kAnchorNone;
+  _visible = {0, 0, 0, 0};
   _hitMinHaptic = NO;
   _hitMaxHaptic = NO;
-  _pinchBaseFrame = NSZeroRect;
-  _pinchBaseCenter = NSZeroPoint;
-  _pinchAccumulatedScale = 1.0;
-  if (_isPinching) {
-    _isPinching = NO;
-    // Shared tail; a no-op while a swipe owns the window.
-    [[ZenPiPController forWindow:_window] endGestureChrome:YES];
-  }
 }
 
-- (void)finishPinch {
-  if (_pinchEndTimer) {
-    [_pinchEndTimer invalidate];
-    [_pinchEndTimer release];
-    _pinchEndTimer = nil;
-  }
-  if (!_isPinching) return;
-  _isPinching = NO;
-  _pinchBaseFrame = NSZeroRect;
-  _pinchBaseCenter = NSZeroPoint;
-  _pinchAccumulatedScale = 1.0;
-  const zen_pip_zoom::AnchorCorner corner = _anchorCorner;
-  _anchorCorner = zen_pip_zoom::kAnchorNone;
-  _hitMinHaptic = NO;
-  _hitMaxHaptic = NO;
-  ZenPiPController *controller = [ZenPiPController forWindow:_window];
-  if (controller) {
-    [controller pinchEndedAtAnchor:corner];
-  }
+- (void)restartIdle:(CFTimeInterval)delay {
+  [self stopIdle];
+  __unsafe_unretained ZenPiPZoom *weakSelf = self;
+  _idle = [[NSTimer timerWithTimeInterval:delay repeats:NO block:^(NSTimer *timer) {
+    ZenPiPZoom *strongSelf = weakSelf;
+    if (!strongSelf) {
+      [timer invalidate];
+      return;
+    }
+    [strongSelf requestEnd];
+  }] retain];
+  [NSRunLoop.currentRunLoop addTimer:_idle forMode:NSRunLoopCommonModes];
 }
 
-- (void)stepPinch {
+// Ask for the gesture to end. If an ease is still running let it land first,
+// otherwise a snap would be calculated from a half-finished size.
+- (void)requestEnd {
+  if (!_resizing) return;
+  if (_ease || _easeDisplayLink) {
+    _endPending = YES;
+    return;
+  }
+  [self finishResize];
+}
+
+- (void)finishResize {
+  if (!_resizing) return;
   NSWindow *window = _window;
-  if (!window || !_isPinching) return;
-
-  const zen_pip_zoom::Size minSz = [self minSize];
-  const zen_pip_zoom::Size maxSz = [self maxSize];
-  const zen_pip_zoom::Rect vis = [self visible];
-
-  double low, high;
-  zen_pip_zoom::WidthLimits(_aspect, minSz, maxSz, vis, &low, &high);
-
-  const double baseW = NSWidth(_pinchBaseFrame);
-  if (baseW <= 0) return;
-
-  const double scaleFloor = low / baseW;
-  const double scaleCeiling = high / baseW;
-
-  // FloatyMPV-style edge-triggered alignment haptics at min/max boundary
-  if (_pinchAccumulatedScale <= scaleFloor + 0.001) {
-    if (!_hitMinHaptic) {
-      [[NSHapticFeedbackManager defaultPerformer] performFeedbackPattern:NSHapticFeedbackPatternAlignment
-                                                         performanceTime:NSHapticFeedbackPerformanceTimeNow];
-      _hitMinHaptic = YES;
-    }
-  } else {
-    _hitMinHaptic = NO;
+  if (!window) {
+    [self resetSession];
+    return;
   }
 
-  if (_pinchAccumulatedScale >= scaleCeiling - 0.001) {
-    if (!_hitMaxHaptic) {
-      [[NSHapticFeedbackManager defaultPerformer] performFeedbackPattern:NSHapticFeedbackPatternAlignment
-                                                         performanceTime:NSHapticFeedbackPerformanceTimeNow];
-      _hitMaxHaptic = YES;
-    }
-  } else {
-    _hitMaxHaptic = NO;
+  const NSRect frame = window.frame;
+  const zen_pip_zoom::Rect current{NSMinX(frame), NSMinY(frame), NSWidth(frame), NSHeight(frame)};
+  const zen_pip_zoom::Rect rest = zen_pip_zoom::KeepOnScreen(current, _visible);
+  // A gesture that began docked goes home: the cursor-anchored scaling is the
+  // only thing that moved it away from its corner. A gesture that began free
+  // snaps only when it came to rest next to a corner, and stays put anywhere
+  // else on the screen.
+  zen_pip_zoom::AnchorCorner snap = _startCorner;
+  if (snap == zen_pip_zoom::kAnchorNone) {
+    snap = zen_pip_zoom::NearestDockCorner(rest, _visible, zen_pip_zoom::kSnapTolerance);
   }
 
-  zen_pip_zoom::Rect baseRect = {NSMinX(_pinchBaseFrame), NSMinY(_pinchBaseFrame), NSWidth(_pinchBaseFrame), NSHeight(_pinchBaseFrame)};
-  zen_pip_zoom::Point basePt = {_pinchBaseCenter.x, _pinchBaseCenter.y};
-
-  zen_pip_zoom::Result result = zen_pip_zoom::ZoomFromBase(
-      baseRect, basePt, _aspect, _pinchAccumulatedScale, vis, minSz, maxSz, _anchorCorner);
-
-  _width = result.width;
-
-  NSRect next = NSMakeRect(result.frame.x, result.frame.y, result.frame.w, result.frame.h);
-  if (!NSEqualRects(next, window.frame)) {
-    // display:NO is critical: forcing synchronous redraw at 90-120Hz clogs the Cocoa
-    // runloop and drops frames. WindowServer / compositor handles async presentation smoothly.
-    [window setFrame:next display:NO];
-    [ZenPiPController updateShadowPathForWindow:window size:next.size radius:10];
+  // Resolve the corner slot against the screen the gesture started on, never the
+  // one the picture may have drifted onto while it overflowed an edge.
+  NSRect target = NSZeroRect;
+  if (snap != zen_pip_zoom::kAnchorNone) {
+    const zen_pip_throw::Rect slot = zen_pip_throw::CornerFrame(
+        static_cast<zen_pip_throw::Corner>(snap), current.w, current.h,
+        {_visible.x, _visible.y, _visible.w, _visible.h});
+    target = NSMakeRect(slot.x, slot.y, slot.w, slot.h);
   }
-  _last = window.frame;
+
+  // If snapping into a target corner, keep owned live resize active across the handoff
+  // so Gecko doesn't trigger an intermediate viewport repaint / flash before animateTo starts.
+  ZenPiPController *controller = [ZenPiPController forWindow:window];
+  const BOOL willAnimateSnap = !NSIsEmptyRect(target);
+  [self stopEase];
+  [self stopIdle];
+  if (!willAnimateSnap) {
+    [controller endOwnedLiveResize];
+  }
+  _resizing = NO;
+  _endPending = NO;
+  _baseFrame = NSZeroRect;
+  _last = NSZeroRect;
+  _scale = _targetScale = 1.0;
+  _startCorner = zen_pip_zoom::kAnchorNone;
+  _visible = {0, 0, 0, 0};
+  _hitMinHaptic = NO;
+  _hitMaxHaptic = NO;
+
+  if (NSIsEmptyRect(target) && (rest.x != current.x || rest.y != current.y)) {
+    // Nothing to dock into: undo any overflow in one step and stay right there.
+    [window setFrame:NSMakeRect(rest.x, rest.y, rest.w, rest.h) display:NO];
+  }
+  [controller pinchEndedAtFrame:target];
+}
+
+// Cancellation never snaps: something else (a swipe, a drag, a close) owns the
+// window now.
+- (void)abandon {
+  const BOOL wasResizing = _resizing;
+  NSWindow *window = _window;
+  [self resetSession];
+  if (wasResizing && window) {
+    [[ZenPiPController forWindow:window] pinchEndedAtFrame:NSZeroRect];
+  }
 }
 
 - (void)handleMagnify:(NSEvent *)event {
@@ -263,99 +373,129 @@ static void CheckBoundaryHaptic(double width, double limit, BOOL isMin, BOOL *la
   // once per event.
   if (event.timestamp <= _lastMagnifyAt) return;
   _lastMagnifyAt = event.timestamp;
-  ZenPiPController *controller = [ZenPiPController forWindow:window];
 
   if (event.phase == NSEventPhaseEnded || event.phase == NSEventPhaseCancelled) {
-    [self finishPinch];
+    [self requestEnd];
     return;
   }
 
-  if (!_isPinching) {
-    _isPinching = YES;
-    // Capture baseline frame and center once at gesture begin (FloatyMPV pattern).
-    // All subsequent scale updates derive from this immutable base, preventing integer drift.
-    _pinchBaseFrame = window.frame;
-    _pinchBaseCenter = NSMakePoint(NSMidX(_pinchBaseFrame), NSMidY(_pinchBaseFrame));
-    _pinchAccumulatedScale = 1.0;
-    _aspect = NSWidth(_pinchBaseFrame) / MAX(NSHeight(_pinchBaseFrame), 1.0);
-    _anchorCorner = [self detectAnchorCorner];
+  const NSPoint pointer = [ZenPiPZoom screenPoint:event];
+  [self beginResizeAt:pointer];
+  _endPending = NO;
 
-    // Seed boundary latches if already at edge to avoid initial touch-down click
-    double low, high;
-    zen_pip_zoom::WidthLimits(_aspect, [self minSize], [self maxSize], [self visible], &low, &high);
-    _hitMinHaptic = (NSWidth(_pinchBaseFrame) <= low + 0.5);
-    _hitMaxHaptic = (NSWidth(_pinchBaseFrame) >= high - 0.5);
-
-    if (controller) {
-      [controller disarmSwipe];
-      [controller pinchBegan];
-    }
-  }
-
-  if (_pinchEndTimer) {
-    [_pinchEndTimer invalidate];
-    [_pinchEndTimer release];
-    _pinchEndTimer = nil;
-  }
-
-  __unsafe_unretained ZenPiPZoom *weakSelf = self;
-  _pinchEndTimer = [[NSTimer timerWithTimeInterval:0.12 repeats:NO block:^(NSTimer *timer) {
-    ZenPiPZoom *strongSelf = weakSelf;
-    if (strongSelf) {
-      [strongSelf finishPinch];
-    }
-  }] retain];
-  [NSRunLoop.currentRunLoop addTimer:_pinchEndTimer forMode:NSRunLoopCommonModes];
-
-  // Prevent trackpad delta spikes by clamping step factor
+  // Prevent trackpad delta spikes by clamping the step factor.
   const double stepScale = std::clamp(1.0 + event.magnification, 0.90, 1.10);
-  _pinchAccumulatedScale *= stepScale;
-
-  [self stepPinch];
+  _targetScale = std::clamp(_targetScale * stepScale, _scaleFloor, _scaleCeiling);
+  // The window is moved by a display link instead of once per event: trackpad
+  // magnify events arrive at 60-90 Hz and in bursts, so applying them directly
+  // makes the geometry step unevenly even on a 120 Hz display.
+  [self startEase:kPinchTau];
+  [self restartIdle:kPinchIdle];
 }
 
 - (void)dealloc {
   [self stopEase];
-  [self cancelPinch];
+  [self stopIdle];
   [super dealloc];
+}
+
+- (void)easeTick:(id)sender {
+  if (!_resizing || !_window || !_window.visible || !NSEqualRects(_window.frame, _last)) {
+    if (_resizing) {
+      [self finishResize];
+    } else {
+      [self stopEase];
+    }
+    return;
+  }
+
+  // A finished gesture lands on its target in one tick. The snap has to be
+  // computed from the size the fingers asked for, never from a half-eased one.
+  if (_endPending) {
+    _scale = _targetScale;
+    [self applyScale];
+    [self stopEase];
+    [self finishResize];
+    return;
+  }
+
+  CFTimeInterval now = CACurrentMediaTime();
+  if (@available(macOS 14.0, *)) {
+    if ([sender isKindOfClass:[CADisplayLink class]]) {
+      CADisplayLink *dl = (CADisplayLink *)sender;
+      if (dl.targetTimestamp > 0) now = dl.targetTimestamp;
+    }
+  }
+  // Clamp the step: a stalled main thread must not turn one tick into a jump.
+  const double dt = std::clamp(now - _easeLastAt, 1.0 / 240.0, 1.0 / 30.0);
+  _easeLastAt = now;
+
+  const double delta = _targetScale - _scale;
+  if (std::fabs(delta) < 0.0015) {
+    _scale = _targetScale;
+    [self applyScale];
+    [self stopEase];
+    return;
+  }
+
+  // Frame-rate independent approach with a fixed time constant, so the glide
+  // feels the same on a 120 Hz ProMotion panel and on an external 60 Hz one.
+  const double alpha = 1.0 - std::exp(-dt / _easeTau);
+  _scale += delta * alpha;
+  [self applyScale];
+}
+
+// Drive `_scale` towards `_targetScale` from a display link. One link per
+// gesture: a newly arrived tau only retunes the approach already running.
+- (void)startEase:(double)tau {
+  if (!_resizing) return;
+  _easeTau = tau;
+  if (_ease || _easeDisplayLink) return;
+
+  _easeLastAt = CACurrentMediaTime();
+  if (@available(macOS 14.0, *)) {
+    CADisplayLink *link = [_window.contentView displayLinkWithTarget:self selector:@selector(easeTick:)];
+    link.preferredFrameRateRange = CAFrameRateRangeMake(60, 120, 120);
+    [link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    _easeDisplayLink = [link retain];
+    return;
+  }
+
+  __unsafe_unretained ZenPiPZoom *weakSelf = self;
+  _ease = [[NSTimer timerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *timer) {
+    ZenPiPZoom *strongSelf = weakSelf;
+    if (!strongSelf) {
+      [timer invalidate];
+      return;
+    }
+    [strongSelf easeTick:timer];
+  }] retain];
+  [NSRunLoop.currentRunLoop addTimer:_ease forMode:NSRunLoopCommonModes];
 }
 
 - (void)zoomBy:(double)factor at:(NSPoint)pointer ease:(BOOL)ease {
   NSWindow *window = _window;
   if (!window) return;
   [[ZenPiPController forWindow:window] cancelMotion];  // stop the spring, keep gesture chrome
-  NSRect frame = window.frame;
-  if (!NSEqualRects(frame, _last) || _width <= 0) {
-    double aspect = NSWidth(frame) / MAX(NSHeight(frame), 1);
-    if (!(_aspect > 0 && fabs(NSWidth(frame) / _aspect - NSHeight(frame)) <= 1)) _aspect = aspect;
-    _width = NSWidth(frame), _target = 0;
-    [self stopEase];
-  }
-  _pointer = pointer;
+  [self beginResizeAt:pointer];
+  if (!_resizing) return;
+  _endPending = NO;
+
   if (!ease) {
+    // Precise trackpad scroll: 1:1 with the fingers. Land any glide still in
+    // flight first, so this step is applied to the size actually on screen
+    // (stopEase syncs the target down to the applied scale).
     [self stopEase];
-    return [self step:factor];
+    _targetScale = std::clamp(_targetScale * factor, _scaleFloor, _scaleCeiling);
+    _scale = _targetScale;
+    [self applyScale];
+    [self restartIdle:kScrollIdle];
+    return;
   }
-  double low, high;
-  zen_pip_zoom::WidthLimits(_aspect, [self minSize], [self maxSize], [self visible], &low, &high);
-  _target = MIN(MAX((_target > 0 ? _target : _width) * factor, low), high);
-  if (_ease) return;
-  __unsafe_unretained ZenPiPZoom *weakSelf = self;
-  _ease = [[NSTimer timerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *timer) {
-    ZenPiPZoom *strongSelf = weakSelf;
-    if (!strongSelf || !strongSelf->_window || !strongSelf->_window.visible || !NSEqualRects(strongSelf->_window.frame, strongSelf->_last)) {
-      if (strongSelf) [strongSelf stopEase];
-      else [timer invalidate];
-      return;
-    }
-    double width = strongSelf->_width, target = strongSelf->_target;
-    BOOL done = fabs(target - width) < 0.25;
-    [strongSelf step:(done ? target : width + (target - width) * 0.25) / width];
-    if (!done) return;
-    [strongSelf stopEase];
-  }] retain];
-  [NSRunLoop.currentRunLoop addTimer:_ease forMode:NSRunLoopCommonModes];
-  _last = frame;
+
+  _targetScale = std::clamp(_targetScale * factor, _scaleFloor, _scaleCeiling);
+  [self restartIdle:kScrollIdle];
+  [self startEase:kScrollTau];
 }
 
 - (zen_pip_zoom::Size)minSize {
@@ -368,36 +508,11 @@ static void CheckBoundaryHaptic(double width, double limit, BOOL isMin, BOOL *la
   return {size.width > 0 ? size.width : CGFLOAT_MAX, size.height > 0 ? size.height : CGFLOAT_MAX};
 }
 
-- (zen_pip_zoom::Rect)visible {
-  NSRect visible = ScreenFor(_window.frame).visibleFrame;
-  return {NSMinX(visible), NSMinY(visible), NSWidth(visible), NSHeight(visible)};
-}
-
-- (void)step:(double)factor {
-  NSWindow *window = _window;
-  NSRect frame = window.frame;
-  const zen_pip_zoom::Size minSz = [self minSize];
-  const zen_pip_zoom::Size maxSz = [self maxSize];
-  const zen_pip_zoom::Rect vis = [self visible];
-
-  double low, high;
-  zen_pip_zoom::WidthLimits(_aspect, minSz, maxSz, vis, &low, &high);
-
-  zen_pip_zoom::Result result = zen_pip_zoom::Zoom(
-      {NSMinX(frame), NSMinY(frame), NSWidth(frame), NSHeight(frame)}, _width, _aspect, factor, {_pointer.x, _pointer.y},
-      vis, minSz, maxSz, _anchorCorner);
-  _width = result.width;
-
-  // FloatyMPV-style edge-triggered alignment haptics when hitting min/max boundary
-  CheckBoundaryHaptic(_width, low, YES, &_hitMinHaptic);
-  CheckBoundaryHaptic(_width, high, NO, &_hitMaxHaptic);
-
-  NSRect next = NSMakeRect(result.frame.x, result.frame.y, result.frame.w, result.frame.h);
-  if (!NSEqualRects(next, frame)) {
-    [window setFrame:next display:NO];
-    [ZenPiPController updateShadowPathForWindow:window size:next.size radius:10];
-  }
-  _last = window.frame;
+// One device pixel in points. A Retina screen gets half-point frames, which is
+// what makes a slow zoom move one pixel at a time instead of two.
+- (double)frameQuantum {
+  const CGFloat scale = _window ? _window.backingScaleFactor : 1.0;
+  return scale > 1.0 ? 1.0 / scale : 1.0;
 }
 
 @end
