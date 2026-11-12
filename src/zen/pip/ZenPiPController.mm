@@ -19,6 +19,11 @@ namespace {
 
 NSString *const kKeepOnTopDefault = @"ZenPictureInPictureKeepOnTop";
 NSString *const kGestureTimingDefault = @"ZenPictureInPictureGestureTiming";
+// A resize has to stay visible over whatever app is frontmost. Floating level
+// beats another app's normal windows, but not its panels or sheets, so the card
+// is lifted for the gesture only. Modal-panel level is still below the menu bar,
+// which keeps the card from drawing over it.
+constexpr NSInteger kGestureFrontLevel = NSModalPanelWindowLevel;
 const void *const kControllerKey = &kControllerKey;
 
 os_log_t PiPGestureLog() {
@@ -117,6 +122,11 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
   ZenPiPController *controller = [[[ZenPiPController alloc] initWithWindow:window] autorelease];
   // Clicking or gesturing the PiP must front the window, not the whole app.
   [window _setPreventsActivation:YES];
+  // The card follows the user across Spaces, including another app's full-screen
+  // space: a PiP that disappears when the frontmost app goes full screen cannot
+  // be resized at all.
+  window.collectionBehavior |= NSWindowCollectionBehaviorCanJoinAllSpaces |
+                               NSWindowCollectionBehaviorFullScreenAuxiliary;
   [controller roundCorners];
   InstallMonitors();
   return YES;
@@ -169,6 +179,10 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
                                               object:NSApp
                                                queue:nil
                                           usingBlock:^(NSNotification *) { [weakSelf screenChanged]; }]];
+    [_observers addObject:[center addObserverForName:NSApplicationDidBecomeActiveNotification
+                                              object:NSApp
+                                               queue:nil
+                                          usingBlock:^(NSNotification *) { [weakSelf appBecameActive]; }]];
     [_observers addObject:[center addObserverForName:NSWindowWillStartLiveResizeNotification
                                               object:window
                                                queue:nil
@@ -177,7 +191,7 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
                                             // belongs to the pinch path: chrome, cursor and
                                             // elevation are already set from there.
                                             if (weakSelf->_ownLiveResize) return;
-                                            [weakSelf.window orderFrontRegardless];
+                                            [weakSelf frontForGesture];
                                             weakSelf->_awaitingMouseMoveToShowUI = NO;
                                             [weakSelf cancelMotion];
                                             [weakSelf showCursorIfNeeded];
@@ -497,6 +511,59 @@ static void NotifyPiPGestureActive(bool active) {
 - (void)setKeepOnTop:(BOOL)keepOnTop {
   _keepOnTop = keepOnTop;
   _window.level = keepOnTop ? NSFloatingWindowLevel : NSNormalWindowLevel;
+  // Remember what the card should go back to once a gesture ends.
+  if (!_frontedForGesture) _restingLevel = _window.level;
+}
+
+// Window, not app. A gesture started over another app must show the card above
+// that app, so it is ordered front and lifted to a level that beats the other
+// app's own panels. Nothing here activates Zen or touches the browser window.
+- (void)frontForGesture {
+  if (!_window) return;
+  if (!_frontedForGesture) {
+    _frontedForGesture = YES;
+    _restingLevel = _window.level;
+  }
+  // Re-asserted on every gesture tick: Gecko owns the window too, and a level it
+  // writes back mid-resize would drop the card behind the frontmost app again.
+  if (_window.level < kGestureFrontLevel) {
+    _window.level = static_cast<NSWindowLevel>(kGestureFrontLevel);
+  }
+  [_window orderFrontRegardless];
+}
+
+- (void)standDownAfterGesture {
+  if (!_frontedForGesture) return;
+  _frontedForGesture = NO;
+  if (!_window) return;
+  _window.level = static_cast<NSWindowLevel>(_restingLevel);
+}
+
+// AppKit can activate Zen as a side effect of a resize that began under another
+// app. Activation brings every window of the app forward, browser window
+// included, which is the one thing a floating PiP must not cause. During a
+// gesture only the card is allowed in front, so everything else is sent back.
+- (void)appBecameActive {
+  if (!_window) return;
+  if (!(_isPinching || _liveResizing || _swiping || _animating)) return;
+  [self sendOtherWindowsBack];
+  // Activation finishes raising the app's windows after the notification, so the
+  // same demotion runs once more on the next loop turn.
+  [self retain];
+  __unsafe_unretained ZenPiPController *weakSelf = self;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [weakSelf sendOtherWindowsBack];
+    [weakSelf release];
+  });
+}
+
+- (void)sendOtherWindowsBack {
+  if (!_window || !_window.isVisible) return;
+  for (NSWindow *win in NSApp.windows) {
+    if (win == _window || !win.isVisible) continue;
+    [win orderBack:nil];
+  }
+  [_window orderFrontRegardless];
 }
 
 - (void)toggleKeepOnTop:(id)sender {
@@ -704,6 +771,9 @@ static void NotifyPiPGestureActive(bool active) {
   [self cancelMotion];
   _carrying = NO;
   _swiping = NO;
+  // Safety net: a gesture that ended through some other path must not leave the
+  // card lifted above the menu bar's neighbours forever.
+  if (!_isPinching && !_liveResizing && !_animating) [self standDownAfterGesture];
   [self showCursorIfNeeded];
   // Safety net: a shadow suppressed for a gesture that was taken over by
   // something else (a swipe, a close) is restored here.
@@ -830,6 +900,7 @@ static void NotifyPiPGestureActive(bool active) {
       [ZenPiPController updateShadowPathForWindow:_window size:target.size radius:10];
       const BOOL shouldRestore = _animateRestoreUI;
       [self cancelMotion];
+      [self standDownAfterGesture];
       // The card is at its final size now: rebuild the resting shadow.
       [self restoreShadowForResizeEnd];
       _sawDrag = NO;
@@ -881,6 +952,7 @@ static void NotifyPiPGestureActive(bool active) {
       [ZenPiPController updateShadowPathForWindow:_window size:target.size radius:10];
       const BOOL shouldRestore = _animateRestoreUI;
       [self cancelMotion];
+      [self standDownAfterGesture];
       // The card is at its final size now: rebuild the resting shadow.
       [self restoreShadowForResizeEnd];
       _sawDrag = NO;
@@ -1065,7 +1137,7 @@ static void NotifyPiPGestureActive(bool active) {
 // frame, and is dropped if that gesture is already over.
 - (void)beginGestureChrome:(ZenPiPGesture)kind chained:(BOOL)chained {
   _awaitingMouseMoveToShowUI = NO;
-  if (_window) [_window orderFrontRegardless];
+  [self frontForGesture];
   const uint64_t generation = ++_gestureGeneration;
   [self retain];
   dispatch_async(dispatch_get_main_queue(), ^{
@@ -1081,9 +1153,9 @@ static void NotifyPiPGestureActive(bool active) {
 
 - (void)applyGestureChrome:(ZenPiPGesture)kind chained:(BOOL)chained {
   if (!_window) return;
-  // Window, not app: the PiP is floating level, so orderFrontRegardless puts it
-  // above the other app without dragging Zen's browser window forward.
-  [_window orderFrontRegardless];
+  // Window, not app: ordering the card front puts it above the other app without
+  // dragging Zen's browser window forward.
+  [self frontForGesture];
   [self setPiPUIVisible:NO];
   if (kind == ZenPiPGesturePinch) {
     // A resize is a sustained 120 Hz gesture: drop the big soft shadow for its
@@ -1115,6 +1187,7 @@ static void NotifyPiPGestureActive(bool active) {
   [self restoreShadowForResizeEnd];
   [self setElevated:NO animated:YES];
   if (!_animating) {
+    [self standDownAfterGesture];
     [self fitCorners:YES];
     // The shadow path was deliberately left alone during the gesture; rebuild it
     // once for the final size so it never lags the resized picture.
@@ -1257,7 +1330,7 @@ static void NotifyPiPGestureActive(bool active) {
   if (_swiping) [self abandonSwipe];
   _isPinching = YES;
   _awaitingMouseMoveToShowUI = NO;
-  if (_window) [_window orderFrontRegardless];
+  [self frontForGesture];
   // Announce the gesture now, not one main-loop turn later with the chrome: the
   // page freezes the remote video viewport from this notification, and it must
   // already be frozen when the first size change lands.

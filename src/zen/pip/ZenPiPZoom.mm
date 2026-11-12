@@ -158,9 +158,9 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   NSWindow *window = _window;
   if (!window || _resizing) return;
   // One front per gesture, before any frame changes: a PiP that sits behind
-  // another window must come forward the moment the gesture starts, without
-  // activating Zen.
-  [window orderFrontRegardless];
+  // another app's window or panel must come forward the moment the gesture
+  // starts, and stay above it until the gesture ends, without activating Zen.
+  [[ZenPiPController forWindow:window] frontForGesture];
 
   _resizing = YES;
   _endPending = NO;

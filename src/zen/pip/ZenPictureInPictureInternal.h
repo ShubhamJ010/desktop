@@ -99,6 +99,10 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 // picture on every tick. Both must be paired.
 - (void)beginOwnedLiveResize;
 - (void)endOwnedLiveResize;
+// Lift the card above the frontmost app for the duration of a gesture, without
+// activating the app or ordering the browser window front. Always paired.
+- (void)frontForGesture;
+- (void)standDownAfterGesture;
 @end
 
 @interface ZenPiPController () {
@@ -108,6 +112,10 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
   ZenPiPOverlay *_overlay;
   ZenPiPEdge _stashedEdge;
   BOOL _keepOnTop;
+  // Level the card was lifted from for the current gesture, and whether that
+  // lift is still applied.
+  NSInteger _restingLevel;
+  BOOL _frontedForGesture;
   NSMutableArray *_observers;
   NSTimer *_slide;
   id _displayLink;  // CADisplayLink on macOS 14+ for throwTick; `id` keeps the API-availability check out of class layout
@@ -181,6 +189,8 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (void)toggleKeepOnTop:(id)sender;
 - (void)backToTabFromMenu:(id)sender;
 - (void)windowMoved;
+- (void)appBecameActive;
+- (void)sendOtherWindowsBack;
 - (void)fitCorners:(BOOL)animated;
 - (void)bendCornersTo:(CGFloat)radius animated:(BOOL)animated;
 - (void)screenChanged;
