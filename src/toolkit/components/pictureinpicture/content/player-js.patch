@@ -66,7 +66,7 @@ index dfa666a..797745b 100644
  /**
   * Function to resize and reposition the PiP window
   *
-@@ -422,16 +479,231 @@ let Player = {
+@@ -422,16 +479,239 @@ let Player = {
        document.documentElement.classList.add("seethrough-mode");
      }
  
@@ -136,14 +136,15 @@ index dfa666a..797745b 100644
 +  // The picture does not live in this document: it is a video inside the remote
 +  // <browser> child, one process away from this shell. A resize therefore has to
 +  // travel window -> shell reflow -> IPC -> child reflow -> child paint, which a
-+  // 120 Hz gesture outruns easily. The child's bottom edge always arrives late,
-+  // and while the card grows that gap shows as a black band under the picture
-+  // (nothing shows while it shrinks, the old picture is simply clipped).
++  // 120 Hz gesture outruns easily. The child's bottom edge arrives late while
++  // enlarging, causing a momentary gap/black band.
 +  //
-+  // So freeze the child at the size it has when the gesture starts and scale its
-+  // element with a compositor transform. The child never reflows, this document
-+  // scales the last child surface with the card in the same frame, the band is
-+  // gone, and the video keeps playing.
++  // But while shrinking, the larger old picture is simply clipped by the window,
++  // which is completely seamless. Freezing on shrink forces a large layout viewport
++  // to down-scale and then suddenly snap/reflow on release, causing flicker.
++  //
++  // Therefore: only pin and scale the child when enlarging beyond base size.
++  // When shrinking (w <= baseW), let it track down naturally with zero transform.
 +  _pinChildViewport() {
 +    if (this._contentFreeze) return;
 +    let browser = document.getElementById("browser");
@@ -154,25 +155,16 @@ index dfa666a..797745b 100644
 +
 +    this._contentFreeze = {
 +      browser,
-+      w,
-+      h,
-+      sx: 1,
-+      sy: 1,
-+      raf: 0,
++      baseW: w,
++      baseH: h,
++      pinned: false,
 +      ending: false,
-+      startedAt: performance.now(),
++      lastW: w,
++      lastH: h,
 +      lastChangeAt: performance.now(),
++      raf: 0,
 +    };
 +
-+    // `browser { flex: 1 }` would resize the child on every tick; take it out of
-+    // the flex sizing so its box, and with it the child viewport, stays put.
-+    let style = browser.style;
-+    style.flex = "0 0 auto";
-+    style.alignSelf = "flex-start";
-+    style.width = `${w}px`;
-+    style.height = `${h}px`;
-+    style.transformOrigin = "0 0";
-+    style.willChange = "transform";
 +    this._contentFreeze.raf = window.requestAnimationFrame(() =>
 +      this._scaleFrozenChild()
 +    );
@@ -193,25 +185,40 @@ index dfa666a..797745b 100644
 +      freeze.lastChangeAt = now;
 +    }
 +
-+    // The window keeps changing size for the whole gesture, including the
-+    // magnetic snap that follows it. Release the child only once the size has
-+    // settled (and, for a snap, once the gesture has been reported over), so it
-+    // reflows exactly once, at the final size, which is also when the picture
-+    // regains full sharpness. The long timeout is the safety net for a gesture
-+    // whose end never arrives.
 +    let settled = now - freeze.lastChangeAt;
 +    if (freeze.ending ? settled > 200 : settled > 2500) {
 +      this._unpinChildViewport();
 +      return;
 +    }
 +
-+    let sx = w / freeze.w;
-+    let sy = h / freeze.h;
-+    if (sx !== freeze.sx || sy !== freeze.sy) {
-+      freeze.sx = sx;
-+      freeze.sy = sy;
++    if (w > freeze.baseW || h > freeze.baseH) {
++      if (!freeze.pinned) {
++        freeze.pinned = true;
++        let style = freeze.browser.style;
++        style.flex = "0 0 auto";
++        style.alignSelf = "flex-start";
++        style.width = `${freeze.baseW}px`;
++        style.height = `${freeze.baseH}px`;
++        style.transformOrigin = "0 0";
++      }
++      let sx = w / freeze.baseW;
++      let sy = h / freeze.baseH;
 +      freeze.browser.style.transform = `scale(${sx}, ${sy})`;
++    } else {
++      if (freeze.pinned) {
++        freeze.pinned = false;
++        let style = freeze.browser.style;
++        style.flex = "";
++        style.alignSelf = "";
++        style.width = "";
++        style.height = "";
++        style.transform = "";
++        style.transformOrigin = "";
++      }
++      freeze.baseW = w;
++      freeze.baseH = h;
 +    }
++
 +    freeze.raf = window.requestAnimationFrame(() =>
 +      this._scaleFrozenChild()
 +    );
@@ -226,14 +233,15 @@ index dfa666a..797745b 100644
 +    if (freeze.raf) {
 +      window.cancelAnimationFrame(freeze.raf);
 +    }
-+    let style = freeze.browser.style;
-+    style.flex = "";
-+    style.alignSelf = "";
-+    style.width = "";
-+    style.height = "";
-+    style.transform = "";
-+    style.transformOrigin = "";
-+    style.willChange = "";
++    if (freeze.pinned) {
++      let style = freeze.browser.style;
++      style.flex = "";
++      style.alignSelf = "";
++      style.width = "";
++      style.height = "";
++      style.transform = "";
++      style.transformOrigin = "";
++    }
 +  },
 +
 +  setupMeetControls() {
