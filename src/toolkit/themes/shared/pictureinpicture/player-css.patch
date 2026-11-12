@@ -177,6 +177,8 @@ index c808890..0ef696b 100644
 +}
 +
 +.meet-btn-hangup:hover {
++  background-color: rgba(217, 48, 37, 0.92) !important;
++}
 +
 +/*
 + * Diagnostic frame for the resize pipeline, enabled with the `zen.pip.debug`

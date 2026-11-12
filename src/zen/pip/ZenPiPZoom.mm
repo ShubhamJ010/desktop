@@ -38,7 +38,9 @@ constexpr double kScrollTau = 0.055;
   double _targetScale;  // eased destination for wheel steps
   double _scaleFloor, _scaleCeiling;
   NSRect _last;  // frame we last wrote, to notice movement from elsewhere
-  NSPoint _pointer;
+  // Screen point the gesture grabbed, captured once when the session begins.
+  // Every frame is pinned to it, so the content under the cursor stays put.
+  NSPoint _anchorPointer;
   // Corner the window was docked in when the gesture began. Only used to decide
   // where a finished resize snaps back to; it never constrains the resize.
   zen_pip_zoom::AnchorCorner _startCorner;
@@ -156,6 +158,9 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
 
 - (void)beginResizeAt:(NSPoint)pointer {
   NSWindow *window = _window;
+  // Only the first event of a session captures the frame, the grab point and the
+  // limits. Later events in the same gesture only move the target scale; moving
+  // the reference mid-gesture is what produced the accumulating jitter.
   if (!window || _resizing) return;
   // One front per gesture, before any frame changes: a PiP that sits behind
   // another app's window or panel must come forward the moment the gesture
@@ -164,7 +169,7 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
 
   _resizing = YES;
   _endPending = NO;
-  _pointer = pointer;
+  _anchorPointer = pointer;
   _baseFrame = window.frame;
   _last = _baseFrame;
   // The screen is captured once. A cursor-anchored resize may overflow an edge,
@@ -214,7 +219,7 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
 
   const zen_pip_zoom::Result result = zen_pip_zoom::ResizeFromBase(
       {NSMinX(_baseFrame), NSMinY(_baseFrame), NSWidth(_baseFrame), NSHeight(_baseFrame)}, _aspect, _scale, _anchorX,
-      _anchorY, {_pointer.x, _pointer.y}, _visible, [self minSize], [self maxSize], [self frameQuantum]);
+      _anchorY, {_anchorPointer.x, _anchorPointer.y}, _visible, [self minSize], [self maxSize], [self frameQuantum]);
 
   const NSRect next = NSMakeRect(result.frame.x, result.frame.y, result.frame.w, result.frame.h);
   if (!NSEqualRects(next, window.frame)) {
@@ -255,12 +260,10 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   }
 }
 
-- (void)resetSession {
-  [self stopEase];
-  [self stopIdle];
-  // The gesture is over: leave live-resize mode so Gecko repaints the picture at
-  // the final size. Always paired, including on the abandon/cancel paths.
-  [[ZenPiPController forWindow:_window] endOwnedLiveResize];
+// Everything the next gesture has to recapture. State only: the live-resize
+// pair is the caller's decision, because a snap deliberately keeps it open
+// across the handoff to the animation.
+- (void)clearSessionState {
   _resizing = NO;
   _endPending = NO;
   _baseFrame = NSZeroRect;
@@ -270,6 +273,15 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   _visible = {0, 0, 0, 0};
   _hitMinHaptic = NO;
   _hitMaxHaptic = NO;
+}
+
+- (void)resetSession {
+  [self stopEase];
+  [self stopIdle];
+  // The gesture is over: leave live-resize mode so Gecko repaints the picture at
+  // the final size. Always paired, including on the abandon/cancel paths.
+  [[ZenPiPController forWindow:_window] endOwnedLiveResize];
+  [self clearSessionState];
 }
 
 - (void)restartIdle:(CFTimeInterval)delay {
@@ -336,15 +348,7 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   if (!willAnimateSnap) {
     [controller endOwnedLiveResize];
   }
-  _resizing = NO;
-  _endPending = NO;
-  _baseFrame = NSZeroRect;
-  _last = NSZeroRect;
-  _scale = _targetScale = 1.0;
-  _startCorner = zen_pip_zoom::kAnchorNone;
-  _visible = {0, 0, 0, 0};
-  _hitMinHaptic = NO;
-  _hitMaxHaptic = NO;
+  [self clearSessionState];
 
   if (NSIsEmptyRect(target) && (rest.x != current.x || rest.y != current.y)) {
     // Nothing to dock into: undo any overflow in one step and stay right there.

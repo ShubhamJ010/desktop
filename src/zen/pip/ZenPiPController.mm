@@ -389,12 +389,15 @@ static void NotifyPiPGestureActive(bool active) {
   if (!layer) return;
   [CATransaction begin];
   [CATransaction setDisableActions:YES];
+  const CGFloat radius = _isElevated ? 24.0 : 10.0;
   layer.shadowColor = [NSColor blackColor].CGColor;
   layer.shadowOpacity = _isElevated ? 0.38 : 0.20;
-  layer.shadowRadius = _isElevated ? 24.0 : 10.0;
+  layer.shadowRadius = radius;
   layer.shadowOffset = _isElevated ? CGSizeMake(0, -10) : CGSizeMake(0, -4);
   [CATransaction commit];
-  [ZenPiPController updateShadowPathForWindow:_window radius:10];
+  // The path must use the radius the layer blurs with, or an elevated card casts
+  // its shadow from a tighter outline than the one on screen.
+  [ZenPiPController updateShadowPathForWindow:_window radius:radius];
 }
 
 - (void)beginOwnedLiveResize {
@@ -511,8 +514,12 @@ static void NotifyPiPGestureActive(bool active) {
 - (void)setKeepOnTop:(BOOL)keepOnTop {
   _keepOnTop = keepOnTop;
   _window.level = keepOnTop ? NSFloatingWindowLevel : NSNormalWindowLevel;
-  // Remember what the card should go back to once a gesture ends.
-  if (!_frontedForGesture) _restingLevel = _window.level;
+  // Remember what the card should go back to once a gesture ends. While the card
+  // is lifted for a gesture `_window.level` is the lifted level, so the intended
+  // resting level is derived from the toggle instead of read back from the window.
+  if (_window) {
+    _restingLevel = _frontedForGesture ? (keepOnTop ? NSFloatingWindowLevel : NSNormalWindowLevel) : _window.level;
+  }
 }
 
 // Window, not app. A gesture started over another app must show the card above
@@ -524,8 +531,9 @@ static void NotifyPiPGestureActive(bool active) {
     _frontedForGesture = YES;
     _restingLevel = _window.level;
   }
-  // Re-asserted on every gesture tick: Gecko owns the window too, and a level it
-  // writes back mid-resize would drop the card behind the frontmost app again.
+  // Established once per gesture, before the first frame change. Re-asserting it
+  // per tick would put a WindowServer round trip on every frame, and Gecko owning
+  // the window is why the level is restored explicitly by standDownAfterGesture.
   if (_window.level < kGestureFrontLevel) {
     _window.level = static_cast<NSWindowLevel>(kGestureFrontLevel);
   }
@@ -808,6 +816,10 @@ static void NotifyPiPGestureActive(bool active) {
   [_window orderFrontRegardless];
   NSRect from = _window.frame;
   if (NSEqualRects(from, target)) {
+    // Nothing will animate, so nothing else will end the live resize that
+    // finishResize deliberately kept open for the snap. Left open it freezes the
+    // picture at the pre-gesture size, so the pair is closed here instead.
+    [self endOwnedLiveResize];
     if (restoreUI) {
       [self setPiPUIVisible:YES];
     } else {
@@ -870,6 +882,30 @@ static void NotifyPiPGestureActive(bool active) {
   [NSRunLoop.currentRunLoop addTimer:_slide forMode:NSRunLoopCommonModes];
 }
 
+// Shared ending for both animation shapes (size change and pure translation).
+// Landing is the same work either way: put the frame exactly on target, drop the
+// gesture chrome and hand the controls back once.
+- (void)landAnimationAtTarget:(NSRect)target {
+  [_window setFrame:target display:NO];
+  [_window.contentView setNeedsDisplay:YES];
+  [ZenPiPController updateShadowPathForWindow:_window size:target.size radius:10];
+  const BOOL shouldRestore = _animateRestoreUI;
+  [self cancelMotion];
+  [self standDownAfterGesture];
+  // The card is at its final size now: rebuild the resting shadow.
+  [self restoreShadowForResizeEnd];
+  _sawDrag = NO;
+  [self fitCorners:YES];
+  [self rescueIfLost];
+  [self setElevated:NO animated:YES];
+  if (shouldRestore) {
+    [self setPiPUIVisible:YES];
+  } else {
+    [self armUIRestoreOnMouseMove];
+  }
+  [self showCursorIfNeeded];
+}
+
 - (void)animateTick:(id)sender {
   if (!_window || !_window.visible) {
     [self stopMotion];
@@ -895,24 +931,7 @@ static void NotifyPiPGestureActive(bool active) {
     const BOOL done = (std::fabs(s.offset) < 0.005 && std::fabs(s.velocity) < 0.05) || t > 0.55;
 
     if (done) {
-      [_window setFrame:target display:NO];
-      [_window.contentView setNeedsDisplay:YES];
-      [ZenPiPController updateShadowPathForWindow:_window size:target.size radius:10];
-      const BOOL shouldRestore = _animateRestoreUI;
-      [self cancelMotion];
-      [self standDownAfterGesture];
-      // The card is at its final size now: rebuild the resting shadow.
-      [self restoreShadowForResizeEnd];
-      _sawDrag = NO;
-      [self fitCorners:YES];
-      [self rescueIfLost];
-      [self setElevated:NO animated:YES];
-      if (shouldRestore) {
-        [self setPiPUIVisible:YES];
-      } else {
-        [self armUIRestoreOnMouseMove];
-      }
-      [self showCursorIfNeeded];
+      [self landAnimationAtTarget:target];
       return;
     }
 
@@ -947,24 +966,7 @@ static void NotifyPiPGestureActive(bool active) {
     const BOOL done = zen_pip_throw::Resolved(sx, sy);
 
     if (done) {
-      [_window setFrame:target display:NO];
-      [_window.contentView setNeedsDisplay:YES];
-      [ZenPiPController updateShadowPathForWindow:_window size:target.size radius:10];
-      const BOOL shouldRestore = _animateRestoreUI;
-      [self cancelMotion];
-      [self standDownAfterGesture];
-      // The card is at its final size now: rebuild the resting shadow.
-      [self restoreShadowForResizeEnd];
-      _sawDrag = NO;
-      [self fitCorners:YES];
-      [self rescueIfLost];
-      [self setElevated:NO animated:YES];
-      if (shouldRestore) {
-        [self setPiPUIVisible:YES];
-      } else {
-        [self armUIRestoreOnMouseMove];
-      }
-      [self showCursorIfNeeded];
+      [self landAnimationAtTarget:target];
       return;
     }
 
@@ -1375,13 +1377,15 @@ static void NotifyPiPGestureActive(bool active) {
 // visible frame; this is the only place that gets undone.
 - (void)clampToScreen {
   if (!_window) return;
-  NSRect visible = [self homeScreen].visibleFrame;
-  NSRect frame = _window.frame;
-  NSRect fit = NSMakeRect(
-      std::clamp(NSMinX(frame), NSMinX(visible), std::max(NSMinX(visible), NSMaxX(visible) - NSWidth(frame))),
-      std::clamp(NSMinY(frame), NSMinY(visible), std::max(NSMinY(visible), NSMaxY(visible) - NSHeight(frame))),
-      NSWidth(frame), NSHeight(frame));
-  if (!NSEqualRects(fit, frame)) [_window setFrame:fit display:NO];
+  const NSRect frame = _window.frame;
+  const NSRect visible = [self homeScreen].visibleFrame;
+  // One implementation of the rule, shared with the gesture math, so a frame can
+  // never come to rest inside one clamp and outside the other.
+  const zen_pip_zoom::Rect fit = zen_pip_zoom::KeepOnScreen(
+      {NSMinX(frame), NSMinY(frame), NSWidth(frame), NSHeight(frame)},
+      {NSMinX(visible), NSMinY(visible), NSWidth(visible), NSHeight(visible)});
+  const NSRect clamped = NSMakeRect(fit.x, fit.y, fit.w, fit.h);
+  if (!NSEqualRects(clamped, frame)) [_window setFrame:clamped display:NO];
 }
 
 - (void)snapToNearestCorner {

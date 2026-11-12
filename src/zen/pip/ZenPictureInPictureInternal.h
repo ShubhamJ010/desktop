@@ -205,6 +205,7 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (void)animateTo:(NSRect)target;
 - (void)animateTo:(NSRect)target restoreUI:(BOOL)restoreUI;
 - (void)animateTick:(id)sender;
+- (void)landAnimationAtTarget:(NSRect)target;
 - (void)armUIRestoreOnMouseMove;
 - (void)restoreUIOnMouseMove;
 - (void)cancelMotion;
