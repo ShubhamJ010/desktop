@@ -1250,6 +1250,10 @@ static void NotifyPiPGestureActive(bool active) {
   _isPinching = YES;
   _awaitingMouseMoveToShowUI = NO;
   if (_window) [_window orderFrontRegardless];
+  // Announce the gesture now, not one main-loop turn later with the chrome: the
+  // page freezes the remote video viewport from this notification, and it must
+  // already be frozen when the first size change lands.
+  NotifyPiPGestureActive(YES);
   _gestureEventAt = _gestureHandlerAt = CACurrentMediaTime();
   _gestureFirstMoveAt = 0;
   // Same lifecycle as a swipe: kill any spring, then let the resize land before the
@@ -1268,6 +1272,11 @@ static void NotifyPiPGestureActive(bool active) {
 - (void)pinchEndedAtFrame:(NSRect)target {
   _isPinching = NO;
   _isSmartMagnified = NO;  // Next double-tap scales from the new frame
+  // The page holds the video's remote viewport frozen for the gesture; this is
+  // its cue to let it settle. It waits for the window to stop changing size, so
+  // a following snap animation is covered too. Sent on every ending, including
+  // the cancel one, or the page would stay frozen forever.
+  NotifyPiPGestureActive(NO);
   // A swipe that started meanwhile owns the window now; do not snap under it.
   if (_swiping) return;
   if (NSIsEmptyRect(target)) {

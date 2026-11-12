@@ -117,6 +117,14 @@ struct Result {
   double width;
 };
 
+// Round to the nearest whole device pixel. The window server lays windows out in
+// pixels, so a frame rounded to whole points moves two pixels at a time on a 2x
+// display, which reads as a stair-step on a slow trackpad zoom.
+inline double SnapToPixel(double v, double quantum) {
+  if (!(quantum > 0)) return std::round(v);
+  return std::round(v / quantum) * quantum;
+}
+
 // Resize a window around the point the gesture grabbed. `baseFrame` and the
 // anchor fractions are captured once when the gesture begins; every frame is
 // derived from that immutable reference, so integer rounding cannot accumulate
@@ -129,7 +137,7 @@ struct Result {
 // dock is not held during the resize either; the magnetic snap is decided once
 // the gesture ends.
 inline Result ResizeFromBase(Rect baseFrame, double aspect, double scale, double anchorX, double anchorY,
-                             Point pointer, Rect visible, Size minSize, Size maxSize) {
+                             Point pointer, Rect visible, Size minSize, Size maxSize, double quantum) {
   double low, high;
   WidthLimits(aspect, minSize, maxSize, visible, &low, &high);
 
@@ -141,11 +149,12 @@ inline Result ResizeFromBase(Rect baseFrame, double aspect, double scale, double
   const double clampedScale = std::clamp(scale, scaleFloor, scaleCeiling);
 
   const double safeAspect = (aspect > 0.01) ? aspect : (16.0 / 9.0);
-  const double rw = std::clamp(std::round(baseW * clampedScale), std::ceil(low), std::max(std::ceil(low), std::floor(high)));
-  const double rh = std::max(1.0, std::round(rw / safeAspect));
+  const double rw =
+      SnapToPixel(std::clamp(baseW * clampedScale, std::ceil(low), std::max(std::ceil(low), std::floor(high))), quantum);
+  const double rh = std::max(quantum, SnapToPixel(rw / safeAspect, quantum));
 
-  const double x = std::round(pointer.x - anchorX * rw);
-  const double y = std::round(pointer.y - anchorY * rh);
+  const double x = SnapToPixel(pointer.x - anchorX * rw, quantum);
+  const double y = SnapToPixel(pointer.y - anchorY * rh, quantum);
   return {{x, y, rw, rh}, baseW * clampedScale};
 }
 

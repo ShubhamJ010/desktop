@@ -214,7 +214,7 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
 
   const zen_pip_zoom::Result result = zen_pip_zoom::ResizeFromBase(
       {NSMinX(_baseFrame), NSMinY(_baseFrame), NSWidth(_baseFrame), NSHeight(_baseFrame)}, _aspect, _scale, _anchorX,
-      _anchorY, {_pointer.x, _pointer.y}, _visible, [self minSize], [self maxSize]);
+      _anchorY, {_pointer.x, _pointer.y}, _visible, [self minSize], [self maxSize], [self frameQuantum]);
 
   const NSRect next = NSMakeRect(result.frame.x, result.frame.y, result.frame.w, result.frame.h);
   if (!NSEqualRects(next, window.frame)) {
@@ -489,6 +489,13 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
 - (zen_pip_zoom::Size)maxSize {
   NSSize size = _window.contentMaxSize;
   return {size.width > 0 ? size.width : CGFLOAT_MAX, size.height > 0 ? size.height : CGFLOAT_MAX};
+}
+
+// One device pixel in points. A Retina screen gets half-point frames, which is
+// what makes a slow zoom move one pixel at a time instead of two.
+- (double)frameQuantum {
+  const CGFloat scale = _window ? _window.backingScaleFactor : 1.0;
+  return scale > 1.0 ? 1.0 / scale : 1.0;
 }
 
 @end

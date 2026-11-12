@@ -1,8 +1,8 @@
 diff --git a/toolkit/themes/shared/pictureinpicture/player.css b/toolkit/themes/shared/pictureinpicture/player.css
-index c808890..142eb4e 100644
+index c808890..0ef696b 100644
 --- a/toolkit/themes/shared/pictureinpicture/player.css
 +++ b/toolkit/themes/shared/pictureinpicture/player.css
-@@ -810,3 +810,174 @@ body:not(:fullscreen) #fullscreen {
+@@ -810,3 +810,194 @@ body:not(:fullscreen) #fullscreen {
      justify-self: center;
    }
  }
@@ -177,5 +177,23 @@ index c808890..142eb4e 100644
 +}
 +
 +.meet-btn-hangup:hover {
-+  background-color: rgba(217, 48, 37, 0.92) !important;
++
++/*
++ * Diagnostic frame for the resize pipeline, enabled with the `zen.pip.debug`
++ * pref. Red traces the window; lime traces the remote <browser> element that
++ * holds the video. A black band inside the lime box belongs to the child, a band
++ * between the two borders to this document.
++ */
++body.pip-debug::after {
++  content: "";
++  position: fixed;
++  inset: 0;
++  border: 4px solid #ff0033;
++  pointer-events: none;
++  z-index: 2147483647;
++}
++
++body.pip-debug #browser {
++  outline: 4px solid #00ff44 !important;
++  outline-offset: -4px;
 +}
