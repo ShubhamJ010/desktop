@@ -1,5 +1,5 @@
 diff --git a/toolkit/components/pictureinpicture/content/player.js b/toolkit/components/pictureinpicture/content/player.js
-index dfa666a..9a29115 100644
+index dfa666a..797745b 100644
 --- a/toolkit/components/pictureinpicture/content/player.js
 +++ b/toolkit/components/pictureinpicture/content/player.js
 @@ -112,6 +112,63 @@ function setIsMutedState(isMuted) {
@@ -66,7 +66,7 @@ index dfa666a..9a29115 100644
  /**
   * Function to resize and reposition the PiP window
   *
-@@ -422,16 +479,299 @@ let Player = {
+@@ -422,16 +479,231 @@ let Player = {
        document.documentElement.classList.add("seethrough-mode");
      }
  
@@ -145,12 +145,7 @@ index dfa666a..9a29115 100644
 +  // scales the last child surface with the card in the same frame, the band is
 +  // gone, and the video keeps playing.
 +  _pinChildViewport() {
-+    if (this._contentFreeze) {
-+      // A new gesture arrived while the previous one was still laying the child
-+      // back out: keep the child where it is and follow the card again.
-+      this._contentFreeze.release = null;
-+      return;
-+    }
++    if (this._contentFreeze) return;
 +    let browser = document.getElementById("browser");
 +    if (!browser) return;
 +    let w = window.innerWidth;
@@ -159,20 +154,14 @@ index dfa666a..9a29115 100644
 +
 +    this._contentFreeze = {
 +      browser,
-+      // Layout size the child is currently frozen at. It only ever changes while
-+      // the child is being laid back out at the end of the gesture.
 +      w,
 +      h,
 +      sx: 1,
 +      sy: 1,
 +      raf: 0,
 +      ending: false,
-+      release: null,
 +      startedAt: performance.now(),
 +      lastChangeAt: performance.now(),
-+      lastAt: performance.now(),
-+      lastW: w,
-+      lastH: h,
 +    };
 +
 +    // `browser { flex: 1 }` would resize the child on every tick; take it out of
@@ -183,6 +172,7 @@ index dfa666a..9a29115 100644
 +    style.width = `${w}px`;
 +    style.height = `${h}px`;
 +    style.transformOrigin = "0 0";
++    style.willChange = "transform";
 +    this._contentFreeze.raf = window.requestAnimationFrame(() =>
 +      this._scaleFrozenChild()
 +    );
@@ -203,44 +193,15 @@ index dfa666a..9a29115 100644
 +      freeze.lastChangeAt = now;
 +    }
 +
-+    // The window moved again (a snap, or the next gesture): a release that was
-+    // in flight is stale, go back to following the card.
-+    if (freeze.release && (w !== freeze.release.w || h !== freeze.release.h)) {
-+      freeze.release = null;
-+    }
-+
-+    if (freeze.release) {
-+      this._releaseFrozenChild(freeze, now);
-+      if (this._contentFreeze) {
-+        freeze.raf = window.requestAnimationFrame(() =>
-+          this._scaleFrozenChild()
-+        );
-+      }
-+      return;
-+    }
-+
-+    if (document.hidden) {
-+      this._unpinChildViewport();
-+      return;
-+    }
-+
-+    // The window keeps changing size for the whole gesture, the magnetic snap
-+    // included. Once it has come to rest the child can be laid out at the real
-+    // size again.
++    // The window keeps changing size for the whole gesture, including the
++    // magnetic snap that follows it. Release the child only once the size has
++    // settled (and, for a snap, once the gesture has been reported over), so it
++    // reflows exactly once, at the final size, which is also when the picture
++    // regains full sharpness. The long timeout is the safety net for a gesture
++    // whose end never arrives.
 +    let settled = now - freeze.lastChangeAt;
-+    if (freeze.ending ? settled > 120 : settled > 2500) {
-+      if (w === freeze.w && h === freeze.h) {
-+        this._unpinChildViewport();
-+        return;
-+      }
-+      freeze.release = { w, h };
-+      freeze.lastAt = now;
-+      this._releaseFrozenChild(freeze, now);
-+      if (this._contentFreeze) {
-+        freeze.raf = window.requestAnimationFrame(() =>
-+          this._scaleFrozenChild()
-+        );
-+      }
++    if (freeze.ending ? settled > 200 : settled > 2500) {
++      this._unpinChildViewport();
 +      return;
 +    }
 +
@@ -254,36 +215,6 @@ index dfa666a..9a29115 100644
 +    freeze.raf = window.requestAnimationFrame(() =>
 +      this._scaleFrozenChild()
 +    );
-+  },
-+
-+  // Releasing the child in one step is what made the end of a shrink flicker:
-+  // the card stops, the child is handed a viewport it has never seen, and the
-+  // first frame it paints can carry the video at the old size for a moment. Lay
-+  // the child out at the real size in small steps instead, exactly like the
-+  // per-tick steps that are invisible during the gesture. The transform keeps
-+  // the *visible* size at the final one the whole way, so nothing moves on
-+  // screen while the child catches up.
-+  _releaseFrozenChild(freeze, now) {
-+    let target = freeze.release;
-+    let dt = Math.min(0.05, Math.max(0.001, (now - freeze.lastAt) / 1000));
-+    freeze.lastAt = now;
-+
-+    let alpha = 1 - Math.exp(-dt / 0.045);
-+    let w = freeze.w + (target.w - freeze.w) * alpha;
-+    let h = freeze.h + (target.h - freeze.h) * alpha;
-+
-+    // Close enough: one last exact step, then hand the element back to the
-+    // stylesheet.
-+    if (Math.abs(w - target.w) < 0.5 && Math.abs(h - target.h) < 0.5) {
-+      this._unpinChildViewport();
-+      return;
-+    }
-+
-+    freeze.w = w;
-+    freeze.h = h;
-+    freeze.browser.style.width = `${w}px`;
-+    freeze.browser.style.height = `${h}px`;
-+    freeze.browser.style.transform = `scale(${target.w / w}, ${target.h / h})`;
 +  },
 +
 +  _unpinChildViewport() {
@@ -302,6 +233,7 @@ index dfa666a..9a29115 100644
 +    style.height = "";
 +    style.transform = "";
 +    style.transformOrigin = "";
++    style.willChange = "";
 +  },
 +
 +  setupMeetControls() {
@@ -366,7 +298,7 @@ index dfa666a..9a29115 100644
    setupTooltip(elId, l10nId, shortcutId) {
      const el = document.getElementById(elId);
      const shortcut = document.getElementById(shortcutId);
-@@ -910,7 +1250,9 @@ let Player = {
+@@ -910,7 +1182,9 @@ let Player = {
    },
  
    onClick(event) {
@@ -377,7 +309,7 @@ index dfa666a..9a29115 100644
        case "audio": {
          this.toggleMute();
          break;
-@@ -921,6 +1263,33 @@ let Player = {
+@@ -921,6 +1195,33 @@ let Player = {
          break;
        }
  
@@ -411,7 +343,7 @@ index dfa666a..9a29115 100644
        case "playpause": {
          if (!this.isPlaying) {
            this.actor.sendAsyncMessage("PictureInPicture:Play");
-@@ -1432,8 +1801,18 @@ let Player = {
+@@ -1432,8 +1733,18 @@ let Player = {
     *  Event context data object
     */
    onResize() {

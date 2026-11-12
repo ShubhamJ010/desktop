@@ -305,17 +305,7 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
     return;
   }
 
-  NSRect frame = window.frame;
-  // A gesture must end on a whole point. A half-point frame leaves the page
-  // laying the video out on a fractional grid, and that is the one size the
-  // window keeps afterwards: the picture is then resampled with a fractional
-  // phase on every frame, which reads as a faint shimmer while it plays.
-  const NSRect whole = NSMakeRect(std::round(NSMinX(frame)), std::round(NSMinY(frame)),
-                                  std::round(NSWidth(frame)), std::round(NSHeight(frame)));
-  if (!NSEqualRects(whole, frame)) {
-    [window setFrame:whole display:NO];
-    frame = window.frame;
-  }
+  const NSRect frame = window.frame;
   const zen_pip_zoom::Rect current{NSMinX(frame), NSMinY(frame), NSWidth(frame), NSHeight(frame)};
   const zen_pip_zoom::Rect rest = zen_pip_zoom::KeepOnScreen(current, _visible);
   // A gesture that began docked goes home: the cursor-anchored scaling is the
