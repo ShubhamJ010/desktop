@@ -326,26 +326,9 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
         {_visible.x, _visible.y, _visible.w, _visible.h});
     target = NSMakeRect(slot.x, slot.y, slot.w, slot.h);
   }
+  [self resetSession];
 
-  // If snapping into a target corner, keep owned live resize active across the handoff
-  // so Gecko doesn't trigger an intermediate viewport repaint / flash before animateTo starts.
   ZenPiPController *controller = [ZenPiPController forWindow:window];
-  const BOOL willAnimateSnap = !NSIsEmptyRect(target);
-  [self stopEase];
-  [self stopIdle];
-  if (!willAnimateSnap) {
-    [controller endOwnedLiveResize];
-  }
-  _resizing = NO;
-  _endPending = NO;
-  _baseFrame = NSZeroRect;
-  _last = NSZeroRect;
-  _scale = _targetScale = 1.0;
-  _startCorner = zen_pip_zoom::kAnchorNone;
-  _visible = {0, 0, 0, 0};
-  _hitMinHaptic = NO;
-  _hitMaxHaptic = NO;
-
   if (NSIsEmptyRect(target) && (rest.x != current.x || rest.y != current.y)) {
     // Nothing to dock into: undo any overflow in one step and stay right there.
     [window setFrame:NSMakeRect(rest.x, rest.y, rest.w, rest.h) display:NO];

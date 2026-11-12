@@ -841,18 +841,10 @@ static void NotifyPiPGestureActive(bool active) {
     _ownLiveResizeForAnimation = _ownLiveResize;
   }
 
-  // Detect whether target is docked against screen corner edges, so resizing into
-  // corners locks against the corner boundary rather than fighting independent X/Y rounding.
-  NSRect screenVis = [self homeScreen].visibleFrame;
-  const BOOL targetDockedRight = fabs(NSMaxX(target) - (NSMaxX(screenVis) - zen_pip_throw::kCornerInset)) < 2.0;
-  const BOOL targetDockedLeft = fabs(NSMinX(target) - (NSMinX(screenVis) + zen_pip_throw::kCornerInset)) < 2.0;
-  const BOOL targetDockedTop = fabs(NSMaxY(target) - (NSMaxY(screenVis) - zen_pip_throw::kCornerInset)) < 2.0;
-  const BOOL targetDockedBottom = fabs(NSMinY(target) - (NSMinY(screenVis) + zen_pip_throw::kCornerInset)) < 2.0;
-
-  _animatePinRight = targetDockedRight || (fabs(NSMaxX(from) - NSMaxX(target)) < 5.0);
-  _animatePinLeft = targetDockedLeft || (fabs(NSMinX(from) - NSMinX(target)) < 5.0);
-  _animatePinTop = targetDockedTop || (fabs(NSMaxY(from) - NSMaxY(target)) < 5.0);
-  _animatePinBottom = targetDockedBottom || (fabs(NSMinY(from) - NSMinY(target)) < 5.0);
+  _animatePinRight = fabs(NSMaxX(from) - NSMaxX(target)) < 5.0;
+  _animatePinLeft = fabs(NSMinX(from) - NSMinX(target)) < 5.0;
+  _animatePinTop = fabs(NSMaxY(from) - NSMaxY(target)) < 5.0;
+  _animatePinBottom = fabs(NSMinY(from) - NSMinY(target)) < 5.0;
   _animateAspect = NSWidth(from) / MAX(NSHeight(from), 1.0);
 
   if (@available(macOS 14.0, *)) {
