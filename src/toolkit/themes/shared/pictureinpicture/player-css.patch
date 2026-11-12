@@ -2,11 +2,19 @@ diff --git a/toolkit/themes/shared/pictureinpicture/player.css b/toolkit/themes/
 index c808890..142eb4e 100644
 --- a/toolkit/themes/shared/pictureinpicture/player.css
 +++ b/toolkit/themes/shared/pictureinpicture/player.css
-@@ -810,3 +810,166 @@ body:not(:fullscreen) #fullscreen {
+@@ -810,3 +810,174 @@ body:not(:fullscreen) #fullscreen {
      justify-self: center;
    }
  }
 +
++:root,
++html,
++body,
++#video-container,
++.video-wrapper {
++  background-color: #000000 !important;
++  color-scheme: dark !important;
++}
 +
 +#minimize {
 +  background-image: url("chrome://browser/skin/zen-icons/unpin.svg");

@@ -84,7 +84,7 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (void)mouseExitedWindow;
 - (void)pinchBegan;
 - (void)pinchEnded;
-- (void)pinchEndedAtAnchor:(int)anchorCorner;
+- (void)pinchEndedAtFrame:(NSRect)target;
 - (void)snapToNearestCorner;
 - (void)setElevated:(BOOL)elevated animated:(BOOL)animated;
 - (void)setOverlayVisible:(BOOL)visible animated:(BOOL)animated;
@@ -100,8 +100,21 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
   BOOL _keepOnTop;
   NSMutableArray *_observers;
   NSTimer *_slide;
-  id _displayLink;  // CADisplayLink on macOS 14+; `id` keeps the API-availability
-                    // check out of the class layout (deployment target is 11.0).
+  id _displayLink;  // CADisplayLink on macOS 14+ for throwTick; `id` keeps the API-availability check out of class layout
+  id _animateDisplayLink;  // CADisplayLink on macOS 14+ for animateTick (120Hz ProMotion)
+  NSRect _animateFrom;
+  NSRect _animateTarget;
+  CFTimeInterval _animateStartAt;
+  BOOL _animateRestoreUI;
+  BOOL _animateSizeChanges;
+  BOOL _animatePinRight;
+  BOOL _animatePinLeft;
+  BOOL _animatePinTop;
+  BOOL _animatePinBottom;
+  CGFloat _animateAspect;
+  double _animateInitialDistX;
+  double _animateInitialDistY;
+  BOOL _awaitingMouseMoveToShowUI;
   BOOL _animating;
   BOOL _sawDrag;
   BOOL _swiping;
@@ -110,6 +123,7 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
   NSRect _unmagnifiedFrame;
   BOOL _isPinching;
   BOOL _isElevated;
+  BOOL _liveResizing;
   // Swipe pre-warm (armed while the pointer rests over the window).
   BOOL _armed;
   __unsafe_unretained NSScreen *_armedHome;
@@ -160,6 +174,10 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (NSRect)frameStashedAt:(ZenPiPEdge)edge;
 - (void)stashAt:(ZenPiPEdge)edge;
 - (void)animateTo:(NSRect)target;
+- (void)animateTo:(NSRect)target restoreUI:(BOOL)restoreUI;
+- (void)animateTick:(id)sender;
+- (void)armUIRestoreOnMouseMove;
+- (void)restoreUIOnMouseMove;
 - (void)cancelMotion;
 - (void)armSwipe;
 - (void)disarmSwipe;

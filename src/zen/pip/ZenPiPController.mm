@@ -151,7 +151,21 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
     [_observers addObject:[center addObserverForName:NSWindowDidResizeNotification
                                               object:window
                                                queue:nil
-                                          usingBlock:^(NSNotification *) { [weakSelf roundCorners]; }]];
+                                          usingBlock:^(NSNotification *) {
+                                            // A resize gesture owns the frame for its whole duration;
+                                            // rebuilding the corner radius and layer state on every tick is
+                                            // pure per-frame cost and makes the picture stutter. The chrome
+                                            // is applied once when the gesture ends. The shadow path is the
+                                            // exception: it is a single rounded rect and would otherwise lag
+                                            // behind the picture as a ghost of the old size.
+                                            if (weakSelf->_liveResizing) {
+                                              [ZenPiPController updateShadowPathForWindow:weakSelf->_window
+                                                                                     size:weakSelf->_window.contentView.bounds.size
+                                                                                   radius:zen_pip_throw::kBrowserCardRadius];
+                                            } else if (!weakSelf->_isPinching) {
+                                              [weakSelf roundCorners];
+                                            }
+                                          }]];
     [_observers addObject:[center addObserverForName:NSWindowDidChangeScreenNotification
                                               object:window
                                                queue:nil
@@ -163,7 +177,27 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
     [_observers addObject:[center addObserverForName:NSWindowWillStartLiveResizeNotification
                                               object:window
                                                queue:nil
-                                          usingBlock:^(NSNotification *) { [weakSelf stopMotion]; }]];
+                                          usingBlock:^(NSNotification *) {
+                                            [weakSelf.window orderFrontRegardless];
+                                            weakSelf->_awaitingMouseMoveToShowUI = NO;
+                                            [weakSelf cancelMotion];
+                                            [weakSelf showCursorIfNeeded];
+                                            weakSelf->_carrying = NO;
+                                            // Old `stopMotion` parity: a live resize must not inherit a
+                                            // half-finished swipe, or the chrome pass at the end would be
+                                            // skipped as "owned by the swipe".
+                                            weakSelf->_swiping = NO;
+                                            weakSelf->_liveResizing = YES;
+                                            // Matching chrome for a mouse resize: no controls over
+                                            // the picture, softer shadow. The cursor stays visible
+                                            // because the user is dragging an edge with it.
+                                            [weakSelf setPiPUIVisible:NO];
+                                            [weakSelf setElevated:YES animated:YES];
+                                          }]];
+    [_observers addObject:[center addObserverForName:NSWindowDidEndLiveResizeNotification
+                                              object:window
+                                               queue:nil
+                                          usingBlock:^(NSNotification *) { [weakSelf liveResizeEnded]; }]];
     [_observers addObject:[center addObserverForName:NSWindowWillCloseNotification
                                               object:window
                                                queue:nil
@@ -176,6 +210,7 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
 - (void)detach {
   if (_detached) return;
   _detached = YES;
+  _liveResizing = NO;
   [self retain];
   [self disarmSwipe];
   [self showCursorIfNeeded];
@@ -223,9 +258,12 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
   if (!window) return;
   CALayer *layer = window.contentView.layer;
   if (!layer) return;
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
   CGPathRef p = CGPathCreateWithRoundedRect(CGRectMake(0, 0, size.width, size.height), radius, radius, NULL);
   layer.shadowPath = p;
   CGPathRelease(p);
+  [CATransaction commit];
 }
 
 + (void)updateShadowPathForWindow:(NSWindow *)window radius:(CGFloat)radius {
@@ -330,6 +368,7 @@ static void NotifyPiPGestureActive(bool active) {
   [self fitCorners:NO];
   _window.opaque = NO;
   _window.backgroundColor = NSColor.clearColor;
+  layer.backgroundColor = [NSColor blackColor].CGColor;
 
   layer.shadowColor = [NSColor blackColor].CGColor;
   layer.shadowOpacity = _isElevated ? 0.38 : 0.20;
@@ -380,6 +419,15 @@ static void NotifyPiPGestureActive(bool active) {
     }
     layer.cornerRadius = radius;
   }
+  for (NSView *sub in _window.contentView.subviews) {
+    if (sub != _overlay) {
+      sub.wantsLayer = YES;
+      sub.layer.cornerRadius = radius;
+      sub.layer.cornerCurve = kCACornerCurveCircular;
+      sub.layer.masksToBounds = YES;
+      sub.layer.backgroundColor = [NSColor blackColor].CGColor;
+    }
+  }
   [CATransaction commit];
 }
 
@@ -414,7 +462,7 @@ static void NotifyPiPGestureActive(bool active) {
   // A cached hover screen may no longer exist after a display reconfiguration.
   [self disarmSwipe];
   NSScreen *screen = [self homeScreen];
-  if (_animating || _swiping) return;
+  if (_animating || _swiping || _isPinching || _liveResizing) return;
   [self fitCorners:YES];
   [_lastScreenFit release];
   _lastScreenFit = [@{
@@ -422,6 +470,31 @@ static void NotifyPiPGestureActive(bool active) {
     @"frame" : NSStringFromRect(_window.frame),
     @"visibleFrame" : NSStringFromRect(screen.visibleFrame),
   } retain];
+}
+
+- (void)liveResizeEnded {
+  _liveResizing = NO;
+  if (!_window) return;
+  // One chrome pass for the whole gesture: controls, cursor, elevation, corner
+  // radius and shadow are restored from the final frame, never per resize tick.
+  [self endGestureChrome:NO];
+  // A live resize that comes to rest next to a screen corner docks into it.
+  NSScreen *screen = [self homeScreen];
+  zen_pip_throw::Rect visible = ThrowRect(screen.visibleFrame);
+  NSRect frame = _window.frame;
+  const zen_pip_zoom::AnchorCorner corner = zen_pip_zoom::NearestDockCorner(
+      {NSMinX(frame), NSMinY(frame), NSWidth(frame), NSHeight(frame)},
+      {visible.x, visible.y, visible.w, visible.h}, zen_pip_zoom::kSnapTolerance);
+  if (corner != zen_pip_zoom::kAnchorNone) {
+    zen_pip_throw::Rect target = zen_pip_throw::CornerFrame(static_cast<zen_pip_throw::Corner>(corner), NSWidth(frame),
+                                                           NSHeight(frame), visible);
+    if (!NSEqualRects(NSMakeRect(target.x, target.y, target.w, target.h), frame)) {
+      [self animateTo:NSMakeRect(target.x, target.y, target.w, target.h) restoreUI:NO];
+      return;
+    }
+  }
+  [self armUIRestoreOnMouseMove];
+  [self rescueIfLost];
 }
 
 - (void)windowMoved {
@@ -433,7 +506,7 @@ static void NotifyPiPGestureActive(bool active) {
   // Chrome is frozen for the whole gesture: no screen lookups, no corner bends and
   // no shadow invalidation may run inside a per-frame `setFrameOrigin:`. Everything
   // is applied once when the motion settles.
-  if (_swiping || _animating) return;
+  if (_swiping || _animating || _isPinching || _liveResizing) return;
   [self homeScreen];
   [self fitCorners:YES];
   if (NSEvent.pressedMouseButtons & 1) _sawDrag = YES;
@@ -542,6 +615,13 @@ static void NotifyPiPGestureActive(bool active) {
     [_displayLink release];
     _displayLink = nil;
   }
+  if (_animateDisplayLink) {
+    if (@available(macOS 14.0, *)) {
+      [(CADisplayLink *)_animateDisplayLink invalidate];
+    }
+    [_animateDisplayLink release];
+    _animateDisplayLink = nil;
+  }
   _animating = NO;
   _throwActive = NO;
 }
@@ -551,15 +631,38 @@ static void NotifyPiPGestureActive(bool active) {
   _carrying = NO;
   _swiping = NO;
   [self showCursorIfNeeded];
+  if (!_awaitingMouseMoveToShowUI && !_isPinching && !_liveResizing) {
+    [self setPiPUIVisible:YES];
+  }
+}
+
+- (void)armUIRestoreOnMouseMove {
+  _awaitingMouseMoveToShowUI = YES;
+  [self setOverlayVisible:NO animated:NO];
+  NotifyPiPGestureActive(true);
+}
+
+- (void)restoreUIOnMouseMove {
+  if (!_awaitingMouseMoveToShowUI) return;
+  _awaitingMouseMoveToShowUI = NO;
   [self setPiPUIVisible:YES];
+  [self showCursorIfNeeded];
 }
 
 - (void)animateTo:(NSRect)target {
-  [self stopMotion];
+  [self animateTo:target restoreUI:YES];
+}
+
+- (void)animateTo:(NSRect)target restoreUI:(BOOL)restoreUI {
+  [self cancelMotion];
   [_window orderFrontRegardless];
   NSRect from = _window.frame;
   if (NSEqualRects(from, target)) {
-    [self setPiPUIVisible:YES];
+    if (restoreUI) {
+      [self setPiPUIVisible:YES];
+    } else {
+      [self armUIRestoreOnMouseMove];
+    }
     [self showCursorIfNeeded];
     return;
   }
@@ -567,107 +670,137 @@ static void NotifyPiPGestureActive(bool active) {
   [self setElevated:YES animated:YES];
   [self bendCornersTo:zen_pip_throw::kFreeRadius animated:NO];
   [self setPiPUIVisible:NO];
-  const CFTimeInterval start = CACurrentMediaTime();
-  const double initialDistX = NSMinX(from) - NSMinX(target);
-  const double initialDistY = NSMinY(from) - NSMinY(target);
+
+  _animateFrom = from;
+  _animateTarget = target;
+  _animateRestoreUI = restoreUI;
+  _animateStartAt = CACurrentMediaTime();
+  _animateInitialDistX = NSMinX(from) - NSMinX(target);
+  _animateInitialDistY = NSMinY(from) - NSMinY(target);
   const double initialDistW = NSWidth(from) - NSWidth(target);
   const double initialDistH = NSHeight(from) - NSHeight(target);
-  const BOOL sizeChanges = (fabs(initialDistW) > 0.5 || fabs(initialDistH) > 0.5);
+  _animateSizeChanges = (fabs(initialDistW) > 0.5 || fabs(initialDistH) > 0.5);
 
-  // Pin edges that remain stationary between source and destination frames.
-  // Independent rounding of opposite offsets causes stationary edges to vibrate by ±1px;
-  // edge-pinning guarantees the anchored screen corner remains dead-still throughout the animation.
-  const BOOL pinRight = fabs(NSMaxX(from) - NSMaxX(target)) < 5.0;
-  const BOOL pinLeft = fabs(NSMinX(from) - NSMinX(target)) < 5.0;
-  const BOOL pinTop = fabs(NSMaxY(from) - NSMaxY(target)) < 5.0;
-  const BOOL pinBottom = fabs(NSMinY(from) - NSMinY(target)) < 5.0;
-  const CGFloat aspect = NSWidth(from) / MAX(NSHeight(from), 1.0);
+  _animatePinRight = fabs(NSMaxX(from) - NSMaxX(target)) < 5.0;
+  _animatePinLeft = fabs(NSMinX(from) - NSMinX(target)) < 5.0;
+  _animatePinTop = fabs(NSMaxY(from) - NSMaxY(target)) < 5.0;
+  _animatePinBottom = fabs(NSMinY(from) - NSMinY(target)) < 5.0;
+  _animateAspect = NSWidth(from) / MAX(NSHeight(from), 1.0);
+
+  if (@available(macOS 14.0, *)) {
+    CADisplayLink *link = [_window.contentView displayLinkWithTarget:self selector:@selector(animateTick:)];
+    link.preferredFrameRateRange = CAFrameRateRangeMake(60, 120, 120);
+    [link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    _animateDisplayLink = [link retain];
+    return;
+  }
 
   __unsafe_unretained ZenPiPController *weakSelf = self;
   _slide = [[NSTimer scheduledTimerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *timer) {
-    ZenPiPController *strongSelf = weakSelf;
-    if (!strongSelf || !strongSelf->_window || !strongSelf->_window.visible) {
-      if (strongSelf) [strongSelf stopMotion];
-      else [timer invalidate];
-      return;
-    }
-    const double t = CACurrentMediaTime() - start;
-
-    if (sizeChanges) {
-      // Single scalar spring drives the animation progress [1.0 -> 0.0].
-      // Response = 0.38s, Damping = 0.76 provides smooth spring pop with subtle natural overshoot.
-      // Computing height strictly from aspect ratio locks the video quad, eliminating letterbox flicker.
-      const auto s = zen_pip_throw::SpringAt(1.0, 0, t, 0.38, 0.76);
-      const BOOL done = (std::fabs(s.offset) < 0.005 && std::fabs(s.velocity) < 0.05) || t > 0.55;
-
-      if (done) {
-        [strongSelf->_window setFrame:target display:NO];
-        [strongSelf->_window.contentView setNeedsDisplay:YES];
-        [ZenPiPController updateShadowPathForWindow:strongSelf->_window size:target.size radius:10];
-        [strongSelf stopMotion];
-        strongSelf->_sawDrag = NO;
-        [strongSelf fitCorners:YES];
-        [strongSelf rescueIfLost];
-        [strongSelf setElevated:NO animated:YES];
-        [strongSelf setPiPUIVisible:YES];
-        [strongSelf showCursorIfNeeded];
-        return;
-      }
-
-      const double progress = 1.0 - s.offset;
-      const CGFloat curW = MAX(round(NSWidth(from) + (NSWidth(target) - NSWidth(from)) * progress), 100.0);
-      const CGFloat curH = MAX(round(curW / aspect), 60.0);
-
-      CGFloat curX;
-      if (pinRight && !pinLeft) {
-        curX = NSMaxX(target) - curW;
-      } else if (pinLeft && !pinRight) {
-        curX = NSMinX(target);
-      } else {
-        curX = round(NSMinX(from) + (NSMinX(target) - NSMinX(from)) * progress);
-      }
-
-      CGFloat curY;
-      if (pinTop && !pinBottom) {
-        curY = NSMaxY(target) - curH;
-      } else if (pinBottom && !pinTop) {
-        curY = NSMinY(target);
-      } else {
-        curY = round(NSMinY(from) + (NSMinY(target) - NSMinY(from)) * progress);
-      }
-
-      NSRect current = NSMakeRect(curX, curY, curW, curH);
-      [strongSelf->_window setFrame:current display:NO];
-      [ZenPiPController updateShadowPathForWindow:strongSelf->_window size:current.size radius:10];
-    } else {
-      // Pure position translation (e.g. corner snap glide)
-      const auto sx = zen_pip_throw::SpringAt(initialDistX, 0, t, 0.38, 0.76);
-      const auto sy = zen_pip_throw::SpringAt(initialDistY, 0, t, 0.38, 0.76);
-      const BOOL done = zen_pip_throw::Resolved(sx, sy);
-
-      if (done) {
-        [strongSelf->_window setFrame:target display:NO];
-        [strongSelf->_window.contentView setNeedsDisplay:YES];
-        [ZenPiPController updateShadowPathForWindow:strongSelf->_window size:target.size radius:10];
-        [strongSelf stopMotion];
-        strongSelf->_sawDrag = NO;
-        [strongSelf fitCorners:YES];
-        [strongSelf rescueIfLost];
-        [strongSelf setElevated:NO animated:YES];
-        [strongSelf setPiPUIVisible:YES];
-        [strongSelf showCursorIfNeeded];
-        return;
-      }
-
-      NSRect current = NSMakeRect(
-          round(NSMinX(target) + sx.offset),
-          round(NSMinY(target) + sy.offset),
-          NSWidth(target),
-          NSHeight(target));
-      [strongSelf->_window setFrame:current display:NO];
-    }
+    [weakSelf animateTick:timer];
   }] retain];
   [NSRunLoop.currentRunLoop addTimer:_slide forMode:NSRunLoopCommonModes];
+}
+
+- (void)animateTick:(id)sender {
+  if (!_window || !_window.visible) {
+    [self stopMotion];
+    return;
+  }
+
+  CFTimeInterval now = CACurrentMediaTime();
+  if (@available(macOS 14.0, *)) {
+    if ([sender isKindOfClass:[CADisplayLink class]]) {
+      CADisplayLink *dl = (CADisplayLink *)sender;
+      if (dl.targetTimestamp > 0) {
+        now = dl.targetTimestamp;
+      }
+    }
+  }
+
+  const double t = now - _animateStartAt;
+  const NSRect from = _animateFrom;
+  const NSRect target = _animateTarget;
+
+  if (_animateSizeChanges) {
+    const auto s = zen_pip_throw::SpringAt(1.0, 0, t, 0.38, 0.76);
+    const BOOL done = (std::fabs(s.offset) < 0.005 && std::fabs(s.velocity) < 0.05) || t > 0.55;
+
+    if (done) {
+      [_window setFrame:target display:NO];
+      [_window.contentView setNeedsDisplay:YES];
+      [ZenPiPController updateShadowPathForWindow:_window size:target.size radius:10];
+      const BOOL shouldRestore = _animateRestoreUI;
+      [self cancelMotion];
+      _sawDrag = NO;
+      [self fitCorners:YES];
+      [self rescueIfLost];
+      [self setElevated:NO animated:YES];
+      if (shouldRestore) {
+        [self setPiPUIVisible:YES];
+      } else {
+        [self armUIRestoreOnMouseMove];
+      }
+      [self showCursorIfNeeded];
+      return;
+    }
+
+    const double progress = 1.0 - s.offset;
+    const CGFloat curW = MAX(round(NSWidth(from) + (NSWidth(target) - NSWidth(from)) * progress), 100.0);
+    const CGFloat curH = MAX(round(curW / _animateAspect), 60.0);
+
+    CGFloat curX;
+    if (_animatePinRight && !_animatePinLeft) {
+      curX = NSMaxX(target) - curW;
+    } else if (_animatePinLeft && !_animatePinRight) {
+      curX = NSMinX(target);
+    } else {
+      curX = round(NSMinX(from) + (NSMinX(target) - NSMinX(from)) * progress);
+    }
+
+    CGFloat curY;
+    if (_animatePinTop && !_animatePinBottom) {
+      curY = NSMaxY(target) - curH;
+    } else if (_animatePinBottom && !_animatePinTop) {
+      curY = NSMinY(target);
+    } else {
+      curY = round(NSMinY(from) + (NSMinY(target) - NSMinY(from)) * progress);
+    }
+
+    NSRect current = NSMakeRect(curX, curY, curW, curH);
+    [_window setFrame:current display:NO];
+    [ZenPiPController updateShadowPathForWindow:_window size:current.size radius:10];
+  } else {
+    const auto sx = zen_pip_throw::SpringAt(_animateInitialDistX, 0, t, 0.38, 0.76);
+    const auto sy = zen_pip_throw::SpringAt(_animateInitialDistY, 0, t, 0.38, 0.76);
+    const BOOL done = zen_pip_throw::Resolved(sx, sy);
+
+    if (done) {
+      [_window setFrame:target display:NO];
+      [_window.contentView setNeedsDisplay:YES];
+      [ZenPiPController updateShadowPathForWindow:_window size:target.size radius:10];
+      const BOOL shouldRestore = _animateRestoreUI;
+      [self cancelMotion];
+      _sawDrag = NO;
+      [self fitCorners:YES];
+      [self rescueIfLost];
+      [self setElevated:NO animated:YES];
+      if (shouldRestore) {
+        [self setPiPUIVisible:YES];
+      } else {
+        [self armUIRestoreOnMouseMove];
+      }
+      [self showCursorIfNeeded];
+      return;
+    }
+
+    NSRect current = NSMakeRect(
+        round(NSMinX(target) + sx.offset),
+        round(NSMinY(target) + sy.offset),
+        NSWidth(target),
+        NSHeight(target));
+    [_window setFrame:current display:NO];
+  }
 }
 
 - (BOOL)throwFrom:(NSPoint)grab velocity:(NSPoint)velocity {
@@ -829,6 +962,8 @@ static void NotifyPiPGestureActive(bool active) {
 // cursor and raise the shadow. Always runs one main-loop turn after the first moved
 // frame, and is dropped if that gesture is already over.
 - (void)beginGestureChrome:(ZenPiPGesture)kind chained:(BOOL)chained {
+  _awaitingMouseMoveToShowUI = NO;
+  if (_window) [_window orderFrontRegardless];
   const uint64_t generation = ++_gestureGeneration;
   [self retain];
   dispatch_async(dispatch_get_main_queue(), ^{
@@ -869,7 +1004,12 @@ static void NotifyPiPGestureActive(bool active) {
   [self showCursorIfNeeded];
   if (restoreUI) [self setPiPUIVisible:YES];
   [self setElevated:NO animated:YES];
-  if (!_animating) [self fitCorners:YES];
+  if (!_animating) {
+    [self fitCorners:YES];
+    // The shadow path was deliberately left alone during the gesture; rebuild it
+    // once for the final size so it never lags the resized picture.
+    [ZenPiPController updateShadowPathForWindow:_window size:_window.contentView.bounds.size radius:[self cornerRadius]];
+  }
 }
 
 - (void)armSwipe {
@@ -991,6 +1131,9 @@ static void NotifyPiPGestureActive(bool active) {
   // Freeze hover while the window is already moving.
   if (_swiping || _animating) return;
   [self armSwipe];
+  if (_awaitingMouseMoveToShowUI) {
+    [self restoreUIOnMouseMove];
+  }
 }
 
 - (void)mouseExitedWindow {
@@ -1000,6 +1143,8 @@ static void NotifyPiPGestureActive(bool active) {
 - (void)pinchBegan {
   if (_swiping) [self abandonSwipe];
   _isPinching = YES;
+  _awaitingMouseMoveToShowUI = NO;
+  if (_window) [_window orderFrontRegardless];
   _gestureEventAt = _gestureHandlerAt = CACurrentMediaTime();
   _gestureFirstMoveAt = 0;
   // Same lifecycle as a swipe: kill any spring, then let the resize land before the
@@ -1009,26 +1154,39 @@ static void NotifyPiPGestureActive(bool active) {
 }
 
 - (void)pinchEnded {
-  [self pinchEndedAtAnchor:zen_pip_zoom::kAnchorNone];
+  [self pinchEndedAtFrame:NSZeroRect];
 }
 
-- (void)pinchEndedAtAnchor:(int)anchorCorner {
+// A resize ends. With a `target` (a screen corner slot) the picture settles into
+// it; with an empty rect it stays exactly where the cursor left it, pulled back
+// on screen if the gesture overflowed an edge while following the pointer.
+- (void)pinchEndedAtFrame:(NSRect)target {
   _isPinching = NO;
-  _isSmartMagnified = NO; // Invalidate smart magnify state so next double-tap scales from current frame
+  _isSmartMagnified = NO;  // Next double-tap scales from the new frame
   // A swipe that started meanwhile owns the window now; do not snap under it.
   if (_swiping) return;
-  if (anchorCorner >= 0 && anchorCorner <= 3) {
-    // Docked corner: settle back into the originating dock corner (0=TopLeft, 1=TopRight, 2=BottomLeft, 3=BottomRight)
-    NSScreen *screen = [self homeScreen];
-    zen_pip_throw::Rect visible = ThrowRect(screen.visibleFrame);
-    zen_pip_throw::Corner corner = static_cast<zen_pip_throw::Corner>(anchorCorner);
-    zen_pip_throw::Rect target = zen_pip_throw::CornerFrame(corner, NSWidth(_window.frame), NSHeight(_window.frame), visible);
+  if (NSIsEmptyRect(target)) {
+    [self clampToScreen];
     [self endGestureChrome:NO];
-    [self animateTo:NSMakeRect(target.x, target.y, target.w, target.h)];
-  } else {
-    // Free-floating: leave window right where user zoomed it
-    [self endGestureChrome:YES];
+    [self armUIRestoreOnMouseMove];
+    return;
   }
+  [self endGestureChrome:NO];
+  [self animateTo:target restoreUI:NO];
+}
+
+// Fit the window back inside its screen without changing its size. A resize
+// follows the cursor in every direction, which can push an edge past the
+// visible frame; this is the only place that gets undone.
+- (void)clampToScreen {
+  if (!_window) return;
+  NSRect visible = [self homeScreen].visibleFrame;
+  NSRect frame = _window.frame;
+  NSRect fit = NSMakeRect(
+      std::clamp(NSMinX(frame), NSMinX(visible), std::max(NSMinX(visible), NSMaxX(visible) - NSWidth(frame))),
+      std::clamp(NSMinY(frame), NSMinY(visible), std::max(NSMinY(visible), NSMaxY(visible) - NSHeight(frame))),
+      NSWidth(frame), NSHeight(frame));
+  if (!NSEqualRects(fit, frame)) [_window setFrame:fit display:NO];
 }
 
 - (void)snapToNearestCorner {
@@ -1154,6 +1312,7 @@ void InstallMonitors() {
         [window orderFrontRegardless];
         gDragged = window;
         [ZenPiPController abandonSwipeOn:window];
+        [ZenPiPZoom abandonZoomOn:window];
         [controller stopMotion];
         NSPoint mouse = ScreenLocation(event);
         gLastMouse = mouse;
@@ -1225,6 +1384,37 @@ void InstallMonitors() {
               [controller.window _preventsActivation]);
       }
       [ZenPiPZoom handle:event];
+    }];
+
+    [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskMouseMoved
+                                          handler:^NSEvent *(NSEvent *event) {
+      NSWindow *window = event.window;
+      if (!window || ![window isKindOfClass:[NSWindow class]]) {
+        NSPoint p = [NSEvent mouseLocation];
+        for (NSWindow *candidate in NSApp.orderedWindows) {
+          if (candidate.visible && NSPointInRect(p, candidate.frame)) {
+            window = candidate;
+            break;
+          }
+        }
+      }
+      if (window && [window isKindOfClass:[NSWindow class]]) {
+        ZenPiPController *controller = [ZenPiPController forWindow:window];
+        [controller restoreUIOnMouseMove];
+      }
+      return event;
+    }];
+
+    [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMouseMoved
+                                           handler:^(NSEvent *event) {
+      NSPoint p = [NSEvent mouseLocation];
+      for (NSWindow *candidate in NSApp.orderedWindows) {
+        if (candidate.visible && NSPointInRect(p, candidate.frame)) {
+          ZenPiPController *controller = [ZenPiPController forWindow:candidate];
+          [controller restoreUIOnMouseMove];
+          break;
+        }
+      }
     }];
 
     [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown

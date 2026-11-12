@@ -66,7 +66,7 @@ index dfa666a..a9656a9 100644
  /**
   * Function to resize and reposition the PiP window
   *
-@@ -422,16 +479,105 @@ let Player = {
+@@ -422,16 +479,119 @@ let Player = {
        document.documentElement.classList.add("seethrough-mode");
      }
  
@@ -81,6 +81,15 @@ index dfa666a..a9656a9 100644
 +
 +    Services.obs.addObserver(this, "zen-pip-gesture-begin");
 +    Services.obs.addObserver(this, "zen-pip-gesture-end");
++    this._onMouseMoveAfterResize = () => {
++      if (this._awaitingMouseMoveAfterResize && !this._inNativeGesture) {
++        this._awaitingMouseMoveAfterResize = false;
++        if (document && document.body) {
++          document.body.classList.remove("pip-gesture-active");
++        }
++      }
++    };
++    window.addEventListener("mousemove", this._onMouseMoveAfterResize, { passive: true });
 +
      this._isInitialized = true;
  
@@ -90,10 +99,12 @@ index dfa666a..a9656a9 100644
    uninit() {
 +    Services.obs.removeObserver(this, "zen-pip-gesture-begin");
 +    Services.obs.removeObserver(this, "zen-pip-gesture-end");
-+    if (this._gestureResizeTimeout) {
-+      clearTimeout(this._gestureResizeTimeout);
-+      this._gestureResizeTimeout = null;
++    if (this._onMouseMoveAfterResize) {
++      window.removeEventListener("mousemove", this._onMouseMoveAfterResize);
++      this._onMouseMoveAfterResize = null;
 +    }
++    this._awaitingMouseMoveAfterResize = false;
++    this._inNativeGesture = false;
      this.resizeDebouncer.disarm();
      PictureInPicture.unload(window, this.actor);
    },
@@ -102,10 +113,13 @@ index dfa666a..a9656a9 100644
 +    if (!document || !document.body) return;
 +    switch (topic) {
 +      case "zen-pip-gesture-begin":
++        this._inNativeGesture = true;
++        this._awaitingMouseMoveAfterResize = false;
 +        document.body.classList.add("pip-gesture-active");
 +        break;
 +      case "zen-pip-gesture-end":
-+        document.body.classList.remove("pip-gesture-active");
++        this._inNativeGesture = false;
++        this._awaitingMouseMoveAfterResize = true;
 +        break;
 +    }
 +  },
@@ -172,7 +186,7 @@ index dfa666a..a9656a9 100644
    setupTooltip(elId, l10nId, shortcutId) {
      const el = document.getElementById(elId);
      const shortcut = document.getElementById(shortcutId);
-@@ -910,7 +1056,9 @@ let Player = {
+@@ -910,7 +1070,9 @@ let Player = {
    },
  
    onClick(event) {
@@ -183,7 +197,7 @@ index dfa666a..a9656a9 100644
        case "audio": {
          this.toggleMute();
          break;
-@@ -921,6 +1069,33 @@ let Player = {
+@@ -921,6 +1083,33 @@ let Player = {
          break;
        }
  
@@ -217,18 +231,13 @@ index dfa666a..a9656a9 100644
        case "playpause": {
          if (!this.isPlaying) {
            this.actor.sendAsyncMessage("PictureInPicture:Play");
-@@ -1434,6 +1609,15 @@ let Player = {
+@@ -1434,6 +1623,10 @@ let Player = {
    onResize() {
      this.toggleSubtitlesSettingsPanel({ forceHide: true });
      this.togglePlaybackRatePanel({ forceHide: true });
-+    if (document && document.body && !document.body.classList.contains("pip-gesture-active")) {
++    if (document && document.body) {
 +      document.body.classList.add("pip-gesture-active");
-+      clearTimeout(this._gestureResizeTimeout);
-+      this._gestureResizeTimeout = setTimeout(() => {
-+        if (document && document.body) {
-+          document.body.classList.remove("pip-gesture-active");
-+        }
-+      }, 180);
++      this._awaitingMouseMoveAfterResize = true;
 +    }
      this.resizeDebouncer.disarm();
      this.resizeDebouncer.arm();
