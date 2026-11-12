@@ -400,6 +400,11 @@ static void NotifyPiPGestureActive(bool active) {
   [ZenPiPController updateShadowPathForWindow:_window radius:radius];
 }
 
+// Pairing rule: exactly one end for every begin, on every exit path (session
+// reset, abandon/cancel, detach, animation landing, and the no-op animateTo:
+// path). Both are idempotent, so an extra call is harmless and a missing one is
+// not: left open, Gecko stays in live-resize and the picture stays frozen at the
+// pre-gesture size while the card is already at the new one.
 - (void)beginOwnedLiveResize {
   if (_ownLiveResize || !_window || _window.inLiveResize) return;
   // Private, but present on every macOS that ships -inLiveResize; a system that
@@ -884,7 +889,9 @@ static void NotifyPiPGestureActive(bool active) {
 
 // Shared ending for both animation shapes (size change and pure translation).
 // Landing is the same work either way: put the frame exactly on target, drop the
-// gesture chrome and hand the controls back once.
+// gesture chrome and hand the controls back once. Order matters: the frame lands
+// before cancelMotion ends the owned live resize, so Gecko lays out exactly once
+// at the final size.
 - (void)landAnimationAtTarget:(NSRect)target {
   [_window setFrame:target display:NO];
   [_window.contentView setNeedsDisplay:YES];

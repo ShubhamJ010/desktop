@@ -1,6 +1,68 @@
 #ifndef ZEN_PIP_ZENPICTUREINPICTUREINTERNAL_H_
 #define ZEN_PIP_ZENPICTUREINPICTUREINTERNAL_H_
 
+// Zen macOS Picture-in-Picture: resize, snap and chrome.
+//
+// The picture is not in the PiP shell document. It is a video inside a remote
+// <browser>, one process away, so a resize travels
+//   window frame -> shell reflow -> IPC -> child reflow -> child paint
+// which a 60-120 Hz gesture outruns. Three mechanisms keep the card and the
+// picture in the same frame, and the rules below exist to protect them:
+//
+//   1. An owned live resize (-beginOwnedLiveResize) puts AppKit into the mode a
+//      mouse edge drag uses, so Gecko stops laying the video out per tick and the
+//      window server stretches the last composited frame with the card instead.
+//   2. The shell page freezes the remote <browser> at its starting size and scales
+//      it with a compositor transform (zen-pip-gesture-begin/-end).
+//   3. Chrome (radius, shadow, controls, cursor) is applied once when the gesture
+//      ends, never per tick.
+//
+// Invariants, roughly in the order they get broken:
+//
+//   * One reference frame per gesture. ZenPiPZoom captures the base frame, the
+//     grabbed fraction, the aspect, the grab point and the start screen once at
+//     begin, and derives every frame from them. An incremental resize accumulates
+//     integer rounding and reads as jitter; a base-derived one cannot.
+//   * No clamping mid-gesture. Pinning an edge to the screen would collapse a
+//     docked card's resize into "grow towards the middle". Overflow is undone
+//     once, on release, by zen_pip_zoom::KeepOnScreen.
+//   * Every -beginOwnedLiveResize has exactly one -endOwnedLiveResize on every
+//     exit path. Both are idempotent; a missing end leaves Gecko in live-resize
+//     and the picture frozen at the pre-gesture size. Land the final frame before
+//     ending the resize, so Gecko lays out once at the final size.
+//   * The snap is decided on release only: a gesture that began docked returns to
+//     that corner, one that began free docks only within 56 pt per axis
+//     (kSnapTolerance) and otherwise stays exactly where it is.
+//   * Chrome work belongs in the end-of-gesture pass. roundCorners, windowMoved,
+//     screenChanged and the resize notification all return early mid-gesture.
+//
+// Controller flags, which are not interchangeable:
+//
+//   _isPinching                 a zoom session owns the window
+//   _liveResizing               the user is dragging an edge (their notification)
+//   _ownLiveResize              we started live resize, and must end it
+//   _ownLiveResizeForAnimation  that owned resize belongs to a snap animation
+//   _shadowSuppressedForResize  resting shadow removed for the gesture
+//   _frontedForGesture          card lifted above other apps for the gesture
+//   _awaitingMouseMoveToShowUI  controls hidden until the pointer moves
+//   _animating                  a display-link animation owns the frame
+//   _swiping                    a swipe owns the window
+//
+// Page protocol. The shell observes zen-pip-gesture-begin/-end. While the window
+// grows it pins the <browser> to the base size and scales it, so the child never
+// reflows; while it shrinks the pin is lifted, because the larger old picture is
+// clipped anyway and freezing would snap on release. The page's onResize returns
+// early during a native gesture.
+//
+// Known gaps, which are limitations rather than guarantees: the resting frame can
+// land on a half point (device-pixel quantisation, and only the snap slot rounds
+// to whole points); zen-pip-gesture-begin doubles as "controls hidden" because
+// -setPiPUIVisible: sends the same notification, so the page's _inNativeGesture
+// can outlive the gesture; -startLiveResize/-endLiveResize are private AppKit API
+// behind respondsToSelector:; -frontForGesture runs once per gesture rather than
+// per tick, so a level written back by Gecko mid-resize is only corrected at the
+// next entry point.
+
 #import <Cocoa/Cocoa.h>
 #include <vector>
 

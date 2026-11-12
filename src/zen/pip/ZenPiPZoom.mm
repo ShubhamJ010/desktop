@@ -26,6 +26,28 @@ constexpr double kScrollTau = 0.055;
 
 }  // namespace
 
+// Resize session. One gesture, one reference frame.
+//
+// -beginResizeAt: captures the base frame, the grabbed fraction (anchorX/Y), the
+// grab point, the aspect from contentAspectRatio, the visible frame of the start
+// screen and the scale band, once. Nothing is recomputed from a frame this
+// session produced: every frame is ResizeFromBase(baseFrame, scale).
+//
+//   input           step                                applied
+//   pinch           clamp(1 + magnification, .9, 1.1)   display link, tau .022 s
+//   precise scroll  ScrollFactor(dy)                    immediately, 1:1
+//   line wheel      ScrollFactor(dy)                    display link, tau .055 s
+//
+// The eased approach is alpha = 1 - exp(-dt / tau) on a CADisplayLink with dt
+// clamped to [1/240, 1/30], so the glide is the same at 60 and 120 Hz and a
+// stalled main thread cannot turn one tick into a jump.
+//
+// The end arrives from NSEventPhaseEnded/Cancelled, or from an idle timer
+// (0.45 s pinch, 0.35 s scroll) for devices that never report a phase.
+// -requestEnd defers to a running ease so the snap is computed from the size the
+// fingers asked for. -finishResize keeps the owned live resize open when it will
+// snap, because the animation covers the handoff, and ends it otherwise.
+// -abandon never snaps: something else owns the window by then.
 @implementation ZenPiPZoom {
   __unsafe_unretained NSWindow *_window;
   // Session state. Captured once at gesture start, never mutated, so every
