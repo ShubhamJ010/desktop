@@ -10,8 +10,10 @@ index c808890..142eb4e 100644
 +:root,
 +html,
 +body,
++#player,
 +#video-container,
-+.video-wrapper {
++.video-wrapper,
++video {
 +  background-color: #000000 !important;
 +  color-scheme: dark !important;
 +}

@@ -152,19 +152,14 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
                                               object:window
                                                queue:nil
                                           usingBlock:^(NSNotification *) {
-                                            // A resize gesture owns the frame for its whole duration;
-                                            // rebuilding the corner radius and layer state on every tick is
-                                            // pure per-frame cost and makes the picture stutter. The chrome
-                                            // is applied once when the gesture ends. The shadow path is the
-                                            // exception: it is a single rounded rect and would otherwise lag
-                                            // behind the picture as a ghost of the old size.
-                                            if (weakSelf->_liveResizing) {
-                                              [ZenPiPController updateShadowPathForWindow:weakSelf->_window
-                                                                                     size:weakSelf->_window.contentView.bounds.size
-                                                                                   radius:zen_pip_throw::kBrowserCardRadius];
-                                            } else if (!weakSelf->_isPinching) {
-                                              [weakSelf roundCorners];
-                                            }
+                                            // A resize gesture owns the frame for its whole
+                                            // duration; rebuilding the corner radius and layer
+                                            // state on every tick is pure per-frame cost and makes
+                                            // the picture stutter. All of it is applied once when
+                                            // the gesture ends, and the shadow is off for the
+                                            // duration, so there is nothing to track here.
+                                            if (weakSelf->_liveResizing || weakSelf->_isPinching) return;
+                                            [weakSelf roundCorners];
                                           }]];
     [_observers addObject:[center addObserverForName:NSWindowDidChangeScreenNotification
                                               object:window
@@ -178,6 +173,10 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
                                               object:window
                                                queue:nil
                                           usingBlock:^(NSNotification *) {
+                                            // A live resize this code started (pinch/scroll)
+                                            // belongs to the pinch path: chrome, cursor and
+                                            // elevation are already set from there.
+                                            if (weakSelf->_ownLiveResize) return;
                                             [weakSelf.window orderFrontRegardless];
                                             weakSelf->_awaitingMouseMoveToShowUI = NO;
                                             [weakSelf cancelMotion];
@@ -189,10 +188,11 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
                                             weakSelf->_swiping = NO;
                                             weakSelf->_liveResizing = YES;
                                             // Matching chrome for a mouse resize: no controls over
-                                            // the picture, softer shadow. The cursor stays visible
-                                            // because the user is dragging an edge with it.
+                                            // the picture, no soft shadow to rasterise per tick.
+                                            // The cursor stays visible because the user is dragging
+                                            // an edge with it.
                                             [weakSelf setPiPUIVisible:NO];
-                                            [weakSelf setElevated:YES animated:YES];
+                                            [weakSelf hideShadowForResize];
                                           }]];
     [_observers addObject:[center addObserverForName:NSWindowDidEndLiveResizeNotification
                                               object:window
@@ -210,6 +210,7 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
 - (void)detach {
   if (_detached) return;
   _detached = YES;
+  [self endOwnedLiveResize];
   _liveResizing = NO;
   [self retain];
   [self disarmSwipe];
@@ -349,6 +350,64 @@ static void NotifyPiPGestureActive(bool active) {
   [CATransaction commit];
 }
 
+// A resize gesture must stay at 120 Hz. The drop shadow is a large blurred
+// rounded rect whose path changes with every tick, and rasterising it per frame
+// is the most expensive thing on this path; meanwhile the window server already
+// scales the whole card - shadow included - during the live resize. So it is
+// switched off for the gesture and rebuilt once from the final frame.
+- (void)hideShadowForResize {
+  if (!_window) return;
+  CALayer *layer = _window.contentView.layer;
+  if (!layer) return;
+  _shadowSuppressedForResize = YES;
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
+  layer.shadowOpacity = 0.0;
+  layer.shadowPath = nil;
+  [CATransaction commit];
+}
+
+- (void)restoreShadowForResizeEnd {
+  if (!_shadowSuppressedForResize) return;
+  _shadowSuppressedForResize = NO;
+  if (!_window) return;
+  CALayer *layer = _window.contentView.layer;
+  if (!layer) return;
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
+  layer.shadowColor = [NSColor blackColor].CGColor;
+  layer.shadowOpacity = _isElevated ? 0.38 : 0.20;
+  layer.shadowRadius = _isElevated ? 24.0 : 10.0;
+  layer.shadowOffset = _isElevated ? CGSizeMake(0, -10) : CGSizeMake(0, -4);
+  [CATransaction commit];
+  [ZenPiPController updateShadowPathForWindow:_window radius:10];
+}
+
+- (void)beginOwnedLiveResize {
+  if (_ownLiveResize || !_window || _window.inLiveResize) return;
+  // Private, but present on every macOS that ships -inLiveResize; a system that
+  // ever dropped it must degrade to a plain resize, not crash.
+  if (![_window respondsToSelector:@selector(_startLiveResize)]) return;
+  _ownLiveResize = YES;
+  // AppKit now treats this exactly like the user dragging an edge with the
+  // mouse: Gecko's live-resize notification suppresses the displayport, so the
+  // last composited frame is stretched with the window instead of the picture
+  // being laid out and resampled again on every tick. That per-tick re-layout
+  // is what made the video lag and shimmer behind the card.
+  [_window _startLiveResize];
+}
+
+- (void)endOwnedLiveResize {
+  if (!_ownLiveResize) return;
+  // Cleared first: AppKit posts the matching notification from inside
+  // -endLiveResize, and it belongs to this session, not to a user drag.
+  _ownLiveResize = NO;
+  _ownLiveResizeForAnimation = NO;
+  if (_window && [_window respondsToSelector:@selector(_endLiveResize)]) {
+    [_window _endLiveResize];
+  }
+}
+
 - (void)roundCorners {
   if (!_window) return;
   // During a snap/resize animation the layer setup is already in place; rebuilding
@@ -363,15 +422,19 @@ static void NotifyPiPGestureActive(bool active) {
   }
   CALayer *rim = _overlay.layer;
   rim.cornerCurve = kCACornerCurveCircular;
-  rim.borderWidth = 1;
-  rim.borderColor = [NSColor colorWithWhite:1 alpha:kRimAlpha].CGColor;
+  // No hairline stroke. A 1 px translucent white border read as a light frame
+  // around the picture - brightest against dark video and most obvious while the
+  // card is being resized. The edge is defined by the rounded clip and the drop
+  // shadow alone.
+  rim.borderWidth = 0;
+  rim.borderColor = NULL;
   [self fitCorners:NO];
   _window.opaque = NO;
   _window.backgroundColor = NSColor.clearColor;
   layer.backgroundColor = [NSColor blackColor].CGColor;
 
   layer.shadowColor = [NSColor blackColor].CGColor;
-  layer.shadowOpacity = _isElevated ? 0.38 : 0.20;
+  layer.shadowOpacity = _shadowSuppressedForResize ? 0.0 : (_isElevated ? 0.38 : 0.20);
   layer.shadowRadius = _isElevated ? 24.0 : 10.0;
   layer.shadowOffset = _isElevated ? CGSizeMake(0, -10) : CGSizeMake(0, -4);
   [ZenPiPController updateShadowPathForWindow:_window radius:10];
@@ -473,6 +536,10 @@ static void NotifyPiPGestureActive(bool active) {
 }
 
 - (void)liveResizeEnded {
+  // Programmatic resizes run their own ending: chrome, snap and the content
+  // repaint all come from pinchEndedAtFrame:. Only a real edge drag lands here,
+  // and it is the only one that ever set _liveResizing.
+  if (!_liveResizing || _ownLiveResize) return;
   _liveResizing = NO;
   if (!_window) return;
   // One chrome pass for the whole gesture: controls, cursor, elevation, corner
@@ -624,6 +691,13 @@ static void NotifyPiPGestureActive(bool active) {
   }
   _animating = NO;
   _throwActive = NO;
+  // A snap animation that resized the card runs inside a live resize; leaving
+  // the mode here repaints the picture at the final size. A pinch/scroll session
+  // is untouched: it calls this on every wheel event and owns its live resize
+  // for the whole gesture.
+  if (_ownLiveResizeForAnimation) {
+    [self endOwnedLiveResize];
+  }
 }
 
 - (void)stopMotion {
@@ -631,6 +705,9 @@ static void NotifyPiPGestureActive(bool active) {
   _carrying = NO;
   _swiping = NO;
   [self showCursorIfNeeded];
+  // Safety net: a shadow suppressed for a gesture that was taken over by
+  // something else (a swipe, a close) is restored here.
+  [self restoreShadowForResizeEnd];
   if (!_awaitingMouseMoveToShowUI && !_isPinching && !_liveResizing) {
     [self setPiPUIVisible:YES];
   }
@@ -644,6 +721,9 @@ static void NotifyPiPGestureActive(bool active) {
 
 - (void)restoreUIOnMouseMove {
   if (!_awaitingMouseMoveToShowUI) return;
+  // A pinch can grow the card under a stationary pointer, which makes AppKit
+  // post mouse-entered events; those must not end the deferred-UI state.
+  if (_isPinching || _liveResizing || _animating) return;
   _awaitingMouseMoveToShowUI = NO;
   [self setPiPUIVisible:YES];
   [self showCursorIfNeeded];
@@ -680,6 +760,16 @@ static void NotifyPiPGestureActive(bool active) {
   const double initialDistW = NSWidth(from) - NSWidth(target);
   const double initialDistH = NSHeight(from) - NSHeight(target);
   _animateSizeChanges = (fabs(initialDistW) > 0.5 || fabs(initialDistH) > 0.5);
+  if (_animateSizeChanges) {
+    // The magnetic snap changes the size too. Freeze the picture and drop the
+    // shadow for its ~250 ms, so it flies into the corner with the content
+    // scaled by the window server instead of the video re-laying-out under it.
+    // Both are restored when the animation lands (cancelMotion + the branch
+    // below).
+    [self hideShadowForResize];
+    [self beginOwnedLiveResize];
+    _ownLiveResizeForAnimation = _ownLiveResize;
+  }
 
   _animatePinRight = fabs(NSMaxX(from) - NSMaxX(target)) < 5.0;
   _animatePinLeft = fabs(NSMinX(from) - NSMinX(target)) < 5.0;
@@ -732,6 +822,8 @@ static void NotifyPiPGestureActive(bool active) {
       [ZenPiPController updateShadowPathForWindow:_window size:target.size radius:10];
       const BOOL shouldRestore = _animateRestoreUI;
       [self cancelMotion];
+      // The card is at its final size now: rebuild the resting shadow.
+      [self restoreShadowForResizeEnd];
       _sawDrag = NO;
       [self fitCorners:YES];
       [self rescueIfLost];
@@ -781,6 +873,8 @@ static void NotifyPiPGestureActive(bool active) {
       [ZenPiPController updateShadowPathForWindow:_window size:target.size radius:10];
       const BOOL shouldRestore = _animateRestoreUI;
       [self cancelMotion];
+      // The card is at its final size now: rebuild the resting shadow.
+      [self restoreShadowForResizeEnd];
       _sawDrag = NO;
       [self fitCorners:YES];
       [self rescueIfLost];
@@ -983,7 +1077,13 @@ static void NotifyPiPGestureActive(bool active) {
   // above the other app without dragging Zen's browser window forward.
   [_window orderFrontRegardless];
   [self setPiPUIVisible:NO];
-  [self setElevated:YES animated:YES];
+  if (kind == ZenPiPGesturePinch) {
+    // A resize is a sustained 120 Hz gesture: drop the big soft shadow for its
+    // duration instead of re-rasterising it on every tick.
+    [self hideShadowForResize];
+  } else {
+    [self setElevated:YES animated:YES];
+  }
   [self hideCursorIfNeeded];
   if (GestureTimingEnabled()) {
     const CFTimeInterval moved = _gestureFirstMoveAt;
@@ -1003,6 +1103,8 @@ static void NotifyPiPGestureActive(bool active) {
   if (!_window || _swiping) return;
   [self showCursorIfNeeded];
   if (restoreUI) [self setPiPUIVisible:YES];
+  // Rebuild the resting shadow once, from the final frame.
+  [self restoreShadowForResizeEnd];
   [self setElevated:NO animated:YES];
   if (!_animating) {
     [self fitCorners:YES];
@@ -1130,6 +1232,9 @@ static void NotifyPiPGestureActive(bool active) {
   if (!_window) return;
   // Freeze hover while the window is already moving.
   if (_swiping || _animating) return;
+  // Growing the card during a resize makes AppKit post enters under a pointer
+  // that never moved. Those are not a request to bring the controls back.
+  if (_isPinching || _liveResizing) return;
   [self armSwipe];
   if (_awaitingMouseMoveToShowUI) {
     [self restoreUIOnMouseMove];

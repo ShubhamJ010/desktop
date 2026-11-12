@@ -16,6 +16,11 @@ struct Screen;
 - (void)_setPreventsActivation:(BOOL)prevents;
 - (BOOL)_preventsActivation;
 - (NSInteger)_resizeDirectionForMouseLocation:(NSPoint)location;
+// The only way into live-resize mode outside AppKit's own resize tracking loop.
+// It runs the same view callbacks (-viewWillStartLiveResize) a user edge drag
+// does, and that is what tells Gecko to stop laying out the picture per tick.
+- (void)_startLiveResize;
+- (void)_endLiveResize;
 @end
 
 namespace zen_pip {
@@ -24,7 +29,6 @@ constexpr CGFloat kPeek = 28;
 constexpr CGFloat kReturnMargin = 16;
 constexpr CGFloat kButtonMargin = 12, kButtonSize = 28;
 constexpr CFTimeInterval kCornerBendDuration = 0.2;
-constexpr CGFloat kRimAlpha = 0.17;
 
 // Virtual key codes for keyboard control
 constexpr unsigned short kKeySpace = 49;
@@ -89,6 +93,12 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (void)setElevated:(BOOL)elevated animated:(BOOL)animated;
 - (void)setOverlayVisible:(BOOL)visible animated:(BOOL)animated;
 - (void)setPiPUIVisible:(BOOL)visible;
+// Programmatic live resize for the pinch/scroll session. AppKit treats the
+// gesture exactly like a user dragging an edge, which is what lets the window
+// server scale the last composited frame instead of Gecko re-laying-out the
+// picture on every tick. Both must be paired.
+- (void)beginOwnedLiveResize;
+- (void)endOwnedLiveResize;
 @end
 
 @interface ZenPiPController () {
@@ -124,6 +134,15 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
   BOOL _isPinching;
   BOOL _isElevated;
   BOOL _liveResizing;
+  // A live resize this code started (pinch/scroll), as opposed to the user
+  // dragging an edge. Its notifications are ignored and its chrome is applied
+  // by the pinch path instead.
+  BOOL _ownLiveResize;
+  // The owned live resize belongs to a size-changing snap animation, so ending
+  // motion must leave the mode. A pinch/scroll session owns its own and ends it
+  // from the zoom path, because cancelMotion runs on every wheel event.
+  BOOL _ownLiveResizeForAnimation;
+  BOOL _shadowSuppressedForResize;
   // Swipe pre-warm (armed while the pointer rests over the window).
   BOOL _armed;
   __unsafe_unretained NSScreen *_armedHome;
@@ -193,6 +212,8 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (void)swipeEnded:(NSEvent *)event cancelled:(BOOL)cancelled;
 - (void)hideCursorIfNeeded;
 - (void)showCursorIfNeeded;
+- (void)hideShadowForResize;
+- (void)restoreShadowForResizeEnd;
 @end
 
 @interface ZenPiPController (Swipe)

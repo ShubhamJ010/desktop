@@ -18,6 +18,11 @@ namespace {
 // and snap the window while the fingers are still down.
 constexpr CFTimeInterval kPinchIdle = 0.45;
 constexpr CFTimeInterval kScrollIdle = 0.35;
+// Time constants for the eased approach to the target scale. The pinch one is
+// short enough to feel 1:1 while smoothing the event cadence; the wheel one is
+// long enough to read as a glide.
+constexpr double kPinchTau = 0.022;
+constexpr double kScrollTau = 0.055;
 
 }  // namespace
 
@@ -41,6 +46,8 @@ constexpr CFTimeInterval kScrollIdle = 0.35;
   zen_pip_zoom::Rect _visible;
   NSTimer *_ease;
   id _easeDisplayLink;  // CADisplayLink on macOS 14+ for 120Hz ProMotion
+  CFTimeInterval _easeLastAt;
+  double _easeTau;      // seconds; time constant of the eased approach
   NSTimer *_idle;
   BOOL _endPending;
   NSTimeInterval _lastMagnifyAt;
@@ -112,7 +119,9 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
     if (gZoomGesture) window = gZoomGesture;
     if (!window || (!command && gZoomGesture != window)) return NO;
     if (![self zooms:window]) return NO;
-    [window orderFrontRegardless];
+    // Front once per gesture. A precise trackpad scroll arrives at up to 120 Hz
+    // and an orderFront per event is a WindowServer round trip each time.
+    if (gZoomGesture != window) [window orderFrontRegardless];
     if (!wheel) gZoomGesture = window;
     const BOOL ended = (momentum & (NSEventPhaseEnded | NSEventPhaseCancelled)) != 0;
     if (ended) gZoomGesture = nil;
@@ -126,7 +135,6 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
     return YES;
   }
   if (!window || ![self zooms:window]) return NO;
-  [window orderFrontRegardless];
   [[self forWindow:window] handleMagnify:event];
   return YES;
 }
@@ -148,9 +156,11 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
 
 - (void)beginResizeAt:(NSPoint)pointer {
   NSWindow *window = _window;
-  if (!window) return;
+  if (!window || _resizing) return;
+  // One front per gesture, before any frame changes: a PiP that sits behind
+  // another window must come forward the moment the gesture starts, without
+  // activating Zen.
   [window orderFrontRegardless];
-  if (_resizing) return;
 
   _resizing = YES;
   _endPending = NO;
@@ -188,6 +198,11 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   ZenPiPController *controller = [ZenPiPController forWindow:window];
   [controller disarmSwipe];
   [controller pinchBegan];
+  // Freeze the picture at its current size for the whole gesture. AppKit then
+  // stretches the last composited frame with the card (the same path a mouse
+  // edge-drag takes), so window and video change size in the same frame instead
+  // of Gecko re-laying-out and re-resampling the video a frame or two behind.
+  [controller beginOwnedLiveResize];
 }
 
 - (void)applyScale {
@@ -206,12 +221,10 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
     // display:NO is critical: forcing a synchronous redraw at 90-120Hz clogs the
     // Cocoa runloop and drops frames. WindowServer / compositor handles async presentation smoothly.
     [window setFrame:next display:NO];
-    // The rounded-rect shadow path is cheap to rebuild and must follow the new size,
-    // otherwise the shadow trails the picture as a ghost of the frame it just left.
-    [ZenPiPController updateShadowPathForWindow:window
-                                            size:next.size
-                                          radius:zen_pip_throw::kBrowserCardRadius];
   }
+  // No shadow work here. The shadow is switched off for the gesture (it is the
+  // most expensive thing to rasterise per tick) and the live resize scales what
+  // is already on screen with the card. It is rebuilt once from the final frame.
   _last = window.frame;
 
   CheckBoundaryHaptic(_scale, _scaleFloor, YES, &_hitMinHaptic);
@@ -245,6 +258,9 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
 - (void)resetSession {
   [self stopEase];
   [self stopIdle];
+  // The gesture is over: leave live-resize mode so Gecko repaints the picture at
+  // the final size. Always paired, including on the abandon/cancel paths.
+  [[ZenPiPController forWindow:_window] endOwnedLiveResize];
   _resizing = NO;
   _endPending = NO;
   _baseFrame = NSZeroRect;
@@ -270,11 +286,11 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   [NSRunLoop.currentRunLoop addTimer:_idle forMode:NSRunLoopCommonModes];
 }
 
-// Ask for the gesture to end. If a wheel ease is still running let it land
-// first, otherwise a snap would be calculated from a half-finished size.
+// Ask for the gesture to end. If an ease is still running let it land first,
+// otherwise a snap would be calculated from a half-finished size.
 - (void)requestEnd {
   if (!_resizing) return;
-  if (_ease) {
+  if (_ease || _easeDisplayLink) {
     _endPending = YES;
     return;
   }
@@ -353,8 +369,10 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   // Prevent trackpad delta spikes by clamping the step factor.
   const double stepScale = std::clamp(1.0 + event.magnification, 0.90, 1.10);
   _targetScale = std::clamp(_targetScale * stepScale, _scaleFloor, _scaleCeiling);
-  _scale = _targetScale;
-  [self applyScale];
+  // The window is moved by a display link instead of once per event: trackpad
+  // magnify events arrive at 60-90 Hz and in bursts, so applying them directly
+  // makes the geometry step unevenly even on a 120 Hz display.
+  [self startEase:kPinchTau];
   [self restartIdle:kPinchIdle];
 }
 
@@ -373,38 +391,51 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
     }
     return;
   }
-  const double delta = _targetScale - _scale;
-  if (std::fabs(delta) < 0.0025) {
+
+  // A finished gesture lands on its target in one tick. The snap has to be
+  // computed from the size the fingers asked for, never from a half-eased one.
+  if (_endPending) {
     _scale = _targetScale;
     [self applyScale];
     [self stopEase];
-    if (_endPending) [self finishResize];
+    [self finishResize];
     return;
   }
-  _scale += delta * 0.25;
+
+  CFTimeInterval now = CACurrentMediaTime();
+  if (@available(macOS 14.0, *)) {
+    if ([sender isKindOfClass:[CADisplayLink class]]) {
+      CADisplayLink *dl = (CADisplayLink *)sender;
+      if (dl.targetTimestamp > 0) now = dl.targetTimestamp;
+    }
+  }
+  // Clamp the step: a stalled main thread must not turn one tick into a jump.
+  const double dt = std::clamp(now - _easeLastAt, 1.0 / 240.0, 1.0 / 30.0);
+  _easeLastAt = now;
+
+  const double delta = _targetScale - _scale;
+  if (std::fabs(delta) < 0.0015) {
+    _scale = _targetScale;
+    [self applyScale];
+    [self stopEase];
+    return;
+  }
+
+  // Frame-rate independent approach with a fixed time constant, so the glide
+  // feels the same on a 120 Hz ProMotion panel and on an external 60 Hz one.
+  const double alpha = 1.0 - std::exp(-dt / _easeTau);
+  _scale += delta * alpha;
   [self applyScale];
 }
 
-- (void)zoomBy:(double)factor at:(NSPoint)pointer ease:(BOOL)ease {
-  NSWindow *window = _window;
-  if (!window) return;
-  [[ZenPiPController forWindow:window] cancelMotion];  // stop the spring, keep gesture chrome
-  [self beginResizeAt:pointer];
+// Drive `_scale` towards `_targetScale` from a display link. One link per
+// gesture: a newly arrived tau only retunes the approach already running.
+- (void)startEase:(double)tau {
   if (!_resizing) return;
-  _endPending = NO;
-
-  _targetScale = std::clamp(_targetScale * factor, _scaleFloor, _scaleCeiling);
-  if (!ease) {
-    [self stopEase];
-    _scale = _targetScale;
-    [self applyScale];
-    [self restartIdle:kScrollIdle];
-    return;
-  }
-
-  [self restartIdle:kScrollIdle];
+  _easeTau = tau;
   if (_ease || _easeDisplayLink) return;
 
+  _easeLastAt = CACurrentMediaTime();
   if (@available(macOS 14.0, *)) {
     CADisplayLink *link = [_window.contentView displayLinkWithTarget:self selector:@selector(easeTick:)];
     link.preferredFrameRateRange = CAFrameRateRangeMake(60, 120, 120);
@@ -423,6 +454,31 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
     [strongSelf easeTick:timer];
   }] retain];
   [NSRunLoop.currentRunLoop addTimer:_ease forMode:NSRunLoopCommonModes];
+}
+
+- (void)zoomBy:(double)factor at:(NSPoint)pointer ease:(BOOL)ease {
+  NSWindow *window = _window;
+  if (!window) return;
+  [[ZenPiPController forWindow:window] cancelMotion];  // stop the spring, keep gesture chrome
+  [self beginResizeAt:pointer];
+  if (!_resizing) return;
+  _endPending = NO;
+
+  if (!ease) {
+    // Precise trackpad scroll: 1:1 with the fingers. Land any glide still in
+    // flight first, so this step is applied to the size actually on screen
+    // (stopEase syncs the target down to the applied scale).
+    [self stopEase];
+    _targetScale = std::clamp(_targetScale * factor, _scaleFloor, _scaleCeiling);
+    _scale = _targetScale;
+    [self applyScale];
+    [self restartIdle:kScrollIdle];
+    return;
+  }
+
+  _targetScale = std::clamp(_targetScale * factor, _scaleFloor, _scaleCeiling);
+  [self restartIdle:kScrollIdle];
+  [self startEase:kScrollTau];
 }
 
 - (zen_pip_zoom::Size)minSize {
