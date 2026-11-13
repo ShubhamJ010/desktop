@@ -1,12 +1,9 @@
 --- a/browser/base/content/browser-gestureSupport.js
 +++ b/browser/base/content/browser-gestureSupport.js
-@@ -234,6 +234,16 @@
-     // keys disabled. Swipes run the command directly rather than through the
-     // keyset, so they have to be turned away here too.
-     if (document.documentElement.hasAttribute("cropped-mini-window")) {
-+      return false;
-+    }
-+
+@@ -237,6 +237,16 @@
+       return false;
+     }
+ 
 +    const toolbox = document.getElementById("navigator-toolbox");
 +    const sidebar = document.getElementById("sidebar-box");
 +    if (
@@ -14,8 +11,11 @@
 +      sidebar?.matches(":hover") ||
 +      aEvent.target?.closest?.("#navigator-toolbox, #sidebar-box")
 +    ) {
-       return false;
-     }
++      return false;
++    }
++
+     const leftCommand = this._getCommand(aEvent, ["swipe", "left"]);
+     const rightCommand = this._getCommand(aEvent, ["swipe", "right"]);
  
 @@ -501,6 +511,13 @@
     */
@@ -31,7 +31,7 @@
        gHistorySwipeAnimation.stopAnimation();
        this.processSwipeEvent(aEvent, aDir);
      },
-@@ -687,6 +704,92 @@
+@@ -687,6 +704,103 @@
  };
  
  // History Swipe Animation Support (bug 678392)
@@ -86,6 +86,17 @@
 +// trackpad sample cannot take the sheet back.
 +const ZEN_SWIPE_CANCEL_SAMPLES = 2;
 +
++// While the finger picks rows it also keeps reporting a sideways delta: a hand
++// travelling up and down does not stay on the line the swipe was confirmed on,
++// so macOS keeps sending small horizontal samples that look exactly like the
++// start of a pull-back. For this long after the last vertical sample the sheet
++// is treated as "browsing": horizontal samples only re-anchor the reversal
++// baseline and the cancel path stays disarmed. Picking a row therefore never
++// runs the cancellation flow, and cancelling still works as soon as the finger
++// stops moving vertically (a deliberate pull-back starts from a resting hand,
++// which is longer than this window).
++const ZEN_SWIPE_VERTICAL_BROWSE_MS = 180;
++
 +// The vertical component of a macOS swipe never reaches chrome JS (Gecko only
 +// forwards the horizontal delta), so the Cocoa side pushes the gesture's
 +// cumulative `scrollingDeltaY` here while a sheet is up:
@@ -124,7 +135,7 @@
  var gHistorySwipeAnimation = {
    active: false,
    isLTR: false,
-@@ -736,6 +839,10 @@
+@@ -736,6 +850,10 @@
     *        Whether we're dealing with a vertical swipe or not.
     */
    startAnimation: function HSA_startAnimation() {
@@ -135,7 +146,7 @@
      // old boxes can still be around (if completing fade out for example), we
      // always want to remove them and recreate them because they can be
      // attached to an old browser stack that's no longer in use.
-@@ -743,6 +850,19 @@
+@@ -743,6 +861,19 @@
      this._isStoppingAnimation = false;
      this._canGoBack = this.canGoBack();
      this._canGoForward = this.canGoForward();
@@ -155,7 +166,7 @@
      if (this.active) {
        this._addBoxes();
      }
-@@ -766,16 +886,26 @@
+@@ -766,16 +897,26 @@
      } else if (this._lastVisibleBox) {
        box = this._lastVisibleBox;
        box.collapsed = false;
@@ -186,7 +197,7 @@
        window.getComputedStyle(box).opacity;
      } else {
        this._isStoppingAnimation = false;
-@@ -784,24 +914,44 @@
+@@ -784,24 +925,44 @@
    },
  
    _swipeCommand: function HSA_swipeCommand(aSwipeUpdate) {
@@ -241,7 +252,7 @@
    },
  
    /**
-@@ -818,71 +968,106 @@
+@@ -818,71 +979,106 @@
      if (!this.isAnimationRunning() || this._isStoppingAnimation) {
        return;
      }
@@ -390,7 +401,7 @@
      }
    },
  
-@@ -901,7 +1086,11 @@
+@@ -901,7 +1097,11 @@
     * @return true if there is a previous page in history, false otherwise.
     */
    canGoBack: function HSA_canGoBack() {
@@ -403,7 +414,7 @@
    },
  
    /**
-@@ -919,23 +1108,827 @@
+@@ -919,7 +1119,822 @@
     * any. This will also result in the animation overlay to be torn down.
     */
    swipeEndEventReceived: function HSA_swipeEndEventReceived() {
@@ -415,9 +426,9 @@
 +      this.commitSwipeHistorySelection();
 +      return;
 +    }
-     this.stopAnimation();
-   },
- 
++    this.stopAnimation();
++  },
++
 +  // ---------------------------------------------------------------------------
 +  // Ardia history sheet (hold after the gesture is confirmed)
 +  // ---------------------------------------------------------------------------
@@ -439,7 +450,7 @@
 +  //      sheet morphs into the chevron it grew out of and the normal cancel
 +  //      animation dismisses that chevron, leaving history untouched.
 +
-   /**
++  /**
 +   * Publishes the current gesture phase for the native scroll monitor.
 +   *
 +   * @param aPhase 0 = idle, 1 = swipe tracked, 2 = history sheet visible.
@@ -746,6 +757,9 @@
 +      // Cumulative scrollingDeltaY at the moment the sheet appeared; vertical
 +      // travel is measured from here and only from here.
 +      dyBase: null,
++      // When the last vertical sample with real travel arrived. See
++      // ZEN_SWIPE_VERTICAL_BROWSE_MS and _sheetBrowsingRows().
++      lastVerticalAt: 0,
 +      nudge: 0,
 +      // How far the finger has pushed the sheet back toward the chevron
 +      // (0 = open, 1 = cancelled; see _sheetReverseProgress).
@@ -826,6 +840,14 @@
 +          " dyBase=" + state.dyBase);
 +      }
 +    } catch (e) {}
++    // Any vertical travel marks the gesture as browsing rows, which disarms the
++    // reversal detector until the finger comes to rest vertically (see
++    // ZEN_SWIPE_VERTICAL_BROWSE_MS). This is the whole reason swiping up/down
++    // no longer runs the cancellation flow: the sideways samples that arrive
++    // with the browse can no longer accumulate into a pull-back.
++    if (state.dyBase === null || Math.abs(aDy - state.dyBase) >= 1) {
++      state.lastVerticalAt = Date.now();
++    }
 +    if (state.dyBase === null) {
 +      // The first sample defines "no vertical travel yet", so picking up the
 +      // sheet never jumps the selection.
@@ -839,34 +861,33 @@
 +    state.nudge = nudge;
 +    if (index !== state.selected) {
 +      state.selected = index;
-+      state.lastDy = aDy;
-+      // Re-anchor horizontal baseline when row selection changes:
-+      // browsing rows naturally shifts horizontal position slightly,
-+      // so measure cancellation from wherever this row was selected.
-+      if (this._lastHorizontalDelta) {
-+        const sign = this._swipeDirSign || 1;
-+        this._swipePeakDelta = sign * this._lastHorizontalDelta;
-+      }
++      // A sheet that was already shrinking back springs open again: the user is
++      // picking a destination, not taking the gesture back.
 +      if ((state.reverse || 0) > 0) {
 +        this._trackSheetReverse(0);
 +      }
 +      try {
 +        Services.zen.playHapticFeedback();
 +      } catch (e) {}
-+    } else {
-+      const dySinceLast = Math.abs(aDy - (state.lastDy ?? aDy));
-+      if (dySinceLast >= 14) {
-+        state.lastDy = aDy;
-+        if (this._lastHorizontalDelta) {
-+          const sign = this._swipeDirSign || 1;
-+          this._swipePeakDelta = sign * this._lastHorizontalDelta;
-+        }
-+        if ((state.reverse || 0) > 0) {
-+          this._trackSheetReverse(0);
-+        }
-+      }
 +    }
 +    this._applySwipeListGeometry();
++  },
++
++  /**
++   * Whether the finger is currently travelling vertically to pick a sheet row.
++   *
++   * Horizontal samples that arrive inside this window are drift from a hand
++   * that is moving up or down, never a deliberate pull-back, so the reversal
++   * detector must not count them (see _sheetReverseProgress).
++   *
++   * @return true while the sheet should ignore sideways travel for cancelling.
++   */
++  _sheetBrowsingRows: function HSA__sheetBrowsingRows() {
++    const state = this._swipeList;
++    if (!state || !state.lastVerticalAt) {
++      return false;
++    }
++    return Date.now() - state.lastVerticalAt < ZEN_SWIPE_VERTICAL_BROWSE_MS;
 +  },
 +
 +  /**
@@ -899,9 +920,18 @@
 +      // progress the finger has already pushed to.
 +      return state.reverse || 0;
 +    }
-+    this._lastHorizontalDelta = delta;
 +    const sign = this._swipeDirSign || Math.sign(delta) || 1;
 +    const currentPos = sign * delta;
++
++    // Browsing rows: sideways samples are drift from the vertical swipe. Keep
++    // the baseline on the finger's current position and leave the sheet open,
++    // so the up/down browse cannot accumulate the travel that cancels it. Once
++    // the finger rests, a pull-back is measured from wherever it came to rest.
++    if (this._sheetBrowsingRows()) {
++      this._swipePeakDelta = Math.max(0, currentPos);
++      this._swipeReverseCount = 0;
++      return 0;
++    }
 +
 +    if (currentPos > this._swipePeakDelta) {
 +      this._swipePeakDelta = currentPos;
@@ -1152,7 +1182,14 @@
 +    // half of the required travel the intent is unambiguous; less than
 +    // that is jitter or browsing drift and the swipe commits normally.
 +    const sheet = this._swipeList;
-+    if (sheet && (sheet.reverse || 0) >= 0.7) {
++    if (
++      sheet &&
++      (sheet.reverse || 0) >= 0.7 &&
++      // Residual progress left over from before the user started picking rows
++      // is not a cancel: lifting the fingers after an up/down browse picks the
++      // highlighted entry.
++      !this._sheetBrowsingRows()
++    ) {
 +      this._collapseSwipeHistory();
 +      return true;
 +    }
@@ -1173,7 +1210,7 @@
 +    // Keep the sheet on screen for the fade so the dismissal matches Ardia's
 +    // `dismiss()`; `_removeBoxes()` drops the nodes when the fade is over.
 +    this._dismissSwipeHistory(true);
-+    this.stopAnimation();
+     this.stopAnimation();
 +    if (target) {
 +      // `gotoIndex` is the jump the sheet exists for: Ardia's
 +      // `goToHistoryItem()` goes straight to the picked entry, not one step.
@@ -1197,12 +1234,10 @@
 +      }
 +    }
 +    return true;
-+  },
-+
-+  /**
-    * Checks to see if history swipe animations are supported by this
-    * platform/configuration.
-    *
+   },
+ 
+   /**
+@@ -929,13 +1944,28 @@
     * return true if supported, false otherwise.
     */
    _isSupported: function HSA__isSupported() {
@@ -1233,7 +1268,7 @@
          break;
      }
    },
-@@ -954,42 +1947,88 @@
+@@ -954,42 +1984,88 @@
     * Adds the boxes that contain the arrows used during the swipe animation.
     */
    _addBoxes: function HSA__addBoxes() {
@@ -1329,7 +1364,7 @@
      if (this._container) {
        this._container.remove();
      }
-@@ -1011,10 +2050,14 @@
+@@ -1011,10 +2087,14 @@
      return element;
    },
  
