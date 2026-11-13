@@ -1,24 +1,1347 @@
-diff --git a/browser/base/content/browser-gestureSupport.js b/browser/base/content/browser-gestureSupport.js
-index f94b39d26a1a9626b3e1f518e2395bc394d1262d..15e198f4bb440cff0bbfb8ccd97c2ce180d5724f 100644
 --- a/browser/base/content/browser-gestureSupport.js
 +++ b/browser/base/content/browser-gestureSupport.js
-@@ -247,6 +247,10 @@ var gGestureSupport = {
-         : aEvent.DIRECTION_LEFT;
-     }
- 
-+    if (!gHistorySwipeAnimation._isSupported()) {
-+      return;
+@@ -234,6 +234,16 @@
+     // keys disabled. Swipes run the command directly rather than through the
+     // keyset, so they have to be turned away here too.
+     if (document.documentElement.hasAttribute("cropped-mini-window")) {
++      return false;
 +    }
 +
-     return canGoBack || canGoForward;
++    const toolbox = document.getElementById("navigator-toolbox");
++    const sidebar = document.getElementById("sidebar-box");
++    if (
++      toolbox?.matches(":hover") ||
++      sidebar?.matches(":hover") ||
++      aEvent.target?.closest?.("#navigator-toolbox, #sidebar-box")
++    ) {
+       return false;
+     }
+ 
+@@ -501,6 +511,13 @@
+    */
+   _coordinateSwipeEventWithAnimation:
+     function GS__coordinateSwipeEventWithAnimation(aEvent, aDir) {
++      // Ardia's history sheet replaces the plain one-step swipe: when it is up,
++      // releasing goes to the highlighted entry instead of one step back or
++      // forward. `commitSwipeHistorySelection` reports whether the gesture was
++      // consumed by the sheet.
++      if (gHistorySwipeAnimation.commitSwipeHistorySelection()) {
++        return;
++      }
+       gHistorySwipeAnimation.stopAnimation();
+       this.processSwipeEvent(aEvent, aDir);
+     },
+@@ -687,6 +704,92 @@
+ };
+ 
+ // History Swipe Animation Support (bug 678392)
++// -----------------------------------------------------------------------------
++// Ardia swipe capsule: constants shared with the history sheet.
++//
++// All of these are ports of Ardia's `apps/browser/src/components/window/`
++// `swipeMotion.ts` and `SwipeOverlay.tsx`, which is where this indicator and
++// its hold-to-choose-history-list behaviour come from.
++// -----------------------------------------------------------------------------
++
++// Ardia: `swipeMotion.ts` SWIPE_UNIT. Horizontal travel, in points, that equals
++// one full confirmation step (and, in the sheet, one list row of travel).
++const ZEN_SWIPE_UNIT = 75;
++
++// Ardia: `SwipeOverlay.tsx` LIST_ROW / LIST_WIDTH / LIST_PAD / LIST_RADIUS.
++// LIST_RADIUS is `radius.sheet` (16), LIST_PAD is `space.m` (8).
++const ZEN_SWIPE_LIST_ROW = 38;
++const ZEN_SWIPE_LIST_WIDTH = 200;
++const ZEN_SWIPE_LIST_PAD = 8;
++const ZEN_SWIPE_LIST_RADIUS = 16;
++
++// Ardia: `historyItems(tabId, direction, max = 15)`. A sheet never lists more
++// than this many destinations, however long the session history is.
++const ZEN_SWIPE_LIST_MAX = 15;
++
++// Ardia: `LIST_IDLE_MS`. The sheet is presented after the gesture has been
++// confirmed and the fingers have been still for this long. Every horizontal
++// update restarts the wait, so a continuous swipe never pops the sheet open.
++const ZEN_SWIPE_LIST_HOLD_MS = 300;
++
++// Ardia: `swipeMotion.ts` confirmation. |delta| >= 0.25 (75pt of travel)
++// confirms the gesture and arms the sheet. Taking the swipe back takes the
++// gesture back, so the sheet collapses into the chevron again and nothing is
++// navigated to.
++const ZEN_SWIPE_CONFIRM_DELTA = 0.25;
++
++// How much travel *against* the confirmed direction, in the same 0..1 swipe
++// delta units (1.0 = 300pt), takes an open sheet back. Reversal is measured
++// from the furthest point the gesture reached, never as "the horizontal delta
++// dropped below ZEN_SWIPE_CONFIRM_DELTA": the finger stops moving sideways as
++// soon as it starts picking a row vertically, and treating that as a reversal
++// collapsed the sheet the moment it was scrolled.
++const ZEN_SWIPE_CANCEL_DELTA = 0.22;
++
++// Deadband for reversal detection: horizontal drift under this threshold
++// while holding or scrolling vertically does not start shrinking or fading
++// the sheet.
++const ZEN_SWIPE_REVERSE_DEADBAND = 0.08;
++
++// A reversal also has to survive this many consecutive updates, so one jittery
++// trackpad sample cannot take the sheet back.
++const ZEN_SWIPE_CANCEL_SAMPLES = 2;
++
++// The vertical component of a macOS swipe never reaches chrome JS (Gecko only
++// forwards the horizontal delta), so the Cocoa side pushes the gesture's
++// cumulative `scrollingDeltaY` here while a sheet is up:
++//   - pref:   "zen.widget.macos.back-gesture-phase" (0 = idle, 1 = swipe is
++//             being tracked, 2 = history sheet is visible, so stream vertical
++//             travel). Written by this object, read by ZenSwipeController.mm.
++//   - topic:  "zen-swipe-vertical", data = cumulative scrollingDeltaY as a
++//             decimal string.
++const ZEN_SWIPE_PHASE_PREF = "zen.widget.macos.back-gesture-phase";
++const ZEN_SWIPE_VERTICAL_TOPIC = "zen-swipe-vertical";
++// When the native debug pref is on, mirror each vertical sample into the browser
++// console so the JS side of the channel can be traced alongside the native NSLog.
++const ZEN_SWIPE_DEBUG_PREF = "zen.widget.macos.back-gesture-debug";
++
++/**
++ * Mirrors Ardia's `listSelection`: maps the vertical finger travel recorded
++ * since the sheet appeared onto a row index, plus the small rubber-band nudge
++ * that lets the sheet follow a finger past either end of the list.
++ *
++ * @param aDySinceShown Cumulative vertical travel since the sheet appeared.
++ * @param aCount Number of rows currently in the sheet.
++ * @return { index, nudge } where `index` is the clamped row index and `nudge`
++ *         is the damped offset in points to add to the sheet position.
++ */
++function zenSwipeListSelection(aDySinceShown, aCount) {
++  const rows = aDySinceShown / ZEN_SWIPE_UNIT;
++  const index = Math.max(0, Math.min(aCount - 1, Math.round(rows)));
++  const past = rows < 0 ? rows : rows > aCount - 1 ? rows - (aCount - 1) : 0;
++  const overshoot = Math.abs(past) * ZEN_SWIPE_UNIT;
++  const nudge = past
++    ? Math.sign(past) * ZEN_SWIPE_LIST_ROW * (1 - 1 / (0.1 * overshoot + 1)) * 0.5
++    : 0;
++  return { index, nudge };
++}
++
+ var gHistorySwipeAnimation = {
+   active: false,
+   isLTR: false,
+@@ -736,6 +839,10 @@
+    *        Whether we're dealing with a vertical swipe or not.
+    */
+   startAnimation: function HSA_startAnimation() {
++    if (!this.active && this._isSupported()) {
++      this.init();
++    }
++
+     // old boxes can still be around (if completing fade out for example), we
+     // always want to remove them and recreate them because they can be
+     // attached to an old browser stack that's no longer in use.
+@@ -743,6 +850,19 @@
+     this._isStoppingAnimation = false;
+     this._canGoBack = this.canGoBack();
+     this._canGoForward = this.canGoForward();
++    // A new gesture starts a new history-sheet session, so a commit flag left
++    // behind by the previous gesture (see commitSwipeHistorySelection) is stale.
++    this._swipeCommitted = false;
++    // Reversal bookkeeping for the sheet (see ZEN_SWIPE_CANCEL_DELTA).
++    this._swipePeakDelta = 0;
++    this._swipeDirSign = 0;
++    this._swipeReverseCount = 0;
++    this._swipeCancelled = false;
++    this._swipeMorphing = false;
++    if (this._swipeMorphTimer) {
++      window.clearTimeout(this._swipeMorphTimer);
++      this._swipeMorphTimer = 0;
++    }
+     if (this.active) {
+       this._addBoxes();
+     }
+@@ -766,16 +886,26 @@
+     } else if (this._lastVisibleBox) {
+       box = this._lastVisibleBox;
+       box.collapsed = false;
+-      box.style.translate = this._lastVisibleTranslate;
++      box.style.transform = this._lastVisibleTranslate;
+       isCancelPath = true;
+     }
+     if (box != null) {
+       this._isStoppingAnimation = true;
+-      box.style.transition = isCancelPath
+-        ? "opacity 0.2s linear"
+-        : "opacity 0.35s 0.35s cubic-bezier(.25,.1,0.25,1)";
++      // Ardia SWIPE_MOTION.dismiss: the capsule fades and shrinks in place
++      // instead of sliding back into the edge. Navigating keeps Ardia's
++      // dismiss(120) beat so the capsule stays up while the page starts sliding.
++      const DISMISS_MS = 150;
++      const DISMISS_DELAY_MS = isCancelPath ? 0 : 120;
++      const DISMISS_EASE = "cubic-bezier(0.55, 0.085, 0.68, 0.53)";
++      box.style.transition =
++        `opacity ${DISMISS_MS}ms ${DISMISS_EASE} ${DISMISS_DELAY_MS}ms, ` +
++        `transform ${DISMISS_MS}ms ${DISMISS_EASE} ${DISMISS_DELAY_MS}ms`;
+       box.addEventListener("transitionend", this, true);
+       box.style.opacity = 0;
++      const shownTranslate = box.style.transform;
++      box.style.transform = `${
++        shownTranslate && shownTranslate !== "none" ? `${shownTranslate} ` : ""
++      }scale(0.01)`;
+       window.getComputedStyle(box).opacity;
+     } else {
+       this._isStoppingAnimation = false;
+@@ -784,24 +914,44 @@
    },
  
-@@ -848,7 +852,7 @@ var gHistorySwipeAnimation = {
+   _swipeCommand: function HSA_swipeCommand(aSwipeUpdate) {
+-    if (!aSwipeUpdate.event || aSwipeUpdate.delta == 0) {
++    if (!aSwipeUpdate.event || aSwipeUpdate.delta === 0) {
+       return "";
+     }
+-    const direction = aSwipeUpdate.delta < 0 == this.isLTR ? "right" : "left";
+-    return gGestureSupport._getCommand(aSwipeUpdate.event, [
+-      "swipe",
+-      direction,
+-    ]);
++    const direction = aSwipeUpdate.delta < 0 === this.isLTR ? "right" : "left";
++    return (
++      gGestureSupport._getCommand(aSwipeUpdate.event, [
++        "swipe",
++        direction,
++      ]) || ""
++    );
+   },
+ 
+   _willGoBack: function HSA_willGoBack(aSwipeUpdate) {
+-    return this._swipeCommand(aSwipeUpdate) == BACK_COMMAND && this._canGoBack;
++    if (!aSwipeUpdate.event || aSwipeUpdate.delta === 0) {
++      return false;
++    }
++    const cmd = this._swipeCommand(aSwipeUpdate);
++    if (cmd) {
++      return cmd === BACK_COMMAND && this._canGoBack;
++    }
++    const isBackDirection = this.isLTR
++      ? aSwipeUpdate.delta > 0
++      : aSwipeUpdate.delta < 0;
++    return isBackDirection && this._canGoBack;
+   },
+ 
+   _willGoForward: function HSA_willGoForward(aSwipeUpdate) {
+-    return (
+-      this._swipeCommand(aSwipeUpdate) == FORWARD_COMMAND && this._canGoForward
+-    );
++    if (!aSwipeUpdate.event || aSwipeUpdate.delta === 0) {
++      return false;
++    }
++    const cmd = this._swipeCommand(aSwipeUpdate);
++    if (cmd) {
++      return cmd === FORWARD_COMMAND && this._canGoForward;
++    }
++    const isForwardDirection = this.isLTR
++      ? aSwipeUpdate.delta < 0
++      : aSwipeUpdate.delta > 0;
++    return isForwardDirection && this._canGoForward;
+   },
+ 
+   /**
+@@ -818,71 +968,106 @@
+     if (!this.isAnimationRunning() || this._isStoppingAnimation) {
+       return;
+     }
++    // While the cancelled sheet is morphing back into the chevron, the
++    // per-frame layout must not run against it: with the delta reversed the
++    // regular path finds no navigation target, which would display:none the
++    // morphing capsule in the same frame the morph starts (or pop the
++    // opposite capsule when the tab can go forward). The morph ends in
++    // _finishSwipeMorph.
++    if (this._swipeMorphing) {
++      return;
++    }
++    // Once the sheet is up it owns the gesture: the finger travels vertically to
++    // pick a row, so horizontal samples are no longer progress. Only travel
++    // against the confirmed direction takes the swipe back - the sheet then
++    // morphs into the chevron it grew out of, and the unconfirmed path below
++    // dismisses that chevron exactly as it does for a swipe that was never
++    // confirmed. Running the capsule layout while the sheet is open would also
++    // collapse both rails as soon as the horizontal delta reads zero, which hid
++    // the sheet mid-hold.
++    if (this._swipeList) {
++      const reverse = this._sheetReverseProgress(aSwipeUpdate);
++      if (reverse >= 1) {
++        this._collapseSwipeHistory();
++        // The morph owns the screen from here; the regular layout below must
++        // not run against it (see the _swipeMorphing gate above).
++        return;
++      }
++      // Track the reversal with the finger: the sheet shrinks back toward the
++      // chevron disc and its rows fade in step with the travel, so the cancel
++      // feedback happens while the user is still swiping, not after it.
++      this._trackSheetReverse(reverse);
++      return;
++    }
+ 
+-    // Convert `aVal` into [0, 1] range.
+-    // Note that absolute values of 0.25 (or greater) trigger history
+-    // navigation, hence we multiply the value by 4 here.
+-    const progress = Math.min(Math.abs(aSwipeUpdate.delta) * 4, 1.0);
++    const rawProgress = Math.min(Math.abs(aSwipeUpdate.delta) * 4.0, 2.0);
++    const limit = 86;
++    const val = rawProgress * limit;
++    let offset;
++    if (val <= limit) {
++      offset = val - 72;
++    } else {
++      offset =
++        limit +
++        (1 - 1 / (((val - limit) * 0.15) / limit + 1)) * limit -
++        72;
++    }
+ 
+-    // Compute the icon position based on preferences.
+-    let translate =
+-      this.translateStartPosition +
+-      progress * (this.translateEndPosition - this.translateStartPosition);
+-    if (!this.isLTR) {
+-      translate = -translate;
++    const isConfirmed =
++      !this._swipeCancelled &&
++      Math.abs(aSwipeUpdate.delta) >= ZEN_SWIPE_CONFIRM_DELTA;
++    if (isConfirmed !== this._wasConfirmed) {
++      this._wasConfirmed = isConfirmed;
++      if (isConfirmed) {
++        try {
++          Services.zen.playHapticFeedback();
++        } catch (e) {}
++        this._beginSwipeHistory(aSwipeUpdate);
++      } else if (!this._swipeList) {
++        // Pulling back below the threshold cancels the pending sheet. A sheet
++        // that is already open stays open, exactly like Ardia: once the user
++        // can see the list the gesture is committed to picking from it.
++        this._confirmed = false;
++        this._cancelSwipeHold();
++        this._zenSwipePhase(1);
++      }
++    } else if (isConfirmed) {
++      // Every horizontal update restarts Ardia's LIST_IDLE_MS wait, so the
++      // sheet only opens when the fingers actually come to rest.
++      this._armSwipeHold();
+     }
+ 
+-    // Compute the icon radius based on preferences.
+-    const radius =
+-      this.minRadius + progress * (this.maxRadius - this.minRadius);
+     if (this._willGoBack(aSwipeUpdate)) {
+       this._prevBox.collapsed = false;
+       this._nextBox.collapsed = true;
+-      this._prevBox.style.translate = `${translate}px 0px`;
+-      if (radius >= 0) {
+-        this._prevBox
+-          .querySelectorAll("circle")[1]
+-          .setAttribute("r", `${radius}`);
+-      }
+-
+-      if (Math.abs(aSwipeUpdate.delta) >= 0.25) {
+-        // If `delta` goes above 0.25, it means history navigation will be
+-        // triggered once after the user lifts their fingers, it's time to
+-        // trigger __indicator__ animations by adding `will-navigate` class.
+-        this._prevBox.querySelector("svg").classList.add("will-navigate");
++      this._prevBox.style.transform = `translateX(${offset}px)`;
++      if (isConfirmed) {
++        this._prevBox.classList.add("will-navigate");
+       } else {
+-        this._prevBox.querySelector("svg").classList.remove("will-navigate");
++        this._prevBox.classList.remove("will-navigate");
+       }
+     } else if (this._willGoForward(aSwipeUpdate)) {
+-      // The intention is to go forward.
+       this._nextBox.collapsed = false;
+       this._prevBox.collapsed = true;
+-      this._nextBox.style.translate = `${-translate}px 0px`;
+-      if (radius >= 0) {
+-        this._nextBox
+-          .querySelectorAll("circle")[1]
+-          .setAttribute("r", `${radius}`);
+-      }
+-
+-      if (Math.abs(aSwipeUpdate.delta) >= 0.25) {
+-        // Same as above "go back" case.
+-        this._nextBox.querySelector("svg").classList.add("will-navigate");
++      this._nextBox.style.transform = `translateX(${-offset}px)`;
++      if (isConfirmed) {
++        this._nextBox.classList.add("will-navigate");
+       } else {
+-        this._nextBox.querySelector("svg").classList.remove("will-navigate");
++        this._nextBox.classList.remove("will-navigate");
+       }
+     } else {
+       // Preserve a fade target for the aVal == 0 cancel-collapse path.
+       if (!this._prevBox.collapsed) {
+         this._lastVisibleBox = this._prevBox;
+-        this._lastVisibleTranslate = this._prevBox.style.translate;
++        this._lastVisibleTranslate = this._prevBox.style.transform;
+       } else if (!this._nextBox.collapsed) {
+         this._lastVisibleBox = this._nextBox;
+-        this._lastVisibleTranslate = this._nextBox.style.translate;
++        this._lastVisibleTranslate = this._nextBox.style.transform;
+       }
+       this._prevBox.collapsed = true;
+       this._nextBox.collapsed = true;
+-      this._prevBox.style.translate = "none";
+-      this._nextBox.style.translate = "none";
++      this._prevBox.style.transform = "none";
++      this._nextBox.style.transform = "none";
+     }
+   },
+ 
+@@ -901,7 +1086,11 @@
     * @return true if there is a previous page in history, false otherwise.
     */
    canGoBack: function HSA_canGoBack() {
 -    return gBrowser.webNavigation.canGoBack;
-+    return gBrowser.webNavigation.canGoBack || gZenCommonActions.shouldCloseTabOnBack();
++    return (
++      gBrowser.webNavigation.canGoBack ||
++      (typeof gZenCommonActions !== "undefined" &&
++        Boolean(gZenCommonActions?.shouldCloseTabOnBack?.()))
++    );
    },
  
    /**
+@@ -919,23 +1108,827 @@
+    * any. This will also result in the animation overlay to be torn down.
+    */
+   swipeEndEventReceived: function HSA_swipeEndEventReceived() {
++    // With the history sheet up, lifting the fingers is a pick, not a plain
++    // one-step swipe. `commitSwipeHistorySelection` navigates and tears the
++    // overlay down; the MozSwipeGesture that follows in that case is swallowed
++    // by _coordinateSwipeEventWithAnimation so history only moves once.
++    if (this._swipeList) {
++      this.commitSwipeHistorySelection();
++      return;
++    }
+     this.stopAnimation();
+   },
+ 
++  // ---------------------------------------------------------------------------
++  // Ardia history sheet (hold after the gesture is confirmed)
++  // ---------------------------------------------------------------------------
++  // Golden path, step for step against Ardia's SwipeOverlay.tsx:
++  //
++  //   1. Swipe begins, the capsule slides in from the edge (`updateAnimation`).
++  //   2. At |delta| >= 0.25 - 75pt of travel, Ardia's `swipeProgress() >= 1` -
++  //      the capsule grows 72pt -> 82pt and a "levelChange" haptic fires.
++  //   3. If the users keeps the gesture down but stops moving for 300ms, Ardia
++  //      calls `presentList()`: the capsule morphs into a rounded sheet that
++  //      lists the destinations this gesture can reach, nearest first, at most
++  //      15 of them. Fewer than 2 destinations is not a choice, so no sheet.
++  //   4. While the sheet is up, vertical finger travel picks a row: one row per
++  //      75pt, clamped, with a rubber-band nudge past the ends. The highlighted
++  //      row is kept on the window's centre line by sliding the sheet itself.
++  //   5. Releasing navigates straight to the highlighted entry and the overlay
++  //      fades out with the normal dismissal animation.
++  //   6. Reversing the swipe instead of releasing takes the gesture back: the
++  //      sheet morphs into the chevron it grew out of and the normal cancel
++  //      animation dismisses that chevron, leaving history untouched.
++
+   /**
++   * Publishes the current gesture phase for the native scroll monitor.
++   *
++   * @param aPhase 0 = idle, 1 = swipe tracked, 2 = history sheet visible.
++   */
++  _zenSwipePhase: function HSA__zenSwipePhase(aPhase) {
++    if (Services.appinfo.OS != "Darwin") {
++      return;
++    }
++    try {
++      Services.prefs.setIntPref(ZEN_SWIPE_PHASE_PREF, aPhase);
++    } catch (e) {
++      // A locked-down profile can refuse the write; the sheet then simply
++      // stays keyboard/mouse free rather than breaking the swipe itself.
++    }
++  },
++
++  /**
++   * Mirrors one diagnostic line into the browser console when the native debug
++   * pref is on. The sheet declines to present silently by design - a held swipe
++   * must never break the gesture - so this is the only way to see why it
++   * stepped aside.
++   *
++   * @param aMessage Human readable description of the step or the bail-out.
++   */
++  _zenSwipeDebug: function HSA__zenSwipeDebug(aMessage) {
++    try {
++      if (Services.prefs.getBoolPref(ZEN_SWIPE_DEBUG_PREF)) {
++        Services.console.logStringMessage("ZenSwipe: " + aMessage);
++      }
++    } catch (e) {}
++  },
++
++  /**
++   * Records the direction of a confirmed gesture and starts waiting for the
++   * user to hold still. Called once, when the confirmation threshold is crossed.
++   *
++   * @param aSwipeUpdate The swipe update that crossed the threshold.
++   */
++  _beginSwipeHistory: function HSA__beginSwipeHistory(aSwipeUpdate) {
++    this._confirmed = true;
++    if (this._swipeList) {
++      return;
++    }
++    // Reversal is measured away from where the gesture was confirmed, so the
++    // furthest point starts here and the direction is the one just confirmed.
++    this._swipeDirSign = Math.sign(aSwipeUpdate.delta) || 1;
++    this._swipePeakDelta = Math.abs(aSwipeUpdate.delta);
++    this._swipeReverseCount = 0;
++    this._swipeDirection = this._willGoBack(aSwipeUpdate)
++      ? "back"
++      : this._willGoForward(aSwipeUpdate)
++        ? "forward"
++        : "";
++    if (!this._swipeDirection) {
++      return;
++    }
++    this._zenSwipePhase(1);
++    this._armSwipeHold();
++  },
++
++  /**
++   * (Re)starts the hold timer that presents the sheet.
++   */
++  _armSwipeHold: function HSA__armSwipeHold() {
++    this._cancelSwipeHold();
++    if (!this._confirmed || this._swipeList || !this._swipeDirection) {
++      return;
++    }
++    this._swipeHoldTimer = window.setTimeout(() => {
++      this._swipeHoldTimer = 0;
++      this._presentSwipeHistory();
++    }, ZEN_SWIPE_LIST_HOLD_MS);
++  },
++
++  _cancelSwipeHold: function HSA__cancelSwipeHold() {
++    if (this._swipeHoldTimer) {
++      clearTimeout(this._swipeHoldTimer);
++      this._swipeHoldTimer = 0;
++    }
++  },
++
++  /**
++   * Reads the destinations reachable in the given direction from the current
++   * tab's session history, nearest first. This is the Gecko equivalent of
++   * Ardia's `historyItems(tabId, direction)` over `navigationEntries()`.
++   *
++   * Session history is read synchronously on purpose: the hold window is only
++   * 300ms and an async round trip would too often miss it. Zen's "close tab on
++   * back" pseudo destination is deliberately not listed - it is not a history
++   * entry, and a one-entry list is not a choice anyway.
++   *
++   * @param aDirection "back" or "forward".
++   * @return Array of { index, url, title } in gesture order, or null.
++   */
++  _readSwipeHistory: function HSA__readSwipeHistory(aDirection) {
++    // Session history lives in the parent process. `gBrowser.webNavigation` is
++    // a RemoteWebNavigation, whose `sessionHistory` getter deliberately throws
++    // NS_ERROR_NOT_IMPLEMENTED (bug 1233803), which is why the sheet used to
++    // read null here and silently decline to present at all. The in-parent
++    // nsISHistory hangs off the browsing context and offers the same
++    // count/index/getEntryAtIndex API, synchronously.
++    let history = null;
++    try {
++      const browser = gBrowser.selectedBrowser;
++      history = browser.browsingContext
++        ? browser.browsingContext.sessionHistory
++        : gBrowser.webNavigation.sessionHistory;
++    } catch (e) {
++      this._zenSwipeDebug("history read failed: " + e);
++      return null;
++    }
++    if (!history || history.count < 2) {
++      return null;
++    }
++    const step = aDirection === "back" ? -1 : 1;
++    const items = [];
++    for (
++      let i = history.index + step;
++      i >= 0 && i < history.count && items.length < ZEN_SWIPE_LIST_MAX;
++      i += step
++    ) {
++      let entry = null;
++      try {
++        entry = history.getEntryAtIndex(i);
++      } catch (e) {
++        continue;
++      }
++      if (!entry) {
++        continue;
++      }
++      const url = entry.URI ? entry.URI.spec : "";
++      items.push({ index: i, url, title: entry.title || url });
++    }
++    return items.length ? items : null;
++  },
++
++  /**
++   * First letter of a destination's host, used by the row's fallback tile
++   * (Ardia `FaviconFallback`), so a destination without a cached favicon still
++   * shows a tile instead of an empty slot.
++   *
++   * @param aURL The destination URL.
++   * @return A single uppercase character, or "" when there is no host.
++   */
++  _swipeHostInitial: function HSA__swipeHostInitial(aURL) {
++    if (!aURL) {
++      return "";
++    }
++    let host = "";
++    try {
++      host = Services.io.newURI(aURL).displayHost || "";
++    } catch (e) {
++      return "";
++    }
++    const letter = host.replace(/^www\./i, "").charAt(0);
++    return letter ? letter.toUpperCase() : "";
++  },
++
++  /**
++   * Loads a favicon into a sheet row, matching Ardia's `historyFavicons()`.
++   * Best effort: a missing or slow favicon leaves the fallback tile in place.
++   */
++  _loadSwipeHistoryIcon: function HSA__loadSwipeHistoryIcon(aImage, aURL) {
++    if (!aURL || typeof PlacesUtils === "undefined") {
++      return;
++    }
++    let uri = null;
++    try {
++      uri = Services.io.newURI(aURL);
++    } catch (e) {
++      return;
++    }
++    try {
++      PlacesUtils.favicons.getFaviconURLForPage(uri, aFaviconURI => {
++        if (aFaviconURI && aImage.isConnected) {
++          aImage.src = aFaviconURI.spec;
++        }
++      });
++    } catch (e) {
++      // Uncached favicons fail synchronously on some profiles.
++    }
++  },
++
++  /**
++   * Morphs the capsule into the history sheet. This is Ardia's `presentList()`.
++   */
++  _presentSwipeHistory: function HSA__presentSwipeHistory() {
++    if (
++      !this.active ||
++      !this._confirmed ||
++      !this._swipeDirection ||
++      this._swipeList ||
++      this._isStoppingAnimation ||
++      !this.isAnimationRunning()
++    ) {
++      this._zenSwipeDebug(
++        "present skipped: active=" +
++          this.active +
++          " confirmed=" +
++          this._confirmed +
++          " dir=" +
++          this._swipeDirection +
++          " list=" +
++          Boolean(this._swipeList) +
++          " stopping=" +
++          this._isStoppingAnimation
++      );
++      return;
++    }
++    const box =
++      this._swipeDirection === "back" ? this._prevBox : this._nextBox;
++    const capsule = box ? box.querySelector(".zen-swipe-capsule") : null;
++    if (!box || !capsule) {
++      this._zenSwipeDebug("present skipped: no capsule box");
++      return;
++    }
++    const items = this._readSwipeHistory(this._swipeDirection);
++    if (!items || items.length < 2) {
++      this._zenSwipeDebug(
++        "present skipped: destinations=" + (items ? items.length : "none")
++      );
++      return;
++    }
++
++    // Ardia's `fit`: only as many rows as fit between the active edge and the
++    // window's centre line, so the selected row can always sit on that line.
++    const height = this._container
++      ? this._container.getBoundingClientRect().height
++      : 0;
++    const fit = Math.max(
++      2,
++      Math.floor(
++        (height / 2 + ZEN_SWIPE_LIST_ROW / 2 - ZEN_SWIPE_LIST_PAD - 8) /
++          ZEN_SWIPE_LIST_ROW
++      )
++    );
++    const shown = items.slice(0, Math.min(items.length, fit));
++
++    const HTML_NS = "http://www.w3.org/1999/xhtml";
++    const list = document.createElementNS(HTML_NS, "div");
++    list.className = "zen-swipe-list";
++    list.style.width = `${ZEN_SWIPE_LIST_WIDTH}px`;
++
++    const pill = document.createElementNS(HTML_NS, "div");
++    pill.className = "zen-swipe-list-pill";
++    list.appendChild(pill);
++
++    // Reversed like Ardia (`items.map(...).reverse()`): the nearest destination
++    // is the bottom row and the oldest reachable entry is the top row.
++    for (let i = shown.length - 1; i >= 0; i--) {
++      const item = shown[i];
++      const row = document.createElementNS(HTML_NS, "div");
++      row.className = "zen-swipe-list-row";
++
++      const icon = document.createElementNS(HTML_NS, "span");
++      icon.className = "zen-swipe-list-icon";
++
++      // Ardia always renders a 16pt tile: the favicon once it resolves,
++      // otherwise the site's initial (`Favicon` / `FaviconFallback`). An empty
++      // <img> left a visible hole in the row.
++      const tile = document.createElementNS(HTML_NS, "span");
++      tile.className = "zen-swipe-list-tile";
++      tile.textContent = this._swipeHostInitial(item.url);
++      icon.appendChild(tile);
++
++      const favicon = document.createElementNS(HTML_NS, "img");
++      favicon.className = "zen-swipe-list-favicon";
++      favicon.alt = "";
++      favicon.addEventListener("load", () => icon.classList.add("has-favicon"), {
++        once: true,
++      });
++      icon.appendChild(favicon);
++
++      row.appendChild(icon);
++      this._loadSwipeHistoryIcon(favicon, item.url);
++
++      const title = document.createElementNS(HTML_NS, "span");
++      title.className = "zen-swipe-list-title";
++      title.textContent = item.title;
++      row.appendChild(title);
++
++      list.appendChild(row);
++    }
++
++    capsule.classList.remove("zen-swipe-capsule-morph");
++    capsule.classList.add("has-list");
++    capsule.style.width = `${ZEN_SWIPE_LIST_WIDTH}px`;
++    capsule.style.height = `${
++      shown.length * ZEN_SWIPE_LIST_ROW + ZEN_SWIPE_LIST_PAD * 2
++    }px`;
++    capsule.style.borderRadius = `${ZEN_SWIPE_LIST_RADIUS}px`;
++    capsule.appendChild(list);
++    box.classList.add("has-list");
++
++    this._swipeList = {
++      box,
++      capsule,
++      list,
++      pill,
++      // Faded back in with the reverse progress (see _trackSheetReverse).
++      chevron: capsule.querySelector(".zen-swipe-chevron"),
++      items: shown,
++      selected: 0,
++      // Cumulative scrollingDeltaY at the moment the sheet appeared; vertical
++      // travel is measured from here and only from here.
++      dyBase: null,
++      nudge: 0,
++      // How far the finger has pushed the sheet back toward the chevron
++      // (0 = open, 1 = cancelled; see _sheetReverseProgress).
++      reverse: 0,
++    };
++    this._applySwipeListGeometry();
++
++    // Vertical travel can only come from the native monitor from now on.
++    try {
++      Services.obs.addObserver(this, ZEN_SWIPE_VERTICAL_TOPIC);
++    } catch (e) {}
++    this._zenSwipePhase(2);
++    this._zenSwipeDebug(
++      "presented: rows=" + shown.length + " direction=" + this._swipeDirection
++    );
++    try {
++      Services.zen.playHapticFeedback();
++    } catch (e) {}
++  },
++
++  /**
++   * Positions the sheet and its selection pill for the current selection.
++   *
++   * Ardia's `listTop()` keeps the highlighted row on the window's centre line
++   * by moving the whole sheet, and `DestinationList` moves the pill inside the
++   * sheet. For a sheet of `count` rows:
++   *   sheet offset from centre = ((2 * selected + 1 - count) * ROW) / 2
++   *   pill  offset from top     = (count - 1 - selected) * ROW
++   */
++  _applySwipeListGeometry: function HSA__applySwipeListGeometry() {
++    const state = this._swipeList;
++    if (!state) {
++      return;
++    }
++    const count = state.items.length;
++    // While the finger is pushing the sheet back toward the chevron, the
++    // offset shrinks with it so the collapsing sheet lands on the rail.
++    const reverse = state.reverse || 0;
++    const offsetY =
++      (((2 * state.selected + 1 - count) * ZEN_SWIPE_LIST_ROW) / 2 +
++        state.nudge) *
++      (1 - reverse);
++    state.capsule.style.transform = `translateY(${offsetY}px)`;
++    state.pill.style.transform = `translateY(${
++      (count - 1 - state.selected) * ZEN_SWIPE_LIST_ROW
++    }px)`;
++
++    const rows = state.list.querySelectorAll(".zen-swipe-list-row");
++    for (let i = 0; i < rows.length; i++) {
++      // Rows are in display order (oldest first), so display row `i` is item
++      // `count - 1 - i`.
++      rows[i].classList.toggle(
++        "zen-swipe-list-row-selected",
++        count - 1 - i === state.selected
++      );
++    }
++  },
++
++  /**
++   * Applies one vertical sample from the native monitor to the open sheet.
++   * Ardia's `select()`.
++   *
++   * @param aDy Cumulative scrollingDeltaY of the current gesture.
++   */
++  _onSwipeVertical: function HSA__onSwipeVertical(aDy) {
++    const state = this._swipeList;
++    if (!state || !Number.isFinite(aDy)) {
++      return;
++    }
++    // Mirror each sample into the browser console when the native debug pref is
++    // on, so the JS side of the channel can be traced alongside the native log.
++    try {
++      if (Services.prefs.getBoolPref(ZEN_SWIPE_DEBUG_PREF)) {
++        Services.console.logStringMessage(
++          "ZenSwipe vertical sample: dy=" + aDy +
++          " selected=" + state.selected +
++          " items=" + state.items.length +
++          " dyBase=" + state.dyBase);
++      }
++    } catch (e) {}
++    if (state.dyBase === null) {
++      // The first sample defines "no vertical travel yet", so picking up the
++      // sheet never jumps the selection.
++      state.dyBase = aDy;
++      return;
++    }
++    const { index, nudge } = zenSwipeListSelection(
++      aDy - state.dyBase,
++      state.items.length
++    );
++    state.nudge = nudge;
++    if (index !== state.selected) {
++      state.selected = index;
++      state.lastDy = aDy;
++      // Re-anchor horizontal baseline when row selection changes:
++      // browsing rows naturally shifts horizontal position slightly,
++      // so measure cancellation from wherever this row was selected.
++      if (this._lastHorizontalDelta) {
++        const sign = this._swipeDirSign || 1;
++        this._swipePeakDelta = sign * this._lastHorizontalDelta;
++      }
++      if ((state.reverse || 0) > 0) {
++        this._trackSheetReverse(0);
++      }
++      try {
++        Services.zen.playHapticFeedback();
++      } catch (e) {}
++    } else {
++      const dySinceLast = Math.abs(aDy - (state.lastDy ?? aDy));
++      if (dySinceLast >= 14) {
++        state.lastDy = aDy;
++        if (this._lastHorizontalDelta) {
++          const sign = this._swipeDirSign || 1;
++          this._swipePeakDelta = sign * this._lastHorizontalDelta;
++        }
++        if ((state.reverse || 0) > 0) {
++          this._trackSheetReverse(0);
++        }
++      }
++    }
++    this._applySwipeListGeometry();
++  },
++
++  /**
++   * How far an open sheet has been pushed back out of the gesture, as a
++   * fraction of the travel that cancels it: 0 = open sheet, 1 = cancelled.
++   *
++   * Reversal is deliberate horizontal travel opposite the swipe direction -
++   * not "the horizontal delta fell below the confirmation threshold": the
++   * finger drifts back toward its start line whenever it leaves it to pick a
++   * row vertically, and that drift must never read as a cancel. Browsing
++   * rows therefore freezes the tracking (the progress stays where the finger
++   * left it) and re-anchors the baseline when browsing stops, so only travel
++   * away from wherever the finger ended up counts.
++   *
++   * A reversal only reads as "done" once it is sustained (past 1.3x the
++   * required travel, or several samples in a row); single noisy samples must
++   * not snap the sheet shut, so they report a progress just below 1.
++   *
++   * @param aSwipeUpdate The swipe update being processed.
++   * @return The reverse progress from 0 (open) to 1 (cancelled).
++   */
++  _sheetReverseProgress: function HSA__sheetReverseProgress(aSwipeUpdate) {
++    const state = this._swipeList;
++    if (!state) {
++      return 0;
++    }
++    const delta = aSwipeUpdate.delta;
++    if (!Number.isFinite(delta) || delta === 0) {
++      // No fresh horizontal sample (the finger is picking a row): hold the
++      // progress the finger has already pushed to.
++      return state.reverse || 0;
++    }
++    this._lastHorizontalDelta = delta;
++    const sign = this._swipeDirSign || Math.sign(delta) || 1;
++    const currentPos = sign * delta;
++
++    if (currentPos > this._swipePeakDelta) {
++      this._swipePeakDelta = currentPos;
++    }
++
++    const travelledBack = this._swipePeakDelta - currentPos;
++    const deadband = ZEN_SWIPE_REVERSE_DEADBAND;
++    const requiredDelta = ZEN_SWIPE_CANCEL_DELTA;
++
++    if (travelledBack <= deadband) {
++      this._swipeReverseCount = 0;
++      return 0;
++    }
++
++    const progress = Math.min(
++      Math.max(0, (travelledBack - deadband) / (requiredDelta - deadband)),
++      1
++    );
++
++    if (progress < 1) {
++      this._swipeReverseCount = 0;
++      return progress;
++    }
++
++    this._swipeReverseCount++;
++    if (
++      travelledBack < requiredDelta * 1.3 &&
++      this._swipeReverseCount < ZEN_SWIPE_CANCEL_SAMPLES
++    ) {
++      return 0.999;
++    }
++    return 1;
++  },
++
++  /**
++   * Renders the reverse progress on the sheet: `p` is how far back toward the
++   * chevron the finger has pushed it (0 = open sheet, 1 = collapsed disc). The
++   * sheet shrinks, its rows fade out and the chevron fades back in in step
++   * with the travel, so the cancel feedback happens while the user is still
++   * swiping. Releasing early springs the sheet back open; pushing it all the
++   * way leaves a disc for _collapseSwipeHistory to dismiss.
++   */
++  _trackSheetReverse: function HSA__trackSheetReverse(p) {
++    const state = this._swipeList;
++    if (!state) {
++      return;
++    }
++    const was = state.reverse || 0;
++    if ((p > 0) === (was > 0) && Math.abs(p - was) < 0.002) {
++      return;
++    }
++    state.reverse = p;
++    const capsule = state.capsule;
++    if (p <= 0) {
++      if (was <= 0) {
++        return;
++      }
++      // The travel came back before it did anything: spring the sheet open
++      // again. The has-list transition takes it back with the Ardia spring.
++      capsule.style.transition = "";
++      capsule.style.width = `${ZEN_SWIPE_LIST_WIDTH}px`;
++      capsule.style.height = `${
++        state.items.length * ZEN_SWIPE_LIST_ROW + ZEN_SWIPE_LIST_PAD * 2
++      }px`;
++      capsule.style.borderRadius = `${ZEN_SWIPE_LIST_RADIUS}px`;
++      state.list.style.opacity = "";
++      if (state.chevron) {
++        state.chevron.style.opacity = "0";
++        state.chevron.style.margin = "";
++      }
++      this._applySwipeListGeometry();
++      return;
++    }
++    // Direct per-tick tracking: the has-list spring transition would lag the
++    // interpolated geometry behind the finger by its whole duration.
++    capsule.style.transition = "none";
++    if (state.chevron) {
++      // has-list aligns children to the sheet's top-left corner; auto flex
++      // margins re-center the chevron on the shrinking sheet, so it fades in
++      // where the disc's chevron lives instead of the sheet's corner.
++      state.chevron.style.margin = "auto";
++    }
++    const lerp = (a, b) => a + (b - a) * p;
++    capsule.style.width = `${lerp(ZEN_SWIPE_LIST_WIDTH, 72)}px`;
++    capsule.style.height = `${lerp(
++      state.items.length * ZEN_SWIPE_LIST_ROW + ZEN_SWIPE_LIST_PAD * 2,
++      72
++    )}px`;
++    capsule.style.borderRadius = `${lerp(ZEN_SWIPE_LIST_RADIUS, 36)}px`;
++    state.list.style.opacity = String(1 - p);
++    if (state.chevron) {
++      state.chevron.style.opacity = String(p);
++    }
++    this._applySwipeListGeometry();
++  },
++
++  /**
++   * Takes an open sheet back out of the gesture when the user reverses the
++   * swipe: the sheet shrinks back into the chevron capsule it grew out of, and
++   * the caller's unconfirmed path then dismisses that capsule exactly like a
++   * swipe that was cancelled before it was ever confirmed.
++   */
++  _collapseSwipeHistory: function HSA__collapseSwipeHistory() {
++    if (!this._swipeList) {
++      return;
++    }
++    this._zenSwipeDebug("collapsing sheet: swipe reversed");
++    // Drop the confirmed look before the morph starts: the capsule's size
++    // comes from the will-navigate rule (82pt), and retargeting that
++    // mid-transition is what made the old collapse chain two size animations
++    // and stutter.
++    if (this._prevBox) {
++      this._prevBox.classList.remove("will-navigate");
++    }
++    if (this._nextBox) {
++      this._nextBox.classList.remove("will-navigate");
++    }
++    const state = this._dismissSwipeHistory();
++    this._zenSwipePhase(1);
++    this._confirmed = false;
++    this._wasConfirmed = false;
++    this._swipeCancelled = true;
++    // The disc transition finishes the morph as the cancel feedback. Freeze
++    // the per-frame capsule layout for its duration (the reversed delta would
++    // otherwise display:none the capsule the same frame the morph starts),
++    // then dismiss the chevron with the normal cancel animation once it has
++    // landed.
++    this._swipeMorphing = true;
++    if (state && state.capsule) {
++      // The capsule's descendants have transitions of their own (the row
++      // selection pill, the icons), and their `transitionend`s bubble, so the
++      // capture listener has to ignore everything the capsule itself did not
++      // transition.
++      const capsule = state.capsule;
++      const onMorphEnd = aEvent => {
++        if (aEvent.target !== capsule) {
++          return;
++        }
++        capsule.removeEventListener("transitionend", onMorphEnd, true);
++        this._finishSwipeMorph();
++      };
++      capsule.addEventListener("transitionend", onMorphEnd, true);
++    }
++    if (this._swipeMorphTimer) {
++      window.clearTimeout(this._swipeMorphTimer);
++    }
++    this._swipeMorphTimer = window.setTimeout(() =>
++      this._finishSwipeMorph(), 320);
++  },
++
++  /**
++   * Stops the sheet from receiving input and forgets its state.
++   *
++   * @param aKeepDOM When true the sheet DOM is left in place so the dismissal
++   *        animation in `stopAnimation()` can fade it out, exactly like Ardia
++   *        dismisses the whole overlay (fade + scale) rather than collapsing it
++   *        back into a capsule first. The nodes are then removed by
++   *        `_removeBoxes()` once the fade finishes.
++   */
++  _dismissSwipeHistory: function HSA__dismissSwipeHistory(aKeepDOM) {
++    this._cancelSwipeHold();
++    const state = this._swipeList;
++    this._swipeList = null;
++    if (!state) {
++      return null;
++    }
++    try {
++      Services.obs.removeObserver(this, ZEN_SWIPE_VERTICAL_TOPIC);
++    } catch (e) {}
++    if (aKeepDOM) {
++      return state;
++    }
++    if (state.box) {
++      state.box.classList.remove("has-list");
++    }
++    if (state.list) {
++      if ((state.reverse || 0) >= 1) {
++        // The reversal tracking already faded the rows out with the finger.
++        state.list.remove();
++      } else {
++        // The finger lifted mid-reversal: fade the rows out from wherever it
++        // left them instead of deleting them in the same frame. An empty
++        // glass rect collapsing read as a glitch, not as "back to the
++        // chevron".
++        const list = state.list;
++        list.style.transition =
++          "opacity 180ms cubic-bezier(0.25, 0.46, 0.45, 0.94)";
++        list.style.opacity = "0";
++        window.setTimeout(() => list.remove(), 180);
++      }
++    }
++    if (state.chevron) {
++      state.chevron.style.opacity = "";
++      state.chevron.style.margin = "auto";
++    }
++    if (state.capsule) {
++      // Let the sheet morph back into the chevron disc instead of snapping: the
++      // morph class puts the sheet's own offset and radius on the capsule's
++      // transition, so clearing the inline geometry animates the collapse.
++      state.capsule.style.transition = "";
++      state.capsule.classList.add("zen-swipe-capsule-morph");
++      state.capsule.classList.remove("has-list");
++      state.capsule.style.transform = "";
++      state.capsule.style.width = "";
++      state.capsule.style.height = "";
++      state.capsule.style.borderRadius = "";
++    }
++    return state;
++  },
++
++  /**
++   * Ends the cancelled sheet's morph back into the chevron. The morph itself
++   * is the feedback that the gesture was taken back; the chevron it lands on
++   * is then dismissed with the normal cancel animation.
++   */
++  _finishSwipeMorph: function HSA__finishSwipeMorph() {
++    if (!this._swipeMorphing) {
++      return;
++    }
++    this._swipeMorphing = false;
++    if (this._swipeMorphTimer) {
++      window.clearTimeout(this._swipeMorphTimer);
++      this._swipeMorphTimer = 0;
++    }
++    this.stopAnimation();
++  },
++
++  /**
++   * Navigates to the row the user picked in the sheet (Ardia's `select()` +
++   * `goToHistoryItem()` on release).
++   *
++   * @return true when this gesture belonged to the sheet and was consumed here,
++   *         so the caller must not process the plain one-step swipe.
++   */
++  commitSwipeHistorySelection: function HSA_commitSwipeHistorySelection() {
++    if (this._swipeCancelled) {
++      this._swipeCancelled = false;
++      // While the sheet is still morphing back into the chevron the morph
++      // already ends in the cancel dismissal (see _finishSwipeMorph); starting
++      // the fade here too would run it in the middle of the transition.
++      if (!this._swipeMorphing) {
++        this.stopAnimation();
++      }
++      return true;
++    }
++    // A reversal that was still in flight when the finger lifted counts as a
++    // cancel, not a navigation: the user was swiping the sheet away. Past a
++    // half of the required travel the intent is unambiguous; less than
++    // that is jitter or browsing drift and the swipe commits normally.
++    const sheet = this._swipeList;
++    if (sheet && (sheet.reverse || 0) >= 0.7) {
++      this._collapseSwipeHistory();
++      return true;
++    }
++    const state = this._swipeList;
++    if (!state) {
++      if (!this._swipeCommitted) {
++        return false;
++      }
++      // The paired MozSwipeGesture for a gesture already committed by the end
++      // event: only tear the overlay down.
++      this._swipeCommitted = false;
++      this.stopAnimation();
++      return true;
++    }
++    const target = state.items[state.selected] || null;
++    const direction = this._swipeDirection;
++    this._swipeCommitted = true;
++    // Keep the sheet on screen for the fade so the dismissal matches Ardia's
++    // `dismiss()`; `_removeBoxes()` drops the nodes when the fade is over.
++    this._dismissSwipeHistory(true);
++    this.stopAnimation();
++    if (target) {
++      // `gotoIndex` is the jump the sheet exists for: Ardia's
++      // `goToHistoryItem()` goes straight to the picked entry, not one step.
++      let jumped = false;
++      try {
++        const navigation = gBrowser.webNavigation;
++        if (navigation && typeof navigation.gotoIndex === "function") {
++          navigation.gotoIndex(target.index);
++          jumped = true;
++        }
++      } catch (e) {
++        // A history index can go stale if the tab navigated underneath us.
++      }
++      if (!jumped) {
++        // Degrade to the plain one-step gesture rather than doing nothing.
++        if (direction === "back") {
++          gBrowser.goBack();
++        } else {
++          gBrowser.goForward();
++        }
++      }
++    }
++    return true;
++  },
++
++  /**
+    * Checks to see if history swipe animations are supported by this
+    * platform/configuration.
+    *
+    * return true if supported, false otherwise.
+    */
+   _isSupported: function HSA__isSupported() {
+-    return window.matchMedia("(-moz-swipe-animation-enabled)").matches;
++    return (
++      (Services.appinfo.OS == "Darwin" &&
++        Services.prefs.getBoolPref(
++          "zen.widget.macos.back-gesture-indicator",
++          true
++        )) ||
++      window.matchMedia("(-moz-swipe-animation-enabled)").matches
++    );
+   },
+ 
+   handleEvent: function HSA_handleEvent(aEvent) {
+     switch (aEvent.type) {
+       case "transitionend":
+-        this._completeFadeOut();
++        // The box's descendants have transitions of their own - the sheet's
++        // cancel morph runs them at the very moment the box's own dismissal
++        // fade is armed - and their `transitionend`s bubble through this
++        // capture listener. Only the box's own fade may complete the
++        // dismissal: a bubbled event would remove the overlay mid-fade and
++        // make the chevron vanish without any fade at all.
++        if (aEvent.target === aEvent.currentTarget) {
++          this._completeFadeOut();
++        }
+         break;
+     }
+   },
+@@ -954,42 +1947,88 @@
+    * Adds the boxes that contain the arrows used during the swipe animation.
+    */
+   _addBoxes: function HSA__addBoxes() {
+-    let browserStack = gBrowser.getPanel().querySelector(".browserStack");
++    let panel = gBrowser.getPanel();
++    let browserStack = panel ? panel.querySelector(".browserStack") : null;
++    if (!browserStack && gBrowser.selectedBrowser) {
++      browserStack = gBrowser.selectedBrowser.closest(".browserStack");
++    }
++    if (!browserStack) {
++      return;
++    }
+     this._container = this._createElement(
+       "historySwipeAnimationContainer",
+       "stack"
+     );
+     browserStack.appendChild(this._container);
+ 
++    const HTML_NS = "http://www.w3.org/1999/xhtml";
++    const SVG_NS = "http://www.w3.org/2000/svg";
++
++    const buildCapsule = chevronPath => {
++      let capsule = document.createElementNS(HTML_NS, "div");
++      capsule.className = "zen-swipe-capsule";
++
++      let wash = document.createElementNS(HTML_NS, "div");
++      wash.className = "zen-swipe-capsule-wash";
++      capsule.appendChild(wash);
++
++      let svg = document.createElementNS(SVG_NS, "svg");
++      svg.setAttribute("class", "zen-swipe-chevron");
++      // Geometry of the SF Symbol chevron at pointSize 28 weight bold, which is
++      // what Ardia renders: an ink box of 15x25pt and a ~4.6pt stroke.
++      svg.setAttribute("viewBox", "0 0 15 25");
++      svg.setAttribute("width", "15");
++      svg.setAttribute("height", "25");
++
++      let path = document.createElementNS(SVG_NS, "path");
++      path.setAttribute("d", chevronPath);
++      path.setAttribute("fill", "none");
++      path.setAttribute("stroke", "currentColor");
++      path.setAttribute("stroke-width", "4.6");
++      path.setAttribute("stroke-linecap", "round");
++      path.setAttribute("stroke-linejoin", "round");
++      svg.appendChild(path);
++
++      capsule.appendChild(svg);
++      return capsule;
++    };
++
+     this._prevBox = this._createElement(
+       "historySwipeAnimationPreviousArrow",
+       "box"
+     );
+     this._prevBox.collapsed = true;
++    this._prevBox.appendChild(buildCapsule("M12.7 2.3L2.3 12.5L12.7 22.7"));
+     this._container.appendChild(this._prevBox);
+-    let icon = this._icon.cloneNode(true);
+-    icon.classList.add("swipe-nav-icon");
+-    this._prevBox.appendChild(icon);
+ 
+     this._nextBox = this._createElement(
+       "historySwipeAnimationNextArrow",
+       "box"
+     );
+     this._nextBox.collapsed = true;
++    this._nextBox.appendChild(buildCapsule("M2.3 2.3L12.7 12.5L2.3 22.7"));
+     this._container.appendChild(this._nextBox);
+-    icon = this._icon.cloneNode(true);
+-    icon.classList.add("swipe-nav-icon");
+-    this._nextBox.appendChild(icon);
+   },
+ 
+   /**
+    * Removes the boxes.
+    */
+   _removeBoxes: function HSA__removeBoxes() {
++    this._dismissSwipeHistory();
+     this._prevBox = null;
+     this._nextBox = null;
+     this._lastVisibleBox = null;
+     this._lastVisibleTranslate = "";
++    this._wasConfirmed = false;
++    this._confirmed = false;
++    this._swipeCancelled = false;
++    this._swipeMorphing = false;
++    if (this._swipeMorphTimer) {
++      window.clearTimeout(this._swipeMorphTimer);
++      this._swipeMorphTimer = 0;
++    }
++    this._swipeDirection = "";
++    this._zenSwipePhase(0);
+     if (this._container) {
+       this._container.remove();
+     }
+@@ -1011,10 +2050,14 @@
+     return element;
+   },
+ 
+-  observe(subj, topic) {
++  observe(subj, topic, data) {
+     switch (topic) {
+       case "nsPref:changed":
+         this._initPrefValues();
++        break;
++      case ZEN_SWIPE_VERTICAL_TOPIC:
++        this._onSwipeVertical(parseFloat(data));
++        break;
+     }
+   },
+ 

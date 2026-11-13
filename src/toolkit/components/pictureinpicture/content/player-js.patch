@@ -1,16 +1,384 @@
 diff --git a/toolkit/components/pictureinpicture/content/player.js b/toolkit/components/pictureinpicture/content/player.js
-index dfa666aa0a3ab457a6766bf518506e61089893c5..a1671164fb4340afd976fc0407bc409c7327cbdd 100644
+index dfa666a..797745b 100644
 --- a/toolkit/components/pictureinpicture/content/player.js
 +++ b/toolkit/components/pictureinpicture/content/player.js
-@@ -975,6 +975,11 @@ let Player = {
-         });
+@@ -112,6 +112,63 @@ function setIsMutedState(isMuted) {
+   Player.isMuted = isMuted;
+ }
+ 
++const MEET_PATHS = {
++  micOn: [
++    "M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z",
++    "M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"
++  ],
++  micOff: "M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.24-5.3-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c1.37-.2 2.63-.78 3.66-1.62l3.07 3.07 1.27-1.27L4.27 3z",
++  camOn: "M15 8v8H5V8h10m1-2H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4V7c0-.55-.45-1-1-1z",
++  camOff: "M21 6.5l-4 4V7c0-.55-.45-1-1-1H9.82L21 17.18V6.5zM3.27 2L2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.55-.18L19.73 21 21 19.73 3.27 2zM5 16V8.27L12.73 16H5z",
++  hangup: "M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z",
++};
++
++function createMeetSvg(pathData) {
++  const NS = "http://www.w3.org/2000/svg";
++  const svg = document.createElementNS(NS, "svg");
++  svg.setAttribute("viewBox", "0 0 24 24");
++  svg.setAttribute("width", "22");
++  svg.setAttribute("height", "22");
++  svg.setAttribute("fill", "#ffffff");
++  svg.setAttribute("aria-hidden", "true");
++  svg.style.pointerEvents = "none";
++  svg.style.display = "block";
++
++  if (Array.isArray(pathData)) {
++    for (const d of pathData) {
++      const path = document.createElementNS(NS, "path");
++      path.setAttribute("d", d);
++      path.setAttribute("fill", "#ffffff");
++      svg.appendChild(path);
++    }
++  } else {
++    const path = document.createElementNS(NS, "path");
++    path.setAttribute("d", pathData);
++    path.setAttribute("fill", "#ffffff");
++    svg.appendChild(path);
++  }
++  return svg;
++}
++
++function setMeetButtonIcon(button, pathData) {
++  if (!button) return;
++  button.replaceChildren(createMeetSvg(pathData));
++}
++
++function setIsGoogleMeetState(isMeet) {
++  if (isMeet) {
++    Player.isGoogleMeet = true;
++    if (document.body) {
++      document.body.classList.add("is-google-meet");
++    }
++    Player.setupMeetControls();
++  }
++}
++
++function setMeetState(data) {
++  Player.setMeetState(data);
++}
++
+ /**
+  * Function to resize and reposition the PiP window
+  *
+@@ -422,16 +479,251 @@ let Player = {
+       document.documentElement.classList.add("seethrough-mode");
+     }
+ 
++    const isGoogleMeet =
++      wgp?.documentURI?.spec?.includes("meet.google.com") ||
++      wgp?.browsingContext?.currentURI?.spec?.includes("meet.google.com");
++    if (isGoogleMeet) {
++      this.isGoogleMeet = true;
++      document.body.classList.add("is-google-meet");
++      this.setupMeetControls();
++    }
++
++    Services.obs.addObserver(this, "zen-pip-gesture-begin");
++    Services.obs.addObserver(this, "zen-pip-gesture-end");
++    Services.obs.addObserver(this, "zen-pip-gesture-hover");
++    this._contentFreeze = null;
++    if (Services.prefs.getBoolPref("zen.pip.debug", false)) {
++      document.body.classList.add("pip-debug");
++    }
++    this._onMouseMoveAfterResize = () => {
++      if (this._awaitingMouseMoveAfterResize && !this._inNativeGesture) {
++        this._awaitingMouseMoveAfterResize = false;
++        if (document && document.body) {
++          document.body.classList.remove("pip-gesture-active");
++        }
++      }
++    };
++    window.addEventListener("mousemove", this._onMouseMoveAfterResize, { passive: true });
++
+     this._isInitialized = true;
+ 
+     return { actor: this.actor, setupPromise };
+   },
+ 
+   uninit() {
++    Services.obs.removeObserver(this, "zen-pip-gesture-begin");
++    Services.obs.removeObserver(this, "zen-pip-gesture-end");
++    Services.obs.removeObserver(this, "zen-pip-gesture-hover");
++    this._unpinChildViewport();
++    if (this._onMouseMoveAfterResize) {
++      window.removeEventListener("mousemove", this._onMouseMoveAfterResize);
++      this._onMouseMoveAfterResize = null;
++    }
++    this._awaitingMouseMoveAfterResize = false;
++    this._inNativeGesture = false;
+     this.resizeDebouncer.disarm();
+     PictureInPicture.unload(window, this.actor);
+   },
+ 
++  observe(subject, topic, data) {
++    if (!document || !document.body) return;
++    switch (topic) {
++      case "zen-pip-gesture-begin":
++        this._inNativeGesture = true;
++        this._awaitingMouseMoveAfterResize = false;
++        document.body.classList.add("pip-gesture-active");
++        this._pinChildViewport();
++        break;
++      case "zen-pip-gesture-end":
++        this._inNativeGesture = false;
++        this._awaitingMouseMoveAfterResize = true;
++        if (this._contentFreeze) {
++          this._contentFreeze.ending = true;
++        }
++        break;
++      case "zen-pip-gesture-hover":
++        // Mouse-moved events are not delivered to an inactive app, so with
++        // another app frontmost this document never sees the pointer come
++        // back over the card. The native controller tracks the pointer for
++        // us and reports it here, whichever app is active.
++        if (!this._inNativeGesture) {
++          this._awaitingMouseMoveAfterResize = false;
++          document.body.classList.remove("pip-gesture-active");
++        }
++        break;
++    }
++  },
++
++  // The picture does not live in this document: it is a video inside the remote
++  // <browser> child, one process away from this shell. A resize therefore has to
++  // travel window -> shell reflow -> IPC -> child reflow -> child paint, which a
++  // 120 Hz gesture outruns easily. The child's bottom edge arrives late while
++  // enlarging, causing a momentary gap/black band.
++  //
++  // But while shrinking, the larger old picture is simply clipped by the window,
++  // which is completely seamless. Freezing on shrink forces a large layout viewport
++  // to down-scale and then suddenly snap/reflow on release, causing flicker.
++  //
++  // Therefore: only pin and scale the child when enlarging beyond base size.
++  // When shrinking (w <= baseW), let it track down naturally with zero transform.
++  _pinChildViewport() {
++    if (this._contentFreeze) return;
++    let browser = document.getElementById("browser");
++    if (!browser) return;
++    let w = window.innerWidth;
++    let h = window.innerHeight;
++    if (!(w > 0 && h > 0)) return;
++
++    this._contentFreeze = {
++      browser,
++      baseW: w,
++      baseH: h,
++      pinned: false,
++      ending: false,
++      lastW: w,
++      lastH: h,
++      lastChangeAt: performance.now(),
++      raf: 0,
++    };
++
++    this._contentFreeze.raf = window.requestAnimationFrame(() =>
++      this._scaleFrozenChild()
++    );
++  },
++
++  _scaleFrozenChild() {
++    let freeze = this._contentFreeze;
++    if (!freeze) {
++      return;
++    }
++    let now = performance.now();
++    let w = window.innerWidth;
++    let h = window.innerHeight;
++
++    if (w !== freeze.lastW || h !== freeze.lastH) {
++      freeze.lastW = w;
++      freeze.lastH = h;
++      freeze.lastChangeAt = now;
++    }
++
++    let settled = now - freeze.lastChangeAt;
++    if (freeze.ending ? settled > 200 : settled > 2500) {
++      this._unpinChildViewport();
++      return;
++    }
++
++    if (w > freeze.baseW || h > freeze.baseH) {
++      if (!freeze.pinned) {
++        freeze.pinned = true;
++        let style = freeze.browser.style;
++        style.flex = "0 0 auto";
++        style.alignSelf = "flex-start";
++        style.width = `${freeze.baseW}px`;
++        style.height = `${freeze.baseH}px`;
++        style.transformOrigin = "0 0";
++      }
++      let sx = w / freeze.baseW;
++      let sy = h / freeze.baseH;
++      freeze.browser.style.transform = `scale(${sx}, ${sy})`;
++    } else {
++      if (freeze.pinned) {
++        freeze.pinned = false;
++        let style = freeze.browser.style;
++        style.flex = "";
++        style.alignSelf = "";
++        style.width = "";
++        style.height = "";
++        style.transform = "";
++        style.transformOrigin = "";
++      }
++      freeze.baseW = w;
++      freeze.baseH = h;
++    }
++
++    freeze.raf = window.requestAnimationFrame(() =>
++      this._scaleFrozenChild()
++    );
++  },
++
++  _unpinChildViewport() {
++    let freeze = this._contentFreeze;
++    if (!freeze) {
++      return;
++    }
++    this._contentFreeze = null;
++    if (freeze.raf) {
++      window.cancelAnimationFrame(freeze.raf);
++    }
++    if (freeze.pinned) {
++      let style = freeze.browser.style;
++      style.flex = "";
++      style.alignSelf = "";
++      style.width = "";
++      style.height = "";
++      style.transform = "";
++      style.transformOrigin = "";
++    }
++  },
++
++  setupMeetControls() {
++    let controlsBottom = document.getElementById("controls-bottom");
++    if (!controlsBottom || document.getElementById("meet-controls")) return;
++
++    let meetControls = document.createElement("div");
++    meetControls.id = "meet-controls";
++
++    // `control-item` is what gives these the same show/hide behaviour as the
++    // window's own buttons (close, minimize, unpip): upstream paints every
++    // .control-item at opacity 0 and only raises it while `#controls` is
++    // [showing]/[keying] or the pointer is over the button.
++    let micBtn = document.createElement("button");
++    micBtn.id = "meet-mic-btn";
++    micBtn.className = "meet-btn control-item";
++    micBtn.setAttribute("title", "Toggle Microphone");
++    micBtn.setAttribute("aria-label", "Toggle Microphone");
++    setMeetButtonIcon(micBtn, MEET_PATHS.micOn);
++
++    let camBtn = document.createElement("button");
++    camBtn.id = "meet-camera-btn";
++    camBtn.className = "meet-btn control-item";
++    camBtn.setAttribute("title", "Toggle Camera");
++    camBtn.setAttribute("aria-label", "Toggle Camera");
++    setMeetButtonIcon(camBtn, MEET_PATHS.camOn);
++
++    let leaveBtn = document.createElement("button");
++    leaveBtn.id = "meet-leave-btn";
++    leaveBtn.className = "meet-btn meet-btn-hangup control-item";
++    leaveBtn.setAttribute("title", "Leave Call");
++    leaveBtn.setAttribute("aria-label", "Leave Call");
++    setMeetButtonIcon(leaveBtn, MEET_PATHS.hangup);
++
++    meetControls.appendChild(micBtn);
++    meetControls.appendChild(camBtn);
++    meetControls.appendChild(leaveBtn);
++    controlsBottom.appendChild(meetControls);
++
++    if (this._meetState) {
++      this.setMeetState(this._meetState);
++    }
++  },
++
++  setMeetState(data) {
++    if (!data) return;
++    this._meetState = Object.assign(this._meetState || {}, data);
++    let micBtn = document.getElementById("meet-mic-btn");
++    if (micBtn && typeof data.isMicMuted === "boolean") {
++      micBtn.classList.toggle("is-muted", data.isMicMuted);
++      setMeetButtonIcon(micBtn, data.isMicMuted ? MEET_PATHS.micOff : MEET_PATHS.micOn);
++      micBtn.setAttribute("aria-label", data.isMicMuted ? "Turn on microphone" : "Turn off microphone");
++    }
++    let camBtn = document.getElementById("meet-camera-btn");
++    if (camBtn && typeof data.isCamOff === "boolean") {
++      camBtn.classList.toggle("is-off", data.isCamOff);
++      setMeetButtonIcon(camBtn, data.isCamOff ? MEET_PATHS.camOff : MEET_PATHS.camOn);
++      camBtn.setAttribute("aria-label", data.isCamOff ? "Turn on camera" : "Turn off camera");
++    }
++  },
++
+   setupTooltip(elId, l10nId, shortcutId) {
+     const el = document.getElementById(elId);
+     const shortcut = document.getElementById(shortcutId);
+@@ -910,7 +1193,9 @@ let Player = {
+   },
+ 
+   onClick(event) {
+-    switch (event.target.id) {
++    let clickedButton = event.target.closest("button");
++    let targetId = clickedButton ? clickedButton.id : event.target.id;
++    switch (targetId) {
+       case "audio": {
+         this.toggleMute();
+         break;
+@@ -921,6 +1206,33 @@ let Player = {
          break;
        }
-+
+ 
 +      case "minimize": {
 +        this.closePipWindow({ reason: "CloseButton" });
 +        break;
 +      }
-     }
-     // If the click came from a element that is not inside the subtitles settings panel
-     // then we want to hide the panel
++
++      case "meet-mic-btn": {
++        let btn = document.getElementById("meet-mic-btn");
++        let nextMuted = btn ? !btn.classList.contains("is-muted") : true;
++        this.setMeetState({ isMicMuted: nextMuted });
++        this.actor.sendAsyncMessage("PictureInPicture:MeetToggleMic");
++        break;
++      }
++
++      case "meet-camera-btn": {
++        let btn = document.getElementById("meet-camera-btn");
++        let nextOff = btn ? !btn.classList.contains("is-off") : true;
++        this.setMeetState({ isCamOff: nextOff });
++        this.actor.sendAsyncMessage("PictureInPicture:MeetToggleCam");
++        break;
++      }
++
++      case "meet-leave-btn": {
++        this.actor.sendAsyncMessage("PictureInPicture:MeetLeaveCall");
++        this.closePipWindow({ reason: "CloseButton" });
++        break;
++      }
++
+       case "playpause": {
+         if (!this.isPlaying) {
+           this.actor.sendAsyncMessage("PictureInPicture:Play");
+@@ -1432,8 +1744,18 @@ let Player = {
+    *  Event context data object
+    */
+   onResize() {
++    // A native pinch resizes the window up to 120 times a second. Nothing this
++    // handler does (hide two panels, rearm a debouncer) is needed per tick, and
++    // it is all work on the same thread that has to keep the card in step.
++    if (this._inNativeGesture) {
++      return;
++    }
+     this.toggleSubtitlesSettingsPanel({ forceHide: true });
+     this.togglePlaybackRatePanel({ forceHide: true });
++    if (document && document.body) {
++      document.body.classList.add("pip-gesture-active");
++      this._awaitingMouseMoveAfterResize = true;
++    }
+     this.resizeDebouncer.disarm();
+     this.resizeDebouncer.arm();
+   },
