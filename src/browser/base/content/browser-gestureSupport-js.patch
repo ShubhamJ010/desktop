@@ -1,9 +1,12 @@
 --- a/browser/base/content/browser-gestureSupport.js
 +++ b/browser/base/content/browser-gestureSupport.js
-@@ -237,6 +237,16 @@
-       return false;
-     }
- 
+@@ -234,6 +234,16 @@
+     // keys disabled. Swipes run the command directly rather than through the
+     // keyset, so they have to be turned away here too.
+     if (document.documentElement.hasAttribute("cropped-mini-window")) {
++      return false;
++    }
++
 +    const toolbox = document.getElementById("navigator-toolbox");
 +    const sidebar = document.getElementById("sidebar-box");
 +    if (
@@ -11,11 +14,8 @@
 +      sidebar?.matches(":hover") ||
 +      aEvent.target?.closest?.("#navigator-toolbox, #sidebar-box")
 +    ) {
-+      return false;
-+    }
-+
-     const leftCommand = this._getCommand(aEvent, ["swipe", "left"]);
-     const rightCommand = this._getCommand(aEvent, ["swipe", "right"]);
+       return false;
+     }
  
 @@ -501,6 +511,13 @@
     */
@@ -31,7 +31,7 @@
        gHistorySwipeAnimation.stopAnimation();
        this.processSwipeEvent(aEvent, aDir);
      },
-@@ -687,6 +704,103 @@
+@@ -687,6 +704,109 @@
  };
  
  // History Swipe Animation Support (bug 678392)
@@ -65,37 +65,43 @@
 +
 +// Ardia: `swipeMotion.ts` confirmation. |delta| >= 0.25 (75pt of travel)
 +// confirms the gesture and arms the sheet. Taking the swipe back takes the
-+// gesture back, so the sheet collapses into the chevron again and nothing is
-+// navigated to.
++// gesture back: the sheet is dismissed and nothing is navigated to.
 +const ZEN_SWIPE_CONFIRM_DELTA = 0.25;
 +
-+// How much travel *against* the confirmed direction, in the same 0..1 swipe
-+// delta units (1.0 = 300pt), takes an open sheet back. Reversal is measured
-+// from the furthest point the gesture reached, never as "the horizontal delta
-+// dropped below ZEN_SWIPE_CONFIRM_DELTA": the finger stops moving sideways as
-+// soon as it starts picking a row vertically, and treating that as a reversal
-+// collapsed the sheet the moment it was scrolled.
-+const ZEN_SWIPE_CANCEL_DELTA = 0.22;
++// Taking a shown sheet back is a dismissal, not a transition: the glass fades
++// and shrinks slightly where it is, and the overlay is gone. Short on purpose -
++// cancelling a gesture that showed the list must not feel slower than
++// cancelling one that never did, so there is no morph back into the chevron and
++// no second animation queued behind the first. Only opacity and transform are
++// animated, which the compositor can run without re-laying out the blurred
++// glass.
++const ZEN_SWIPE_DISMISS_MS = 120;
++const ZEN_SWIPE_DISMISS_EASE = "cubic-bezier(0.25, 0.46, 0.45, 0.94)";
 +
-+// Deadband for reversal detection: horizontal drift under this threshold
-+// while holding or scrolling vertically does not start shrinking or fading
-+// the sheet.
-+const ZEN_SWIPE_REVERSE_DEADBAND = 0.08;
++// Cancel detection while the sheet is open.
++//
++// The finger is pointing at rows, so macOS keeps reporting the sideways drift
++// of a hand that is moving up and down, and that drift must never cancel the
++// gesture. A cancel is the one horizontal movement that is decisive: the finger
++// travels straight back against the swipe, quickly. Reverse travel is therefore
++// accumulated in a leaky bucket instead of being measured from the furthest
++// point the gesture reached: deliberate travel builds up faster than the leak
++// drains it, while drift - small, alternating or slow - drains away.
++//
++// Nothing here needs to know whether rows were just picked, which is why a
++// pull-back right after an up/down browse cancels just as well as one on a
++// sheet that was never scrolled (the time-window version of this detector
++// swallowed the start of exactly that pull-back).
++//
++// Units are swipe delta, where 1.0 is 300pt of travel.
++const ZEN_SWIPE_CANCEL_TRAVEL = 0.22;
++const ZEN_SWIPE_CANCEL_LEAK_MS = 600;
 +
-+// A reversal also has to survive this many consecutive updates, so one jittery
-+// trackpad sample cannot take the sheet back.
-+const ZEN_SWIPE_CANCEL_SAMPLES = 2;
++// How much of that travel counts when the fingers lift. Half a pull-back is
++// already a decision to cancel; waiting for the full 66pt made the sheet sit
++// there while the hand was clearly taking the gesture back.
++const ZEN_SWIPE_CANCEL_RELEASE = 0.5;
 +
-+// While the finger picks rows it also keeps reporting a sideways delta: a hand
-+// travelling up and down does not stay on the line the swipe was confirmed on,
-+// so macOS keeps sending small horizontal samples that look exactly like the
-+// start of a pull-back. For this long after the last vertical sample the sheet
-+// is treated as "browsing": horizontal samples only re-anchor the reversal
-+// baseline and the cancel path stays disarmed. Picking a row therefore never
-+// runs the cancellation flow, and cancelling still works as soon as the finger
-+// stops moving vertically (a deliberate pull-back starts from a resting hand,
-+// which is longer than this window).
-+const ZEN_SWIPE_VERTICAL_BROWSE_MS = 180;
 +
 +// The vertical component of a macOS swipe never reaches chrome JS (Gecko only
 +// forwards the horizontal delta), so the Cocoa side pushes the gesture's
@@ -135,7 +141,7 @@
  var gHistorySwipeAnimation = {
    active: false,
    isLTR: false,
-@@ -736,6 +850,10 @@
+@@ -736,6 +856,10 @@
     *        Whether we're dealing with a vertical swipe or not.
     */
    startAnimation: function HSA_startAnimation() {
@@ -146,27 +152,26 @@
      // old boxes can still be around (if completing fade out for example), we
      // always want to remove them and recreate them because they can be
      // attached to an old browser stack that's no longer in use.
-@@ -743,6 +861,19 @@
+@@ -743,6 +867,18 @@
      this._isStoppingAnimation = false;
      this._canGoBack = this.canGoBack();
      this._canGoForward = this.canGoForward();
 +    // A new gesture starts a new history-sheet session, so a commit flag left
 +    // behind by the previous gesture (see commitSwipeHistorySelection) is stale.
 +    this._swipeCommitted = false;
-+    // Reversal bookkeeping for the sheet (see ZEN_SWIPE_CANCEL_DELTA).
-+    this._swipePeakDelta = 0;
++    // Cancel bookkeeping for the sheet (see ZEN_SWIPE_CANCEL_TRAVEL).
 +    this._swipeDirSign = 0;
-+    this._swipeReverseCount = 0;
 +    this._swipeCancelled = false;
-+    this._swipeMorphing = false;
-+    if (this._swipeMorphTimer) {
-+      window.clearTimeout(this._swipeMorphTimer);
-+      this._swipeMorphTimer = 0;
++    if (this._swipeDismissTimer) {
++      // A dismissal left over from the previous gesture must not tear down the
++      // overlay this gesture is about to build.
++      window.clearTimeout(this._swipeDismissTimer);
++      this._swipeDismissTimer = 0;
 +    }
      if (this.active) {
        this._addBoxes();
      }
-@@ -766,16 +897,26 @@
+@@ -766,16 +902,26 @@
      } else if (this._lastVisibleBox) {
        box = this._lastVisibleBox;
        box.collapsed = false;
@@ -197,7 +202,7 @@
        window.getComputedStyle(box).opacity;
      } else {
        this._isStoppingAnimation = false;
-@@ -784,24 +925,44 @@
+@@ -784,24 +930,44 @@
    },
  
    _swipeCommand: function HSA_swipeCommand(aSwipeUpdate) {
@@ -252,39 +257,21 @@
    },
  
    /**
-@@ -818,71 +979,106 @@
+@@ -818,71 +984,88 @@
      if (!this.isAnimationRunning() || this._isStoppingAnimation) {
        return;
      }
-+    // While the cancelled sheet is morphing back into the chevron, the
-+    // per-frame layout must not run against it: with the delta reversed the
-+    // regular path finds no navigation target, which would display:none the
-+    // morphing capsule in the same frame the morph starts (or pop the
-+    // opposite capsule when the tab can go forward). The morph ends in
-+    // _finishSwipeMorph.
-+    if (this._swipeMorphing) {
-+      return;
-+    }
 +    // Once the sheet is up it owns the gesture: the finger travels vertically to
-+    // pick a row, so horizontal samples are no longer progress. Only travel
-+    // against the confirmed direction takes the swipe back - the sheet then
-+    // morphs into the chevron it grew out of, and the unconfirmed path below
-+    // dismisses that chevron exactly as it does for a swipe that was never
-+    // confirmed. Running the capsule layout while the sheet is open would also
-+    // collapse both rails as soon as the horizontal delta reads zero, which hid
-+    // the sheet mid-hold.
++    // pick a row, so a horizontal sample only feeds the cancel detector and is
++    // no longer swipe progress. The capsule layout below must not run against
++    // the sheet either - it would collapse both rails as soon as the horizontal
++    // delta reads zero, hiding the sheet mid-hold. A cancel is thrown away by
++    // _dismissSwipeSheet, which gates this method through _isStoppingAnimation
++    // for the length of the dismissal.
 +    if (this._swipeList) {
-+      const reverse = this._sheetReverseProgress(aSwipeUpdate);
-+      if (reverse >= 1) {
++      if (this._sheetCancelTravel(aSwipeUpdate) >= 1) {
 +        this._collapseSwipeHistory();
-+        // The morph owns the screen from here; the regular layout below must
-+        // not run against it (see the _swipeMorphing gate above).
-+        return;
 +      }
-+      // Track the reversal with the finger: the sheet shrinks back toward the
-+      // chevron disc and its rows fade in step with the travel, so the cancel
-+      // feedback happens while the user is still swiping, not after it.
-+      this._trackSheetReverse(reverse);
 +      return;
 +    }
  
@@ -401,7 +388,7 @@
      }
    },
  
-@@ -901,7 +1097,11 @@
+@@ -901,7 +1084,11 @@
     * @return true if there is a previous page in history, false otherwise.
     */
    canGoBack: function HSA_canGoBack() {
@@ -414,7 +401,7 @@
    },
  
    /**
-@@ -919,7 +1119,822 @@
+@@ -919,23 +1106,690 @@
     * any. This will also result in the animation overlay to be torn down.
     */
    swipeEndEventReceived: function HSA_swipeEndEventReceived() {
@@ -426,9 +413,9 @@
 +      this.commitSwipeHistorySelection();
 +      return;
 +    }
-+    this.stopAnimation();
-+  },
-+
+     this.stopAnimation();
+   },
+ 
 +  // ---------------------------------------------------------------------------
 +  // Ardia history sheet (hold after the gesture is confirmed)
 +  // ---------------------------------------------------------------------------
@@ -447,10 +434,11 @@
 +  //   5. Releasing navigates straight to the highlighted entry and the overlay
 +  //      fades out with the normal dismissal animation.
 +  //   6. Reversing the swipe instead of releasing takes the gesture back: the
-+  //      sheet morphs into the chevron it grew out of and the normal cancel
-+  //      animation dismisses that chevron, leaving history untouched.
++  //      sheet is dismissed in one quick beat, leaving history untouched. It
++  //      does not morph back into the chevron first - a cancel has to read as
++  //      fast as the swipe that never showed a list (see _dismissSwipeSheet).
 +
-+  /**
+   /**
 +   * Publishes the current gesture phase for the native scroll monitor.
 +   *
 +   * @param aPhase 0 = idle, 1 = swipe tracked, 2 = history sheet visible.
@@ -494,11 +482,10 @@
 +    if (this._swipeList) {
 +      return;
 +    }
-+    // Reversal is measured away from where the gesture was confirmed, so the
-+    // furthest point starts here and the direction is the one just confirmed.
++    // Positions are measured along the direction this gesture was confirmed in,
++    // so a pull-back is negative movement whichever edge the trackpad started
++    // from.
 +    this._swipeDirSign = Math.sign(aSwipeUpdate.delta) || 1;
-+    this._swipePeakDelta = Math.abs(aSwipeUpdate.delta);
-+    this._swipeReverseCount = 0;
 +    this._swipeDirection = this._willGoBack(aSwipeUpdate)
 +      ? "back"
 +      : this._willGoForward(aSwipeUpdate)
@@ -735,7 +722,6 @@
 +      list.appendChild(row);
 +    }
 +
-+    capsule.classList.remove("zen-swipe-capsule-morph");
 +    capsule.classList.add("has-list");
 +    capsule.style.width = `${ZEN_SWIPE_LIST_WIDTH}px`;
 +    capsule.style.height = `${
@@ -750,20 +736,19 @@
 +      capsule,
 +      list,
 +      pill,
-+      // Faded back in with the reverse progress (see _trackSheetReverse).
-+      chevron: capsule.querySelector(".zen-swipe-chevron"),
 +      items: shown,
 +      selected: 0,
 +      // Cumulative scrollingDeltaY at the moment the sheet appeared; vertical
 +      // travel is measured from here and only from here.
 +      dyBase: null,
-+      // When the last vertical sample with real travel arrived. See
-+      // ZEN_SWIPE_VERTICAL_BROWSE_MS and _sheetBrowsingRows().
-+      lastVerticalAt: 0,
 +      nudge: 0,
-+      // How far the finger has pushed the sheet back toward the chevron
-+      // (0 = open, 1 = cancelled; see _sheetReverseProgress).
-+      reverse: 0,
++      // Cancel detector (see ZEN_SWIPE_CANCEL_TRAVEL): accumulated reverse
++      // travel, plus the last horizontal position and the time it was sampled
++      // at. `lastPos` stays null until the first sample after presenting, so
++      // picking up the sheet never counts as travel.
++      travel: 0,
++      lastPos: null,
++      lastTs: 0,
 +    };
 +    this._applySwipeListGeometry();
 +
@@ -795,13 +780,9 @@
 +      return;
 +    }
 +    const count = state.items.length;
-+    // While the finger is pushing the sheet back toward the chevron, the
-+    // offset shrinks with it so the collapsing sheet lands on the rail.
-+    const reverse = state.reverse || 0;
++    // The sheet slides so the selected row sits on the window centre line.
 +    const offsetY =
-+      (((2 * state.selected + 1 - count) * ZEN_SWIPE_LIST_ROW) / 2 +
-+        state.nudge) *
-+      (1 - reverse);
++      ((2 * state.selected + 1 - count) * ZEN_SWIPE_LIST_ROW) / 2 + state.nudge;
 +    state.capsule.style.transform = `translateY(${offsetY}px)`;
 +    state.pill.style.transform = `translateY(${
 +      (count - 1 - state.selected) * ZEN_SWIPE_LIST_ROW
@@ -840,14 +821,6 @@
 +          " dyBase=" + state.dyBase);
 +      }
 +    } catch (e) {}
-+    // Any vertical travel marks the gesture as browsing rows, which disarms the
-+    // reversal detector until the finger comes to rest vertically (see
-+    // ZEN_SWIPE_VERTICAL_BROWSE_MS). This is the whole reason swiping up/down
-+    // no longer runs the cancellation flow: the sideways samples that arrive
-+    // with the browse can no longer accumulate into a pull-back.
-+    if (state.dyBase === null || Math.abs(aDy - state.dyBase) >= 1) {
-+      state.lastVerticalAt = Date.now();
-+    }
 +    if (state.dyBase === null) {
 +      // The first sample defines "no vertical travel yet", so picking up the
 +      // sheet never jumps the selection.
@@ -861,11 +834,6 @@
 +    state.nudge = nudge;
 +    if (index !== state.selected) {
 +      state.selected = index;
-+      // A sheet that was already shrinking back springs open again: the user is
-+      // picking a destination, not taking the gesture back.
-+      if ((state.reverse || 0) > 0) {
-+        this._trackSheetReverse(0);
-+      }
 +      try {
 +        Services.zen.playHapticFeedback();
 +      } catch (e) {}
@@ -874,224 +842,99 @@
 +  },
 +
 +  /**
-+   * Whether the finger is currently travelling vertically to pick a sheet row.
-+   *
-+   * Horizontal samples that arrive inside this window are drift from a hand
-+   * that is moving up or down, never a deliberate pull-back, so the reversal
-+   * detector must not count them (see _sheetReverseProgress).
-+   *
-+   * @return true while the sheet should ignore sideways travel for cancelling.
-+   */
-+  _sheetBrowsingRows: function HSA__sheetBrowsingRows() {
-+    const state = this._swipeList;
-+    if (!state || !state.lastVerticalAt) {
-+      return false;
-+    }
-+    return Date.now() - state.lastVerticalAt < ZEN_SWIPE_VERTICAL_BROWSE_MS;
-+  },
-+
-+  /**
-+   * How far an open sheet has been pushed back out of the gesture, as a
-+   * fraction of the travel that cancels it: 0 = open sheet, 1 = cancelled.
-+   *
-+   * Reversal is deliberate horizontal travel opposite the swipe direction -
-+   * not "the horizontal delta fell below the confirmation threshold": the
-+   * finger drifts back toward its start line whenever it leaves it to pick a
-+   * row vertically, and that drift must never read as a cancel. Browsing
-+   * rows therefore freezes the tracking (the progress stays where the finger
-+   * left it) and re-anchors the baseline when browsing stops, so only travel
-+   * away from wherever the finger ended up counts.
-+   *
-+   * A reversal only reads as "done" once it is sustained (past 1.3x the
-+   * required travel, or several samples in a row); single noisy samples must
-+   * not snap the sheet shut, so they report a progress just below 1.
++   * Advances the cancel detector by one horizontal sample.
 +   *
 +   * @param aSwipeUpdate The swipe update being processed.
-+   * @return The reverse progress from 0 (open) to 1 (cancelled).
++   * @return How far the gesture has been taken back, from 0 (open) to 1
++   *         (cancel). Reaching 1 means the sheet has to go.
 +   */
-+  _sheetReverseProgress: function HSA__sheetReverseProgress(aSwipeUpdate) {
++  _sheetCancelTravel: function HSA__sheetCancelTravel(aSwipeUpdate) {
 +    const state = this._swipeList;
 +    if (!state) {
 +      return 0;
 +    }
++    const now = Date.now();
++    state.travel = this._leakSwipeTravel(state, now);
 +    const delta = aSwipeUpdate.delta;
-+    if (!Number.isFinite(delta) || delta === 0) {
-+      // No fresh horizontal sample (the finger is picking a row): hold the
-+      // progress the finger has already pushed to.
-+      return state.reverse || 0;
++    if (Number.isFinite(delta) && delta !== 0) {
++      const sign = this._swipeDirSign || Math.sign(delta) || 1;
++      // Movement along the confirmed direction is positive; pulling back is
++      // negative, and that is what the bucket collects. Vertical browsing
++      // arrives here as small alternating samples, which cancel themselves out.
++      const pos = sign * delta;
++      if (state.lastPos !== null) {
++        state.travel = Math.max(0, state.travel + (state.lastPos - pos));
++      }
++      state.lastPos = pos;
 +    }
-+    const sign = this._swipeDirSign || Math.sign(delta) || 1;
-+    const currentPos = sign * delta;
-+
-+    // Browsing rows: sideways samples are drift from the vertical swipe. Keep
-+    // the baseline on the finger's current position and leave the sheet open,
-+    // so the up/down browse cannot accumulate the travel that cancels it. Once
-+    // the finger rests, a pull-back is measured from wherever it came to rest.
-+    if (this._sheetBrowsingRows()) {
-+      this._swipePeakDelta = Math.max(0, currentPos);
-+      this._swipeReverseCount = 0;
-+      return 0;
-+    }
-+
-+    if (currentPos > this._swipePeakDelta) {
-+      this._swipePeakDelta = currentPos;
-+    }
-+
-+    const travelledBack = this._swipePeakDelta - currentPos;
-+    const deadband = ZEN_SWIPE_REVERSE_DEADBAND;
-+    const requiredDelta = ZEN_SWIPE_CANCEL_DELTA;
-+
-+    if (travelledBack <= deadband) {
-+      this._swipeReverseCount = 0;
-+      return 0;
-+    }
-+
-+    const progress = Math.min(
-+      Math.max(0, (travelledBack - deadband) / (requiredDelta - deadband)),
-+      1
-+    );
-+
-+    if (progress < 1) {
-+      this._swipeReverseCount = 0;
-+      return progress;
-+    }
-+
-+    this._swipeReverseCount++;
-+    if (
-+      travelledBack < requiredDelta * 1.3 &&
-+      this._swipeReverseCount < ZEN_SWIPE_CANCEL_SAMPLES
-+    ) {
-+      return 0.999;
-+    }
-+    return 1;
++    return this._swipeTravelProgress(state.travel);
 +  },
 +
 +  /**
-+   * Renders the reverse progress on the sheet: `p` is how far back toward the
-+   * chevron the finger has pushed it (0 = open sheet, 1 = collapsed disc). The
-+   * sheet shrinks, its rows fade out and the chevron fades back in in step
-+   * with the travel, so the cancel feedback happens while the user is still
-+   * swiping. Releasing early springs the sheet back open; pushing it all the
-+   * way leaves a disc for _collapseSwipeHistory to dismiss.
++   * Drains the reverse-travel bucket by the time since the last sample.
++   *
++   * The drain is what tells a pull-back apart from the drift of a hand that is
++   * moving up and down: a deliberate pull covers ground faster than the drain
++   * takes it away, while drift never does.
++   *
++   * @param aState The sheet state holding the bucket.
++   * @param aNow Timestamp of the sample being applied.
++   * @return The drained travel.
 +   */
-+  _trackSheetReverse: function HSA__trackSheetReverse(p) {
-+    const state = this._swipeList;
-+    if (!state) {
-+      return;
++  _leakSwipeTravel: function HSA__leakSwipeTravel(aState, aNow) {
++    const travel = aState.travel || 0;
++    if (!aState.lastTs) {
++      aState.lastTs = aNow;
++      return travel;
 +    }
-+    const was = state.reverse || 0;
-+    if ((p > 0) === (was > 0) && Math.abs(p - was) < 0.002) {
-+      return;
++    const dt = Math.max(0, aNow - aState.lastTs);
++    aState.lastTs = aNow;
++    if (!dt) {
++      return travel;
 +    }
-+    state.reverse = p;
-+    const capsule = state.capsule;
-+    if (p <= 0) {
-+      if (was <= 0) {
-+        return;
-+      }
-+      // The travel came back before it did anything: spring the sheet open
-+      // again. The has-list transition takes it back with the Ardia spring.
-+      capsule.style.transition = "";
-+      capsule.style.width = `${ZEN_SWIPE_LIST_WIDTH}px`;
-+      capsule.style.height = `${
-+        state.items.length * ZEN_SWIPE_LIST_ROW + ZEN_SWIPE_LIST_PAD * 2
-+      }px`;
-+      capsule.style.borderRadius = `${ZEN_SWIPE_LIST_RADIUS}px`;
-+      state.list.style.opacity = "";
-+      if (state.chevron) {
-+        state.chevron.style.opacity = "0";
-+        state.chevron.style.margin = "";
-+      }
-+      this._applySwipeListGeometry();
-+      return;
-+    }
-+    // Direct per-tick tracking: the has-list spring transition would lag the
-+    // interpolated geometry behind the finger by its whole duration.
-+    capsule.style.transition = "none";
-+    if (state.chevron) {
-+      // has-list aligns children to the sheet's top-left corner; auto flex
-+      // margins re-center the chevron on the shrinking sheet, so it fades in
-+      // where the disc's chevron lives instead of the sheet's corner.
-+      state.chevron.style.margin = "auto";
-+    }
-+    const lerp = (a, b) => a + (b - a) * p;
-+    capsule.style.width = `${lerp(ZEN_SWIPE_LIST_WIDTH, 72)}px`;
-+    capsule.style.height = `${lerp(
-+      state.items.length * ZEN_SWIPE_LIST_ROW + ZEN_SWIPE_LIST_PAD * 2,
-+      72
-+    )}px`;
-+    capsule.style.borderRadius = `${lerp(ZEN_SWIPE_LIST_RADIUS, 36)}px`;
-+    state.list.style.opacity = String(1 - p);
-+    if (state.chevron) {
-+      state.chevron.style.opacity = String(p);
-+    }
-+    this._applySwipeListGeometry();
++    return travel * Math.exp(-dt / ZEN_SWIPE_CANCEL_LEAK_MS);
++  },
++
++  /**
++   * @param aTravel Accumulated reverse travel, in swipe delta units.
++   * @return The same travel as a 0..1 cancel progress.
++   */
++  _swipeTravelProgress: function HSA__swipeTravelProgress(aTravel) {
++    return Math.min(Math.max(aTravel / ZEN_SWIPE_CANCEL_TRAVEL, 0), 1);
 +  },
 +
 +  /**
 +   * Takes an open sheet back out of the gesture when the user reverses the
-+   * swipe: the sheet shrinks back into the chevron capsule it grew out of, and
-+   * the caller's unconfirmed path then dismisses that capsule exactly like a
-+   * swipe that was cancelled before it was ever confirmed.
++   * swipe. The sheet is not morphed back into the chevron: it is thrown away in
++   * one quick beat (see _dismissSwipeSheet), so taking a gesture back is as
++   * quick as cancelling one that never showed the list.
 +   */
 +  _collapseSwipeHistory: function HSA__collapseSwipeHistory() {
 +    if (!this._swipeList) {
 +      return;
 +    }
 +    this._zenSwipeDebug("collapsing sheet: swipe reversed");
-+    // Drop the confirmed look before the morph starts: the capsule's size
-+    // comes from the will-navigate rule (82pt), and retargeting that
-+    // mid-transition is what made the old collapse chain two size animations
-+    // and stutter.
-+    if (this._prevBox) {
-+      this._prevBox.classList.remove("will-navigate");
-+    }
-+    if (this._nextBox) {
-+      this._nextBox.classList.remove("will-navigate");
-+    }
++    // The DOM stays: the dismissal animates the glass and its rows out together.
++    // The state is forgotten first, so no vertical sample can reach the sheet
++    // while it fades.
 +    const state = this._dismissSwipeHistory();
 +    this._zenSwipePhase(1);
 +    this._confirmed = false;
 +    this._wasConfirmed = false;
 +    this._swipeCancelled = true;
-+    // The disc transition finishes the morph as the cancel feedback. Freeze
-+    // the per-frame capsule layout for its duration (the reversed delta would
-+    // otherwise display:none the capsule the same frame the morph starts),
-+    // then dismiss the chevron with the normal cancel animation once it has
-+    // landed.
-+    this._swipeMorphing = true;
-+    if (state && state.capsule) {
-+      // The capsule's descendants have transitions of their own (the row
-+      // selection pill, the icons), and their `transitionend`s bubble, so the
-+      // capture listener has to ignore everything the capsule itself did not
-+      // transition.
-+      const capsule = state.capsule;
-+      const onMorphEnd = aEvent => {
-+        if (aEvent.target !== capsule) {
-+          return;
-+        }
-+        capsule.removeEventListener("transitionend", onMorphEnd, true);
-+        this._finishSwipeMorph();
-+      };
-+      capsule.addEventListener("transitionend", onMorphEnd, true);
-+    }
-+    if (this._swipeMorphTimer) {
-+      window.clearTimeout(this._swipeMorphTimer);
-+    }
-+    this._swipeMorphTimer = window.setTimeout(() =>
-+      this._finishSwipeMorph(), 320);
++    this._dismissSwipeSheet(state);
 +  },
 +
 +  /**
 +   * Stops the sheet from receiving input and forgets its state.
 +   *
-+   * @param aKeepDOM When true the sheet DOM is left in place so the dismissal
-+   *        animation in `stopAnimation()` can fade it out, exactly like Ardia
-+   *        dismisses the whole overlay (fade + scale) rather than collapsing it
-+   *        back into a capsule first. The nodes are then removed by
-+   *        `_removeBoxes()` once the fade finishes.
++   * The DOM is deliberately left alone: the dismissal in _dismissSwipeSheet
++   * animates it away, and `_removeBoxes()` drops the nodes with the rest of the
++   * overlay.
++   *
++   * @return The forgotten sheet state, or null when there was no sheet.
 +   */
-+  _dismissSwipeHistory: function HSA__dismissSwipeHistory(aKeepDOM) {
++  _dismissSwipeHistory: function HSA__dismissSwipeHistory() {
 +    this._cancelSwipeHold();
 +    const state = this._swipeList;
 +    this._swipeList = null;
@@ -1101,62 +944,55 @@
 +    try {
 +      Services.obs.removeObserver(this, ZEN_SWIPE_VERTICAL_TOPIC);
 +    } catch (e) {}
-+    if (aKeepDOM) {
-+      return state;
-+    }
-+    if (state.box) {
-+      state.box.classList.remove("has-list");
-+    }
-+    if (state.list) {
-+      if ((state.reverse || 0) >= 1) {
-+        // The reversal tracking already faded the rows out with the finger.
-+        state.list.remove();
-+      } else {
-+        // The finger lifted mid-reversal: fade the rows out from wherever it
-+        // left them instead of deleting them in the same frame. An empty
-+        // glass rect collapsing read as a glitch, not as "back to the
-+        // chevron".
-+        const list = state.list;
-+        list.style.transition =
-+          "opacity 180ms cubic-bezier(0.25, 0.46, 0.45, 0.94)";
-+        list.style.opacity = "0";
-+        window.setTimeout(() => list.remove(), 180);
-+      }
-+    }
-+    if (state.chevron) {
-+      state.chevron.style.opacity = "";
-+      state.chevron.style.margin = "auto";
-+    }
-+    if (state.capsule) {
-+      // Let the sheet morph back into the chevron disc instead of snapping: the
-+      // morph class puts the sheet's own offset and radius on the capsule's
-+      // transition, so clearing the inline geometry animates the collapse.
-+      state.capsule.style.transition = "";
-+      state.capsule.classList.add("zen-swipe-capsule-morph");
-+      state.capsule.classList.remove("has-list");
-+      state.capsule.style.transform = "";
-+      state.capsule.style.width = "";
-+      state.capsule.style.height = "";
-+      state.capsule.style.borderRadius = "";
-+    }
 +    return state;
 +  },
 +
 +  /**
-+   * Ends the cancelled sheet's morph back into the chevron. The morph itself
-+   * is the feedback that the gesture was taken back; the chevron it lands on
-+   * is then dismissed with the normal cancel animation.
++   * Throws the sheet away in one quick beat: the glass fades and shrinks
++   * slightly where it is. There is no morph back into the chevron disc and no
++   * second animation queued behind the first, which is what made cancelling a
++   * shown list feel slower and heavier than cancelling a plain swipe.
++   *
++   * @param aState The sheet state handed back by _dismissSwipeHistory().
 +   */
-+  _finishSwipeMorph: function HSA__finishSwipeMorph() {
-+    if (!this._swipeMorphing) {
-+      return;
++  _dismissSwipeSheet: function HSA__dismissSwipeSheet(aState) {
++    const ms = ZEN_SWIPE_DISMISS_MS;
++    const ease = ZEN_SWIPE_DISMISS_EASE;
++    if (aState) {
++      const capsule = aState.capsule;
++      if (capsule) {
++        // Small and short on purpose: this should read as the sheet being
++        // thrown away, not as a second animation to watch.
++        const shown = capsule.style.transform;
++        capsule.style.transition =
++          `opacity ${ms}ms ${ease}, transform ${ms}ms ${ease}`;
++        capsule.style.transform = `${
++          shown && shown !== "none" ? `${shown} ` : ""
++        }scale(0.9)`;
++        capsule.style.opacity = "0";
++      }
++      if (aState.box) {
++        aState.box.style.transition = `opacity ${ms}ms ${ease}`;
++        aState.box.style.opacity = "0";
++      }
 +    }
-+    this._swipeMorphing = false;
-+    if (this._swipeMorphTimer) {
-+      window.clearTimeout(this._swipeMorphTimer);
-+      this._swipeMorphTimer = 0;
++    // The overlay belongs to the dismissal now: updateAnimation() bails out
++    // while _isStoppingAnimation is set, so the reversed delta cannot collapse
++    // the boxes out from under the fade.
++    this._isStoppingAnimation = true;
++    if (this._swipeDismissTimer) {
++      window.clearTimeout(this._swipeDismissTimer);
 +    }
-+    this.stopAnimation();
++    this._swipeDismissTimer = window.setTimeout(() => {
++      this._swipeDismissTimer = 0;
++      // A new gesture took the overlay over in the meantime and owns its own
++      // teardown; clearing the flag is all updateAnimation() needs from us.
++      if (!this._isStoppingAnimation) {
++        return;
++      }
++      this._isStoppingAnimation = false;
++      this._removeBoxes();
++    }, ms + 40);
 +  },
 +
 +  /**
@@ -1169,32 +1005,22 @@
 +  commitSwipeHistorySelection: function HSA_commitSwipeHistorySelection() {
 +    if (this._swipeCancelled) {
 +      this._swipeCancelled = false;
-+      // While the sheet is still morphing back into the chevron the morph
-+      // already ends in the cancel dismissal (see _finishSwipeMorph); starting
-+      // the fade here too would run it in the middle of the transition.
-+      if (!this._swipeMorphing) {
-+        this.stopAnimation();
-+      }
++      // The dismissal already owns the overlay (see _dismissSwipeSheet); the
++      // paired MozSwipeGesture only has to be swallowed.
 +      return true;
 +    }
-+    // A reversal that was still in flight when the finger lifted counts as a
-+    // cancel, not a navigation: the user was swiping the sheet away. Past a
-+    // half of the required travel the intent is unambiguous; less than
-+    // that is jitter or browsing drift and the swipe commits normally.
-+    const sheet = this._swipeList;
-+    if (
-+      sheet &&
-+      (sheet.reverse || 0) >= 0.7 &&
-+      // Residual progress left over from before the user started picking rows
-+      // is not a cancel: lifting the fingers after an up/down browse picks the
-+      // highlighted entry.
-+      !this._sheetBrowsingRows()
-+    ) {
-+      this._collapseSwipeHistory();
-+      return true;
-+    }
++    // A reversal still in flight when the finger lifts counts as a cancel, not
++    // a navigation: the user was swiping the sheet away. The bucket is drained
++    // to this moment first, so a pull-back that stopped a while ago does not
++    // count and the swipe commits normally.
 +    const state = this._swipeList;
-+    if (!state) {
++    if (state) {
++      state.travel = this._leakSwipeTravel(state, Date.now());
++      if (this._swipeTravelProgress(state.travel) >= ZEN_SWIPE_CANCEL_RELEASE) {
++        this._collapseSwipeHistory();
++        return true;
++      }
++    } else {
 +      if (!this._swipeCommitted) {
 +        return false;
 +      }
@@ -1209,8 +1035,8 @@
 +    this._swipeCommitted = true;
 +    // Keep the sheet on screen for the fade so the dismissal matches Ardia's
 +    // `dismiss()`; `_removeBoxes()` drops the nodes when the fade is over.
-+    this._dismissSwipeHistory(true);
-     this.stopAnimation();
++    this._dismissSwipeHistory();
++    this.stopAnimation();
 +    if (target) {
 +      // `gotoIndex` is the jump the sheet exists for: Ardia's
 +      // `goToHistoryItem()` goes straight to the picked entry, not one step.
@@ -1234,10 +1060,12 @@
 +      }
 +    }
 +    return true;
-   },
- 
-   /**
-@@ -929,13 +1944,28 @@
++  },
++
++  /**
+    * Checks to see if history swipe animations are supported by this
+    * platform/configuration.
+    *
     * return true if supported, false otherwise.
     */
    _isSupported: function HSA__isSupported() {
@@ -1256,19 +1084,17 @@
      switch (aEvent.type) {
        case "transitionend":
 -        this._completeFadeOut();
-+        // The box's descendants have transitions of their own - the sheet's
-+        // cancel morph runs them at the very moment the box's own dismissal
-+        // fade is armed - and their `transitionend`s bubble through this
-+        // capture listener. Only the box's own fade may complete the
-+        // dismissal: a bubbled event would remove the overlay mid-fade and
-+        // make the chevron vanish without any fade at all.
++        // The box's descendants have transitions of their own and their
++        // `transitionend`s bubble through this capture listener. Only the box's
++        // own fade may complete the dismissal: a bubbled event would remove the
++        // overlay mid-fade.
 +        if (aEvent.target === aEvent.currentTarget) {
 +          this._completeFadeOut();
 +        }
          break;
      }
    },
-@@ -954,42 +1984,88 @@
+@@ -954,42 +1808,87 @@
     * Adds the boxes that contain the arrows used during the swipe animation.
     */
    _addBoxes: function HSA__addBoxes() {
@@ -1354,17 +1180,16 @@
 +    this._wasConfirmed = false;
 +    this._confirmed = false;
 +    this._swipeCancelled = false;
-+    this._swipeMorphing = false;
-+    if (this._swipeMorphTimer) {
-+      window.clearTimeout(this._swipeMorphTimer);
-+      this._swipeMorphTimer = 0;
++    if (this._swipeDismissTimer) {
++      window.clearTimeout(this._swipeDismissTimer);
++      this._swipeDismissTimer = 0;
 +    }
 +    this._swipeDirection = "";
 +    this._zenSwipePhase(0);
      if (this._container) {
        this._container.remove();
      }
-@@ -1011,10 +2087,14 @@
+@@ -1011,10 +1910,14 @@
      return element;
    },
  

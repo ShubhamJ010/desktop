@@ -539,6 +539,9 @@ body,
   /* Ardia windowColors.swipeRim. */
   border: var(--zen-ardia-glass-rim);
   box-sizing: border-box;
+  /* The dismissal animates opacity and transform only, so keep the disc on its
+     own compositor layer instead of repainting the blurred glass each frame. */
+  will-change: transform, opacity;
   transition: width var(--zen-swipe-spring-duration) var(--zen-swipe-spring),
               height var(--zen-swipe-spring-duration) var(--zen-swipe-spring);
 }
@@ -637,20 +640,10 @@ body,
               transform var(--zen-swipe-list-spring-duration) var(--zen-swipe-spring);
 }
 
-/* Reversing the swipe takes the sheet back into the chevron it grew out of. The
-   sheet's offset and radius have no transition on the plain capsule, so give it
-   the spring while the collapse is in flight; the sheet geometry is cleared in
-   the same frame the class is added, which is what starts the morph. Dropping
-   `has-list` also reverts the sheet's opaque glass fill to the disc's, so the
-   fill and border get a transition too or they snap while the box shrinks. */
-.zen-swipe-capsule.zen-swipe-capsule-morph {
-  transition: width 270ms var(--zen-swipe-spring),
-              height 270ms var(--zen-swipe-spring),
-              transform 270ms var(--zen-swipe-spring),
-              border-radius 270ms var(--zen-swipe-spring),
-              background-color 270ms var(--zen-swipe-spring),
-              border-color 270ms var(--zen-swipe-spring);
-}
+/* Reversing the swipe does not morph the sheet back into the chevron: the
+   dismissal throws the glass away in one quick beat, driven from JS (see
+   `_dismissSwipeSheet` in browser-gestureSupport.js), so there is no collapse
+   transition to describe here. */
 
 /* The chevron fades out as the list fades in (Ardia multiplies the icon
    opacity by the inverse of the list's appear value). The arrow variants have
@@ -692,8 +685,9 @@ body,
   }
 }
 
-/* Cancelling the swipe fades the rows out inline from wherever the finger
-   left them (see _dismissSwipeHistory), so no keyframe pair is needed here. */
+/* Cancelling dismisses the whole sheet in one quick fade-and-shrink beat (see
+   `_dismissSwipeSheet` in browser-gestureSupport.js); the rows leave with the
+   glass, so there is no collapse animation to describe here. */
 
 .zen-swipe-list-pill {
   position: absolute;
