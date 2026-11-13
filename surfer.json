@@ -1,7 +1,7 @@
 {
-  "name": "Zen SJ",
-  "vendor": "SJ",
-  "appId": "zen-sj",
+  "name": "Zen Browser",
+  "vendor": "Zen OSS Team",
+  "appId": "zen-twilight",
   "binaryName": "zen",
   "version": {
     "product": "firefox",
@@ -22,7 +22,7 @@
       "release": {
         "displayVersion": "1.24.1b",
         "github": {
-          "repo": "ShubhamJ010/desktop"
+          "repo": "zen-browser/desktop"
         },
         "archives": {
           "windows": "windows.mar",
@@ -31,18 +31,6 @@
           "macos-x64": "macos-x64.mar",
           "windows-arm64": "windows-arm64.mar",
           "linux-aarch64": "linux-aarch64.mar"
-        }
-      }
-    },
-    "sj": {
-      "backgroundColor": "#282A33",
-      "brandShorterName": "Zen SJ",
-      "brandShortName": "Zen SJ",
-      "brandFullName": "Zen SJ",
-      "release": {
-        "displayVersion": "1.24.1b",
-        "github": {
-          "repo": "ShubhamJ010/desktop"
         }
       }
     },
