@@ -1,12 +1,9 @@
 --- a/browser/base/content/browser-gestureSupport.js
 +++ b/browser/base/content/browser-gestureSupport.js
-@@ -234,6 +234,16 @@
-     // keys disabled. Swipes run the command directly rather than through the
-     // keyset, so they have to be turned away here too.
-     if (document.documentElement.hasAttribute("cropped-mini-window")) {
-+      return false;
-+    }
-+
+@@ -237,6 +237,16 @@
+       return false;
+     }
+ 
 +    const toolbox = document.getElementById("navigator-toolbox");
 +    const sidebar = document.getElementById("sidebar-box");
 +    if (
@@ -14,8 +11,11 @@
 +      sidebar?.matches(":hover") ||
 +      aEvent.target?.closest?.("#navigator-toolbox, #sidebar-box")
 +    ) {
-       return false;
-     }
++      return false;
++    }
++
+     const leftCommand = this._getCommand(aEvent, ["swipe", "left"]);
+     const rightCommand = this._getCommand(aEvent, ["swipe", "right"]);
  
 @@ -501,6 +511,13 @@
     */
@@ -31,7 +31,7 @@
        gHistorySwipeAnimation.stopAnimation();
        this.processSwipeEvent(aEvent, aDir);
      },
-@@ -687,6 +704,109 @@
+@@ -687,6 +704,118 @@
  };
  
  // History Swipe Animation Support (bug 678392)
@@ -54,9 +54,18 @@
 +const ZEN_SWIPE_LIST_PAD = 8;
 +const ZEN_SWIPE_LIST_RADIUS = 16;
 +
-+// Ardia: `historyItems(tabId, direction, max = 15)`. A sheet never lists more
-+// than this many destinations, however long the session history is.
++// Ardia: `historyItems(tabId, direction, max = 15)`. Hard upper bound: a sheet
++// never lists more than this many destinations, however long the session
++// history is and whatever the row-count pref says.
 +const ZEN_SWIPE_LIST_MAX = 15;
++
++// How many destinations the sheet lists by default, and the pref that overrides
++// it: `zen.widget.macos.back-gesture-history-count` (about:config). The value is
++// clamped, see _swipeHistoryLimit(): under 2 there is no choice to make and the
++// sheet never presents, and it can never exceed what fits on screen.
++const ZEN_SWIPE_HISTORY_COUNT_PREF =
++  "zen.widget.macos.back-gesture-history-count";
++const ZEN_SWIPE_HISTORY_COUNT_DEFAULT = 3;
 +
 +// Ardia: `LIST_IDLE_MS`. The sheet is presented after the gesture has been
 +// confirmed and the fingers have been still for this long. Every horizontal
@@ -141,7 +150,7 @@
  var gHistorySwipeAnimation = {
    active: false,
    isLTR: false,
-@@ -736,6 +856,10 @@
+@@ -736,6 +865,10 @@
     *        Whether we're dealing with a vertical swipe or not.
     */
    startAnimation: function HSA_startAnimation() {
@@ -152,7 +161,7 @@
      // old boxes can still be around (if completing fade out for example), we
      // always want to remove them and recreate them because they can be
      // attached to an old browser stack that's no longer in use.
-@@ -743,6 +867,18 @@
+@@ -743,6 +876,18 @@
      this._isStoppingAnimation = false;
      this._canGoBack = this.canGoBack();
      this._canGoForward = this.canGoForward();
@@ -171,7 +180,7 @@
      if (this.active) {
        this._addBoxes();
      }
-@@ -766,16 +902,26 @@
+@@ -766,16 +911,26 @@
      } else if (this._lastVisibleBox) {
        box = this._lastVisibleBox;
        box.collapsed = false;
@@ -202,7 +211,7 @@
        window.getComputedStyle(box).opacity;
      } else {
        this._isStoppingAnimation = false;
-@@ -784,24 +930,44 @@
+@@ -784,24 +939,44 @@
    },
  
    _swipeCommand: function HSA_swipeCommand(aSwipeUpdate) {
@@ -257,7 +266,7 @@
    },
  
    /**
-@@ -818,71 +984,88 @@
+@@ -818,71 +993,88 @@
      if (!this.isAnimationRunning() || this._isStoppingAnimation) {
        return;
      }
@@ -388,7 +397,7 @@
      }
    },
  
-@@ -901,7 +1084,11 @@
+@@ -901,7 +1093,11 @@
     * @return true if there is a previous page in history, false otherwise.
     */
    canGoBack: function HSA_canGoBack() {
@@ -401,7 +410,7 @@
    },
  
    /**
-@@ -919,23 +1106,690 @@
+@@ -919,7 +1115,683 @@
     * any. This will also result in the animation overlay to be torn down.
     */
    swipeEndEventReceived: function HSA_swipeEndEventReceived() {
@@ -413,9 +422,9 @@
 +      this.commitSwipeHistorySelection();
 +      return;
 +    }
-     this.stopAnimation();
-   },
- 
++    this.stopAnimation();
++  },
++
 +  // ---------------------------------------------------------------------------
 +  // Ardia history sheet (hold after the gesture is confirmed)
 +  // ---------------------------------------------------------------------------
@@ -438,7 +447,7 @@
 +  //      does not morph back into the chevron first - a cancel has to read as
 +  //      fast as the swipe that never showed a list (see _dismissSwipeSheet).
 +
-   /**
++  /**
 +   * Publishes the current gesture phase for the native scroll monitor.
 +   *
 +   * @param aPhase 0 = idle, 1 = swipe tracked, 2 = history sheet visible.
@@ -517,6 +526,28 @@
 +      clearTimeout(this._swipeHoldTimer);
 +      this._swipeHoldTimer = 0;
 +    }
++  },
++
++  /**
++   * How many destinations the sheet may list: the user's pref, clamped to a
++   * number that is still a choice and still fits on screen.
++   *
++   * @param aFit Rows that fit between the active edge and the window centre.
++   * @return A row count of at least 2 and at most min(ZEN_SWIPE_LIST_MAX, aFit).
++   */
++  _swipeHistoryLimit: function HSA__swipeHistoryLimit(aFit) {
++    let count = ZEN_SWIPE_HISTORY_COUNT_DEFAULT;
++    try {
++      count = Services.prefs.getIntPref(
++        ZEN_SWIPE_HISTORY_COUNT_PREF,
++        ZEN_SWIPE_HISTORY_COUNT_DEFAULT
++      );
++    } catch (e) {
++      // A locked-down profile, or a pref stored with another type, can refuse
++      // the read; the default is the answer either way.
++    }
++    const max = Math.min(ZEN_SWIPE_LIST_MAX, aFit || ZEN_SWIPE_LIST_MAX);
++    return Math.max(2, Math.min(Math.floor(count), max));
 +  },
 +
 +  /**
@@ -674,7 +705,7 @@
 +          ZEN_SWIPE_LIST_ROW
 +      )
 +    );
-+    const shown = items.slice(0, Math.min(items.length, fit));
++    const shown = items.slice(0, this._swipeHistoryLimit(fit));
 +
 +    const HTML_NS = "http://www.w3.org/1999/xhtml";
 +    const list = document.createElementNS(HTML_NS, "div");
@@ -1036,7 +1067,7 @@
 +    // Keep the sheet on screen for the fade so the dismissal matches Ardia's
 +    // `dismiss()`; `_removeBoxes()` drops the nodes when the fade is over.
 +    this._dismissSwipeHistory();
-+    this.stopAnimation();
+     this.stopAnimation();
 +    if (target) {
 +      // `gotoIndex` is the jump the sheet exists for: Ardia's
 +      // `goToHistoryItem()` goes straight to the picked entry, not one step.
@@ -1060,12 +1091,10 @@
 +      }
 +    }
 +    return true;
-+  },
-+
-+  /**
-    * Checks to see if history swipe animations are supported by this
-    * platform/configuration.
-    *
+   },
+ 
+   /**
+@@ -929,13 +1801,26 @@
     * return true if supported, false otherwise.
     */
    _isSupported: function HSA__isSupported() {
@@ -1094,7 +1123,7 @@
          break;
      }
    },
-@@ -954,42 +1808,87 @@
+@@ -954,42 +1839,87 @@
     * Adds the boxes that contain the arrows used during the swipe animation.
     */
    _addBoxes: function HSA__addBoxes() {
@@ -1189,7 +1218,7 @@
      if (this._container) {
        this._container.remove();
      }
-@@ -1011,10 +1910,14 @@
+@@ -1011,10 +1941,14 @@
      return element;
    },
  

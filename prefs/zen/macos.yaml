@@ -61,3 +61,12 @@
   value: false
   condition: "defined(XP_MACOSX)"
   cpptype: bool
+
+# How many destinations the held-swipe history sheet lists. Read and clamped in
+# browser-gestureSupport.js (_swipeHistoryLimit): at least 2, because a single
+# destination is not a choice and the sheet does not present for it, and never
+# more than the rows that fit on screen. Change it in about:config; it applies
+# on the next swipe, with no restart.
+- name: zen.widget.macos.back-gesture-history-count
+  value: 3
+  condition: "defined(XP_MACOSX)"
