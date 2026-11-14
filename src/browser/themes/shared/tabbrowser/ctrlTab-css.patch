@@ -1,12 +1,404 @@
 diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/shared/tabbrowser/ctrlTab.css
-index ad4819fec3fc71c15db0952957ec17dc5cb82e98..9fa29871afb967af3012e6c52d766f1134eab765 100644
 --- a/browser/themes/shared/tabbrowser/ctrlTab.css
 +++ b/browser/themes/shared/tabbrowser/ctrlTab.css
-@@ -11,6 +11,7 @@
+@@ -2,118 +2,324 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+-/* Ctrl-Tab */
++/*
++ * Zen / Ardia "Recent Tabs" switcher
++ *
++ * 1:1 port of Ardia's floating tab switcher:
++ *   apps/browser/src/components/sidebar/TabSwitcher.tsx
++ *   apps/browser/src/components/sidebar/SectionLabel.tsx
++ *   apps/browser/src/components/favicon/Favicon.tsx
++ *
++ * Layout constants (kept in sync with browser-ctrlTab.js):
++ *   WIDTH           400  (TabSwitcher WIDTH)
++ *   ROW              40  (TabSwitcher ROW)
++ *   SWITCHER_RADIUS  16  (radius.sheet)
++ *   SWITCHER_PAD      8  (space.m)
++ *   ROW_RADIUS        8  (concentric(SWITCHER_RADIUS, SWITCHER_PAD))
++ *   MAX_ROWS          9  (TabSwitcher MAX_ROWS)
++ *
++ * Colours are taken from Ardia's design tokens; the panel fill is densified
++ * because a chrome popup cannot sample the page behind it:
++ *   panel          dark rgba(40,41,45,0.97) / light rgba(248,248,252,0.97)
++ *   panelBorder    rgba(255,255,255,0.1) dark / rgba(0,0,0,0.1) light
++ *   textPrimary    #FFFFFF dark / #000000 light
++ *   textSecondary  rgba(255,255,255,0.5) dark / rgba(0,0,0,0.5) light
++ *   switcherFocus  rgba(255,255,255,0.18) dark / rgba(0,0,0,0.10) light
++ *   switcherOutline rgba(255,255,255,0.15) dark / rgba(0,0,0,0.1) light
++ */
+ 
++/* -------------------------------------------------------------------------
++ * Popup panel reset
++ *
++ * #ctrlTab-panel is a native <panel>. Strip its arrow/menupopup chrome so the
++ * only thing visible is our card. The extra padding is the room reserved for
++ * the card's drop shadow, since a popup window clips anything outside its own
++ * bounds (browser-ctrlTab.js subtracts this margin when positioning).
++ * ---------------------------------------------------------------------- */
+ #ctrlTab-panel {
++  --ctrl-tab-shadow-margin: 24px;
++
+   appearance: none;
+-  --panel-background-color: hsla(0, 0%, 40%, 0.85);
+-  --panel-text-color: white;
++  background-color: transparent !important;
++  border: none !important;
++  box-shadow: none !important;
++  --panel-background-color: transparent;
    --panel-border-color: transparent;
-   --panel-padding: 20px 10px 10px;
-   -moz-window-shadow: none;
+-  --panel-padding: 20px 10px 10px;
++  --panel-padding: 0;
 +  --panel-shadow-margin: 0;
+   -moz-window-shadow: none;
+-  background-color: transparent;
+-  @media not (-moz-platform: macos) {
+-    font-weight: var(--font-weight-bold);
++  padding: var(--ctrl-tab-shadow-margin) !important;
++  overflow: visible !important;
++}
++
++#ctrlTab-panel::part(content),
++#ctrlTab-panel > .panel-arrowcontainer,
++#ctrlTab-panel > .panel-arrowcontent {
++  background: transparent !important;
++  border: none !important;
++  box-shadow: none !important;
++  padding: 0 !important;
++
++  /* popup.css gives ::part(content) `overflow: clip`, a positive
++   * --panel-box-shadow-margin and a max-width clamp. Those exist to keep menu
++   * content inside the native rounded background, but here they clip the
++   * card's right edge (killing its rounded corner and drop shadow). The card
++   * owns all of that, so let the layout box be a plain, unclipped container. */
++  margin: 0 !important;
++  overflow: visible !important;
++  max-width: none !important;
++  max-height: none !important;
++}
++
++/* -------------------------------------------------------------------------
++ * Floating card
++ *
++ * Ardia renders this through <Panel> with the system popover material. Zen's
++ * shared Ardia glass recipe (zen-ardia-glass.css) is the same material used by
++ * the swipe capsule and PiP controls, so the switcher reads as part of the
++ * browser instead of as a bolted-on overlay.
++ * ---------------------------------------------------------------------- */
++.ctrlTab-card {
++  display: flex;
++  flex-direction: column;
++  box-sizing: border-box;
++  flex: none;
++
++  /* TabSwitcher WIDTH */
++  width: 400px;
++
++  /* SWITCHER_PAD = space.m */
++  padding: 8px;
++
++  /* radius.sheet */
++  border-radius: 16px;
++
++  /* Ardia's panel reads almost solid behind the list. The shared glass fill is
++   * tuned for surfaces that can blur the page through the window; a chrome
++   * popup is its own window, so none of that backdrop is available and the
++   * regular 86% tint lets page content show through crisply. Densify it for
++   * this surface only (the swipe capsule and PiP keep the shared recipe). */
++  --zen-ardia-glass-fill: light-dark(
++    rgba(248, 248, 252, 0.97),
++    rgba(40, 41, 45, 0.97)
++  );
++
++  /* React Native defaults to the platform UI font; mirror it in chrome. */
++  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
++    sans-serif;
++  -moz-osx-font-smoothing: grayscale;
++
++  user-select: none;
++  animation: ctrlTab-card-in 150ms cubic-bezier(0.2, 0, 0, 1);
++}
++
++/* Ardia <Panel fill={theme.panel} border={panelBorder} shadow={tabSwitcher}>
++ * tabSwitcher = dialog shadow with radius 28 and a 12px drop. */
++#ctrlTab-panel .ctrlTab-card.zen-ardia-glass {
++  background-color: var(--zen-ardia-glass-fill, light-dark(#ffffff, #2a2a2a));
++  backdrop-filter: var(
++    --zen-ardia-glass-filter,
++    blur(42px) saturate(180%)
++  ) !important;
++  -webkit-backdrop-filter: var(
++    --zen-ardia-glass-filter,
++    blur(42px) saturate(180%)
++  ) !important;
++
++  /* hairline.panel (0.5px) */
++  border: 0.5px solid
++    light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
++  box-shadow: 0 12px 28px
++    light-dark(rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.5));
++}
++
++@keyframes ctrlTab-card-in {
++  from {
++    opacity: 0;
++    transform: scale(0.96) translateY(-4px);
+   }
++  to {
++    opacity: 1;
++    transform: scale(1) translateY(0);
++  }
+ }
+ 
+-#ctrlTab-previews {
+-  display: grid;
+-  grid-template-columns: repeat(var(--ctrlTab-previews-per-row), minmax(0, 1fr));
+-  /* Add 10px to offset the negative margin-top on .ctrlTab-preview-inner so
+-     wrapped rows keep a full row of spacing instead of nearly touching. */
+-  row-gap: calc(var(--space-medium) + 10px);
++/* -------------------------------------------------------------------------
++ * Section header — Ardia <SectionLabel title="Recent Tabs">
++ *   size="caption" (11px), weight="semibold" (600), tone="textSecondary"
++ *   lineHeight.caption (14px), inset=space.m (8px),
++ *   top=space.xxs (2px), bottom=space.s (6px)
++ * ---------------------------------------------------------------------- */
++.ctrlTab-header {
++  flex: none;
++  padding: 2px 8px 6px;
++  font-size: 11px;
++  font-weight: 600;
++  line-height: 14px;
++  color: light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.5));
++  user-select: none;
+ }
+ 
+-.ctrlTab-preview {
+-  min-width: 0;
+-  padding: 0;
++/* -------------------------------------------------------------------------
++ * Vertical list. Ardia caps the visible rows at MAX_ROWS (9) and renders the
++ * rows back-to-back with no gap (ROW * 9 = 360px).
++ * ---------------------------------------------------------------------- */
++.ctrlTab-list {
++  display: flex;
++  flex-direction: column;
++  max-height: 360px;
++  overflow: hidden;
+ }
+ 
+-.ctrlTab-preview,
+-#ctrlTab-showAll {
++/* -------------------------------------------------------------------------
++ * Tab row — Ardia <SwitcherRow>
++ *   height ROW (40px), borderRadius ROW_RADIUS (8px),
++ *   paddingHorizontal space.ml (10px), gap space.ml (10px)
++ * ---------------------------------------------------------------------- */
++.ctrlTab-preview {
+   appearance: none;
+-  color: inherit;
+-  /* remove the :-moz-focusring outline from button.css on Windows */
+-  outline: none !important;
+   margin: 0;
+-  text-shadow:
+-    0 0 1px hsl(0, 0%, 12%),
+-    0 0 2px hsl(0, 0%, 12%);
+-  border: none;
++
++  /* Reserve the focused ring so selecting a row never shifts its contents. */
++  border: 0.5px solid transparent;
++  outline: none !important;
++
    background-color: transparent;
-   @media not (-moz-platform: macos) {
-     font-weight: var(--font-weight-bold);
++  display: flex;
++  flex-direction: row;
++  align-items: center;
++  gap: 10px;
++  box-sizing: border-box;
++  width: 100%;
++  height: 40px;
++  padding: 0 10px;
++  border-radius: 8px;
++  cursor: pointer;
++  text-align: start;
++  transition: background-color 100ms ease;
++  user-select: none;
+ }
+ 
+-.ctrlTab-preview > .button-box {
+-  display: none;
++/* Focused/hovered row. Ardia fills the row and adds the same 0.5px ring:
++ *   backgroundColor: focused ? switcherFocus : undefined
++ *   borderWidth: focused ? hairline.ring : 0
++ *   borderColor: switcherOutline
++ * Hover is routed through the controller, so :hover needs no rule of its own
++ * (the pointer only selects once it has really moved). */
++.ctrlTab-preview[selected="true"],
++.ctrlTab-preview:focus {
++  background-color: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.18));
++  border-color: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.15));
+ }
+ 
+-.ctrlTab-favicon-container {
++/* -------------------------------------------------------------------------
++ * Favicon — <TabIcon size={18}> / <Favicon size={18}>
++ *   borderRadius: size > 18 ? radius.control : radius.hair (2px)
++ * ---------------------------------------------------------------------- */
++.ctrlTab-icon {
+   position: relative;
+-  justify-content: flex-end;
++  display: grid;
++  place-items: center;
++  flex: none;
++  width: 18px;
++  height: 18px;
++  border-radius: 2px;
++  overflow: hidden;
+ }
+ 
+-.ctrlTab-favicon[src] {
+-  width: 42px;
+-  height: 42px;
+-  margin-top: -44px;
+-  margin-bottom: 2px;
+-  margin-inline-end: -6px;
+-  padding: 5px;
+-  background-color: var(--background-color-box);
+-  border-radius: var(--border-radius-small);
+-  border: 1px solid var(--border-color-deemphasized);
++/* FaviconFallback letter tile:
++ *   tile = round(size * 14 / 16) = 16px
++ *   borderRadius = tile * 0.32 = 5px
++ *   fontSize = round(tile * 0.64) = 10px, weight semibold
++ *   background faviconTile, colour textSecondary */
++.ctrlTab-tile {
++  display: grid;
++  place-items: center;
++  width: 16px;
++  height: 16px;
++  border-radius: 5px;
++  background-color: light-dark(
++    rgba(0, 0, 0, 0.13),
++    rgba(247, 245, 255, 0.2)
++  );
++  font-size: 10px;
++  font-weight: 600;
++  line-height: 16px;
++  text-transform: uppercase;
++  color: light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.5));
+ }
+ 
+-.ctrlTab-canvas {
+-  color-scheme: light;
+-  background-color: Canvas;
+-  color: CanvasText;
+-  box-shadow: 1px 1px 2px hsl(0, 0%, 12%);
+-  margin-bottom: 8px;
+-  min-width: 0;
++.ctrlTab-favicon {
++  position: absolute;
++  inset: 0;
++  width: 18px;
++  height: 18px;
++  object-fit: contain;
++  border-radius: 2px;
++  display: none;
++}
+ 
+-  @media (-moz-content-prefers-color-scheme: dark) {
+-    /* Make the blank canvas match the default content background. */
+-    color-scheme: dark;
+-  }
++.ctrlTab-icon.has-favicon .ctrlTab-favicon {
++  display: block;
++}
+ 
+-  > img,
+-  > canvas {
+-    min-width: 0;
+-  }
++.ctrlTab-icon.has-favicon .ctrlTab-tile {
++  display: none;
+ }
+ 
+-.ctrlTab-placeholder {
+-  visibility: hidden;
++/* -------------------------------------------------------------------------
++ * Text block — <FadeLabel> title + URL
++ * ---------------------------------------------------------------------- */
++.ctrlTab-details {
++  display: flex;
++  flex-direction: column;
++  justify-content: center;
++  flex: 1;
++  min-width: 0;
++  overflow: hidden;
+ }
+ 
+-.ctrlTab-preview-inner,
+-#ctrlTab-showAll {
+-  padding: 8px;
+-  border: 2px solid transparent;
+-  border-radius: 0.5em;
++/* Title: font.body (13px), height 17px. Ardia switches the weight from
++ * regular to medium while the row is focused; the colour stays textPrimary. */
++.ctrlTab-title {
++  font-size: 13px;
++  font-weight: 400;
++  line-height: 17px;
++  color: light-dark(#000000, #ffffff);
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
+ }
+ 
+-.ctrlTab-preview-inner {
+-  margin-top: -10px;
+-  min-width: 0;
++.ctrlTab-preview[selected="true"] .ctrlTab-title,
++.ctrlTab-preview:focus .ctrlTab-title {
++  font-weight: 500;
+ }
+ 
+-#ctrlTab-showAll {
+-  background-color: var(--color-white-alpha-20);
+-  margin-top: 0.5em;
++/* URL: font.caption (11px), lineHeight.caption (14px), textSecondary. */
++.ctrlTab-url {
++  font-size: 11px;
++  font-weight: 400;
++  line-height: 14px;
++  color: light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.5));
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
+ }
+ 
+-.ctrlTab-preview:focus > .ctrlTab-preview-inner,
+-#ctrlTab-showAll:focus {
+-  background-color: var(--color-black-alpha-70);
+-  text-shadow: none;
+-  border-color: #45a1ff;
++/* Legacy markup from upstream browser.xhtml is replaced at runtime. */
++#ctrlTab-previews,
++#ctrlTab-showAll-container,
++#ctrlTab-showAll {
++  display: none !important;
+ }
+ 
+-.ctrlTab-label {
+-  flex: 1;
+-  text-align: center;
+-  contain: inline-size;
++/* No transparency: paint the same opaque panel Ardia uses when the platform
++ * disables materials. */
++@media (prefers-reduced-transparency: reduce) {
++  #ctrlTab-panel .ctrlTab-card.zen-ardia-glass {
++    backdrop-filter: none !important;
++    -webkit-backdrop-filter: none !important;
++    background-color: light-dark(#ffffff, #2a2a2a);
++  }
+ }

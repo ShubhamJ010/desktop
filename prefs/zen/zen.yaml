@@ -32,6 +32,9 @@
 - name: zen.ctrlTab.show-pending-tabs
   value: false
 
+- name: zen.ctrlTab.max-previews
+  value: 9 # Ardia MAX_ROWS — rows shown in the tab switcher
+
 - name: zen.mediacontrols.enabled
   value: true
 

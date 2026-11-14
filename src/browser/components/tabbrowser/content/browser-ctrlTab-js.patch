@@ -1,36 +1,1132 @@
 diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/components/tabbrowser/content/browser-ctrlTab.js
-index 727e21f1754b0842080d8f3e29060baad445df66..ee9df3a311fc72954e064a2cbc56b716d116314a 100644
 --- a/browser/components/tabbrowser/content/browser-ctrlTab.js
 +++ b/browser/components/tabbrowser/content/browser-ctrlTab.js
-@@ -252,7 +252,8 @@ var ctrlTab = {
+@@ -3,157 +3,40 @@
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+ /**
+- * Tab previews utility, produces thumbnails
++ * Zen / Ardia Recent Tabs Switcher
++ *
++ * Replaces the legacy thumbnail grid with Ardia's sleek, floating frosted glass
++ * "Recent Tabs" switcher overlay.
++ *
++ * Key Behaviors (matching Ardia 1:1):
++ * - Fast-switch: 140ms delay (SHOW_AFTER_MS). Releasing Ctrl within 140ms switches
++ *   tabs immediately without showing any UI or causing visual flash.
++ * - Glass card: 400px wide, 16px radius, 8px padding, frosted acrylic appearance
++ *   (--zen-ardia-glass-*), centered horizontally and 40px above center.
++ * - Header: "Recent Tabs" caption above the list.
++ * - Vertical list: MRU-ordered 40px rows (max 9) with an 18px favicon (or host
++ *   initial fallback tile), 13px tab title, and clean stripped URL subtitle.
++ * - Pointer stabilization: When opening, resting pointer hover is suppressed
++ *   until the mouse actually moves (>=3px distance), preventing accidental selection.
++ * - Keyboard navigation: Ctrl+Tab / Down / Tab cycles forward, Ctrl+Shift+Tab / Up /
++ *   Shift+Tab cycles backward. Escape cancels without switching.
+  */
+-var tabPreviews = {
+-  get aspectRatio() {
+-    let { PageThumbUtils } = ChromeUtils.importESModule(
+-      "resource://gre/modules/PageThumbUtils.sys.mjs"
+-    );
+-    let [width, height] = PageThumbUtils.getThumbnailSize(window);
+-    delete this.aspectRatio;
+-    return (this.aspectRatio = height / width);
+-  },
+ 
+-  /**
+-   * Get the stored thumbnail URL for a given page URL and wait up to 1s for it
+-   * to load. If the browser is discarded and there is no stored thumbnail, the
+-   * image URL will fail to load and this method will return null. Callers
+-   * should handle this case by doing nothing or using a fallback image.
+-   *
+-   * @param {string} uri The page URL.
+-   * @returns {Promise<Image|null>}
+-   */
+-  loadImage: async function tabPreviews_loadImage(uri) {
+-    let img = new Image();
+-    img.src = PageThumbs.getThumbnailURL(uri);
+-    if (img.complete) {
+-      return img.naturalWidth ? img : null;
+-    }
+-    return new Promise(resolve => {
+-      const controller = new AbortController();
+-      let timeout;
+-      const finish = value => {
+-        clearTimeout(timeout);
+-        controller.abort();
+-        resolve(value);
+-      };
+-      timeout = setTimeout(() => finish(null), 1000);
+-      img.addEventListener("load", () => finish(img), {
+-        signal: controller.signal,
+-      });
+-      img.addEventListener("error", () => finish(null), {
+-        signal: controller.signal,
+-      });
+-    });
+-  },
+-
+-  /**
+-   * For a given tab, retrieve a preview thumbnail (a canvas or an image) from
+-   * storage or capture a new one. If the tab's URL has changed since the
+-   * previous call, the thumbnail will be regenerated.
+-   *
+-   * @param {MozTabbrowserTab} aTab The tab to get a preview for.
+-   * @returns {Promise<HTMLCanvasElement|Image|null>}
+-   *   Resolves to an HTMLCanvasElement if a thumbnail can NOT be captured and
+-   *   stored for the tab, or if the tab is still loading (a snapshot is taken
+-   *   and returned as a canvas). It may be cached as a canvas (separately from
+-   *   thumbnail storage) in aTab.__thumbnail if the tab is finished loading. If
+-   *   the snapshot CAN be stored as a thumbnail, the snapshot is converted to a
+-   *   blob image and drawn in the returned canvas, but the image is added to
+-   *   thumbnail storage and cached in aTab.__thumbnail.
+-   *   Resolves to an Image if a cached blob image from a previous thumbnail
+-   *   capture exists (e.g. <img src="moz-page-thumb://thumbnails/?url=foo.com&revision=bar">).
+-   *   Resolves to null if a thumbnail cannot be captured for any reason (e.g.
+-   *   because the tab is discarded) and there is no cached/stored thumbnail.
+-   */
+-  get: async function tabPreviews_get(aTab) {
+-    let browser = aTab.linkedBrowser;
+-    let uri = browser.currentURI.spec;
+-
+-    // Invalidate the cached thumbnail since the tab has changed.
+-    if (aTab.__thumbnail_lastURI && aTab.__thumbnail_lastURI != uri) {
+-      aTab.__thumbnail = null;
+-      aTab.__thumbnail_lastURI = null;
+-    }
+-
+-    // A cached thumbnail (not from thumbnail storage) is available.
+-    if (aTab.__thumbnail) {
+-      return aTab.__thumbnail;
+-    }
+-
+-    // This means the browser is discarded. Try to load a stored thumbnail, and
+-    // use a fallback style otherwise.
+-    if (!browser.browsingContext) {
+-      return this.loadImage(uri);
+-    }
+-
+-    // Don't cache or store the thumbnail if the tab is still loading.
+-    return this.capture(aTab, !aTab.hasAttribute("busy"));
+-  },
+-
+-  /**
+-   * For a given tab, capture a preview thumbnail (a canvas), optionally cache
+-   * it in aTab.__thumbnail, and possibly store it in thumbnail storage.
+-   *
+-   * @param {MozTabbrowserTab} aTab The tab to capture a preview for.
+-   * @param {boolean} aShouldCache Cache/store the captured thumbnail?
+-   * @returns {Promise<HTMLCanvasElement|null>}
+-   *   Resolves to an HTMLCanvasElement snapshot of the tab's content. If the
+-   *   snapshot is safe for storage and aShouldCache is true, the snapshot is
+-   *   converted to a blob image, stored and cached, and drawn in the returned
+-   *   canvas. The thumbnail can then be recovered even if the browser is
+-   *   discarded. Otherwise, or if the stored image fails to load, the canvas
+-   *   itself is cached in aTab.__thumbnail.
+-   *   Resolves to null if a fatal exception occurred during thumbnail capture.
+-   */
+-  capture: async function tabPreviews_capture(aTab, aShouldCache) {
+-    let browser = aTab.linkedBrowser;
+-    let uri = browser.currentURI.spec;
+-    let canvas = PageThumbs.createCanvas(window);
+-    const doStore = await PageThumbs.shouldStoreThumbnail(browser);
+-
+-    if (doStore && aShouldCache) {
+-      await PageThumbs.captureAndStore(browser);
+-      // This can fail on Windows while another capture of the same URL is
+-      // replacing the stored file.
+-      let img = await this.loadImage(uri);
+-      if (img) {
+-        // Cache the stored blob image for future use.
+-        aTab.__thumbnail = img;
+-        aTab.__thumbnail_lastURI = uri;
+-        // Draw the stored blob image in the canvas.
+-        canvas.getContext("2d").drawImage(img, 0, 0);
+-        return canvas;
+-      }
+-    }
+-
+-    try {
+-      await PageThumbs.captureToCanvas(browser, canvas);
+-      if (aShouldCache) {
+-        // Cache the canvas itself for future use.
+-        aTab.__thumbnail = canvas;
+-        aTab.__thumbnail_lastURI = uri;
+-      }
+-    } catch (error) {
+-      console.error(error);
+-      canvas = null;
+-    }
+-
+-    return canvas;
+-  },
+-};
+-
+ var tabPreviewPanelHelper = {
+   opening(host) {
+     host.panel.hidden = false;
+ 
++    if (this._closing) {
++      this._closing(host);
++    }
++
+     var handler = this._generateHandler(host);
+     host.panel.addEventListener("popupshown", handler);
+     host.panel.addEventListener("popuphiding", handler);
+ 
+     host._prevFocus = document.commandDispatcher.focusedElement;
    },
++
+   _generateHandler(host) {
+     var self = this;
+     return function listener(event) {
+@@ -163,11 +46,13 @@
+       }
+     };
+   },
++
+   _popupshown(host) {
+     if ("setupGUI" in host) {
+       host.setupGUI();
+     }
+   },
++
+   _popuphiding(host) {
+     if ("suspendGUI" in host) {
+       host.suspendGUI();
+@@ -180,7 +65,7 @@
+       );
+       host._prevFocus = null;
+     } else {
+-      gBrowser.selectedBrowser.focus();
++      gBrowser.selectedBrowser?.focus();
+     }
+ 
+     if (host.tabToSelect) {
+@@ -192,81 +77,81 @@
+       );
+       host.tabToSelect = null;
+     }
++
++    host.panel.hidden = true;
+   },
+ };
+ 
+ /**
+- * Ctrl-Tab panel
++ * Ardia Recent Tabs Switcher Controller
+  */
+ var ctrlTab = {
+-  previewsPerRow: 7,
++  // Ardia SHOW_AFTER_MS: 140ms delay before presenting UI.
++  SHOW_AFTER_MS: 140,
++
++  _selectedIndex: 0,
++  _timer: null,
++  tabToSelect: null,
++  _recentlyUsedTabs: null,
++  previews: [],
++
++  // Pointer stabilization state (Ardia resting pointer immunity)
++  pointerStale: false,
++  lastMouseX: -1,
++  lastMouseY: -1,
++
+   get panel() {
+     delete this.panel;
+     return (this.panel = document.getElementById("ctrlTab-panel"));
+   },
+-  get previewsContainer() {
+-    delete this.previewsContainer;
+-    return (this.previewsContainer =
+-      document.getElementById("ctrlTab-previews"));
+-  },
+-  get showAllButton() {
+-    delete this.showAllButton;
+-    this.showAllButton = document.createXULElement("button");
+-    this.showAllButton.id = "ctrlTab-showAll";
+-    this.showAllButton.addEventListener("mouseover", this);
+-    this.showAllButton.addEventListener("command", this);
+-    this.showAllButton.addEventListener("click", this);
+-    document
+-      .getElementById("ctrlTab-showAll-container")
+-      .appendChild(this.showAllButton);
+-    return this.showAllButton;
+-  },
+-  get previews() {
+-    delete this.previews;
+-    this._buildPreviews();
+-    return this.previews;
+-  },
+-  get keys() {
+-    var keys = {};
+-    ["close", "find", "selectAll"].forEach(function (key) {
+-      keys[key] = document
+-        .getElementById("key_" + key)
+-        .getAttribute("key")
+-        .toLocaleLowerCase()
+-        .charCodeAt(0);
+-    });
+-    delete this.keys;
+-    return (this.keys = keys);
+-  },
+-  _selectedIndex: 0,
++
+   get selected() {
+-    return this._selectedIndex < 0
+-      ? document.activeElement
+-      : this.previews[this._selectedIndex];
++    if (this._selectedIndex >= 0 && this._selectedIndex < this.previews.length) {
++      return this.previews[this._selectedIndex];
++    }
++    return this.previews[0] || null;
+   },
++
+   get isOpen() {
+     return (
+-      this.panel.state == "open" || this.panel.state == "showing" || this._timer
++      this.panel.state == "open" || this.panel.state == "showing" || !!this._timer
+     );
+   },
++
+   get tabCount() {
+     return this.tabList.length;
+   },
++
+   get tabPreviewCount() {
+     return Math.min(this.maxTabPreviews, this.tabCount);
+   },
+-  /**
+-   * The number of grid columns the visible previews are laid out in, which is
+-   * also the number of previews in the widest row.
+-   */
+-  get previewColumnCount() {
+-    return Math.min(this.tabPreviewCount, this.previewsPerRow);
+-  },
  
    get tabList() {
 -    return this._recentlyUsedTabs;
-+    const canShowPending = Services.prefs.getBoolPref("zen.ctrlTab.show-pending-tabs", false);
-+    return this._recentlyUsedTabs.filter(tab => !tab.hasAttribute("pending") || canShowPending);
++    // Port of Ardia's recentTabIds (state/pins/tabCleanup.ts):
++    //   1. drop tabs that are asleep (page unloaded),
++    //   2. sort by last access,
++    //   3. keep the two most recent tabs plus anything used in the last 12h.
++    //
++    // Step 1 matters a lot in Zen: every pinned tile restored on startup is a
++    // pending/unloaded tab, so without it the switcher fills with old pins the
++    // user never opened this session. Step 3 keeps the list recent instead of
++    // growing to every tab the browser has ever seen.
++    const STALE_AFTER_MS = 12 * 60 * 60 * 1000; // Ardia CLEAN_UP_AFTER_MS
++    const now = Date.now();
++    return this._recentlyUsedTabs
++      .filter(tab => !this._isAsleep(tab))
++      .sort((a, b) => b.lastAccessed - a.lastAccessed)
++      .filter((tab, i) => i < 2 || now - tab.lastAccessed < STALE_AFTER_MS);
    },
  
++  /**
++   * Ardia isAsleep() -> Gecko: a session-restored tab that has not woken yet
++   * ("pending") or a tab whose content process was discarded.
++   */
++  _isAsleep(tab) {
++    return tab.hasAttribute("pending") || !!tab.linkedBrowser?.isDiscarded;
++  },
++
    init: function ctrlTab_init() {
-@@ -457,7 +458,7 @@ var ctrlTab = {
-     // If the tab is hidden, don't add it to the list unless it's selected
-     // (Normally hidden tabs would be unhidden when selected, but that doesn't
-     // happen for Firefox View).
--    if (aTab.closing || (aTab.hidden && !aTab.selected)) {
-+    if (aTab.closing || (aTab.hidden && !aTab.selected) || aTab.hasAttribute("zen-empty-tab")) {
-       return;
-     }
+     if (!this._recentlyUsedTabs) {
+       this._initRecentlyUsedTabs();
+@@ -295,7 +180,7 @@
  
-@@ -481,7 +482,7 @@ var ctrlTab = {
+   readPref: function ctrlTab_readPref() {
+     var enable =
+-      Services.prefs.getBoolPref(this.prefName) &&
++      Services.prefs.getBoolPref(this.prefName, true) &&
+       !Services.prefs.getBoolPref(
+         "browser.ctrlTab.disallowForScreenReaders",
+         false
+@@ -307,248 +192,249 @@
+       this.uninit();
+     }
+   },
++
+   observe() {
+     this.readPref();
    },
  
-   open: function ctrlTab_open() {
--    if (this.isOpen) {
-+    if (this.isOpen || !this.tabCount) {
++  /**
++   * Constructs the Ardia Recent Tabs card UI inside #ctrlTab-panel.
++   */
+   _buildPreviews() {
+-    this.previewsContainer.replaceChildren();
++    this.panel.classList.add("zen-ctrlTab-panel");
++    this.panel.replaceChildren();
++
++    // Floating frosted glass card container
++    let card = (this._card = document.createElement("div"));
++    card.className = "ctrlTab-card zen-ardia-glass";
++
++    // Section header: "Recent Tabs"
++    let header = document.createElement("div");
++    header.className = "ctrlTab-header";
++    header.textContent = "Recent Tabs";
++    card.appendChild(header);
++
++    // List container
++    let list = (this._list = document.createElement("div"));
++    list.className = "ctrlTab-list";
++    card.appendChild(list);
++
++    this.panel.appendChild(card);
++
+     this.previews = [];
+     for (let i = 0; i < this.maxTabPreviews; i++) {
+-      let preview = this._makePreview();
+-      this.previewsContainer.appendChild(preview);
++      let preview = this._makePreview(i);
++      list.appendChild(preview);
+       this.previews.push(preview);
+     }
+-    this.previews.push(this.showAllButton);
+   },
+ 
+-  _makePreview() {
+-    let preview = document.createXULElement("button");
++  /**
++   * Builds an individual tab row matching Ardia's vertical recent tabs item.
++   */
++  _makePreview(index) {
++    let preview = document.createElement("button");
+     preview.className = "ctrlTab-preview";
+-    preview.setAttribute("pack", "center");
+-    preview.addEventListener("mouseover", this);
+-    preview.addEventListener("command", this);
+-    preview.addEventListener("click", this);
++    preview.setAttribute("type", "button");
++    preview.setAttribute("tabindex", "-1");
++    preview.dataset.index = index;
+ 
+-    let previewInner = document.createXULElement("vbox");
+-    previewInner.className = "ctrlTab-preview-inner";
+-    preview.appendChild(previewInner);
++    // Favicon / icon container with fallback initial tile
++    let icon = (preview._icon = document.createElement("span"));
++    icon.className = "ctrlTab-icon";
+ 
+-    let canvas = (preview._canvas = document.createXULElement("hbox"));
+-    canvas.className = "ctrlTab-canvas";
+-    previewInner.appendChild(canvas);
++    let tile = (preview._tile = document.createElement("span"));
++    tile.className = "ctrlTab-tile";
++    icon.appendChild(tile);
+ 
+-    let faviconContainer = document.createXULElement("hbox");
+-    faviconContainer.className = "ctrlTab-favicon-container";
+-    previewInner.appendChild(faviconContainer);
+-
+-    let favicon = (preview._favicon = document.createXULElement("image"));
++    let favicon = (preview._favicon = document.createElement("img"));
+     favicon.className = "ctrlTab-favicon";
+-    faviconContainer.appendChild(favicon);
++    favicon.alt = "";
++    favicon.addEventListener("load", () => {
++      icon.classList.add("has-favicon");
++    });
++    favicon.addEventListener("error", () => {
++      icon.classList.remove("has-favicon");
++    });
++    icon.appendChild(favicon);
+ 
+-    let label = (preview._label = document.createXULElement("label"));
+-    label.className = "ctrlTab-label plain";
+-    label.setAttribute("crop", "end");
+-    previewInner.appendChild(label);
++    preview.appendChild(icon);
+ 
++    // Tab details: 2-line title and display URL
++    let details = document.createElement("div");
++    details.className = "ctrlTab-details";
++
++    let title = (preview._title = document.createElement("div"));
++    title.className = "ctrlTab-title";
++    details.appendChild(title);
++
++    let url = (preview._url = document.createElement("div"));
++    url.className = "ctrlTab-url";
++    details.appendChild(url);
++
++    preview.appendChild(details);
++
++    preview.addEventListener("click", this);
++
+     return preview;
+   },
+ 
++  /**
++   * Updates all preview rows with the current MRU tab list.
++   */
+   updatePreviews: function ctrlTab_updatePreviews() {
+-    this.previewsContainer.style.setProperty(
+-      "--ctrlTab-previews-per-row",
+-      this.previewColumnCount
+-    );
+-
++    let count = this.tabPreviewCount;
+     for (let i = 0; i < this.previews.length; i++) {
+-      this.updatePreview(this.previews[i], this.tabList[i]);
++      if (i < count) {
++        this.updatePreview(this.previews[i], this.tabList[i]);
++      } else {
++        this.previews[i].hidden = true;
++        this.previews[i]._tab = null;
++      }
+     }
+-
+-    document.l10n.setAttributes(
+-      this.showAllButton,
+-      "tabbrowser-ctrl-tab-list-all-tabs",
+-      { tabCount: this.tabCount }
+-    );
+-    this.showAllButton.hidden = !gTabsPanel.canOpen;
+   },
+ 
++  /**
++   * Populates a preview row with tab metadata (title, URL, favicon).
++   */
+   updatePreview: function ctrlTab_updatePreview(aPreview, aTab) {
+-    if (aPreview == this.showAllButton) {
+-      return;
+-    }
+-
+-    let tabChanged = aPreview._tab != aTab;
+     aPreview._tab = aTab;
+ 
+     if (!aTab) {
+-      aPreview._canvas.replaceChildren();
+       aPreview.hidden = true;
+-      aPreview._label.removeAttribute("value");
+-      aPreview.removeAttribute("tooltiptext");
+-      aPreview._favicon.removeAttribute("src");
        return;
      }
  
-@@ -759,7 +760,7 @@ var ctrlTab = {
+-    if (tabChanged) {
+-      // Drop the previous tab's thumbnail right away, so that the preview
+-      // doesn't keep showing it if the new tab has no thumbnail to offer. The
+-      // placeholder is invisible and only keeps the canvas box at full size.
+-      aPreview._canvas.replaceChildren(this._makePlaceholder());
+-    }
++    aPreview._title.textContent = aTab.label;
+ 
+-    tabPreviews
+-      .get(aTab)
+-      .then(img => {
+-        if (aPreview._tab != aTab || !img) {
+-          return;
+-        }
+-        img.style.width = this.canvasWidth + "px";
+-        img.style.height = this.canvasHeight + "px";
+-        aPreview._canvas.replaceChildren(img);
+-      })
+-      .catch(error => console.error(error));
++    let spec = aTab.linkedBrowser?.currentURI?.spec || "";
++    aPreview._url.textContent = this._displayUrl(spec);
+ 
+-    aPreview._label.setAttribute("value", aTab.label);
+-    aPreview.setAttribute("tooltiptext", aTab.label);
+-    if (aTab.image) {
+-      aPreview._favicon.setAttribute("src", aTab.image);
+-    } else {
+-      aPreview._favicon.removeAttribute("src");
+-    }
+-    aPreview.hidden = false;
+-  },
++    // Site initial for fallback tile
++    aPreview._tile.textContent = this._hostInitial(spec);
+ 
+-  _makePlaceholder() {
+-    let placeholder = document.createElement("img");
+-    placeholder.className = "ctrlTab-placeholder";
+-    placeholder.setAttribute("width", this.canvasWidth);
+-    placeholder.setAttribute("height", this.canvasHeight);
+-    placeholder.setAttribute("alt", "");
+-    return placeholder;
+-  },
+-
+-  advanceFocus: function ctrlTab_advanceFocus(aForward) {
+-    let selectedIndex = this.previews.indexOf(this.selected);
+-    do {
+-      selectedIndex += aForward ? 1 : -1;
+-      if (selectedIndex < 0) {
+-        selectedIndex = this.previews.length - 1;
+-      } else if (selectedIndex >= this.previews.length) {
+-        selectedIndex = 0;
++    // Load favicon
++    if (aTab.image) {
++      aPreview._favicon.src = aTab.image;
++    } else if (typeof PlacesUtils !== "undefined" && aTab.linkedBrowser?.currentURI) {
++      try {
++        PlacesUtils.favicons.getFaviconURLForPage(
++          aTab.linkedBrowser.currentURI,
++          aFaviconURI => {
++            if (aFaviconURI && aPreview._tab == aTab) {
++              aPreview._favicon.src = aFaviconURI.spec;
++            }
++          }
++        );
++      } catch (e) {
++        aPreview._icon.classList.remove("has-favicon");
+       }
+-    } while (this.previews[selectedIndex].hidden);
+-
+-    if (this._selectedIndex == -1) {
+-      // Focus is already in the panel.
+-      this.previews[selectedIndex].focus();
+     } else {
+-      this._selectedIndex = selectedIndex;
++      aPreview._icon.classList.remove("has-favicon");
+     }
+ 
+-    if (this.previews[selectedIndex]._tab) {
+-      gBrowser.warmupTab(this.previews[selectedIndex]._tab);
+-    }
+-
+-    if (this._timer) {
+-      clearTimeout(this._timer);
+-      this._timer = null;
+-      this._openPanel();
+-    }
++    aPreview.hidden = false;
+   },
+ 
+-  pick: function ctrlTab_pick(aPreview) {
+-    if (!this.tabCount) {
+-      return;
++  /**
++   * Ardia displayUrl: cleans URL by stripping scheme, www, and trailing slash.
++   */
++  _displayUrl(url) {
++    if (!url) {
++      return "";
+     }
+-
+-    var select = aPreview || this.selected;
+-
+-    if (select == this.showAllButton) {
+-      this.showAllTabs("ctrltab-all-tabs-button");
+-    } else {
+-      this.close(select._tab);
++    if (url.startsWith("about:") || url.startsWith("zen:")) {
++      return url;
+     }
+-  },
+-
+-  showAllTabs: function ctrlTab_showAllTabs(aEntrypoint = "unknown") {
+-    this.close();
+-    gTabsPanel.showAllTabsPanel(null, aEntrypoint);
++    let s = url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
++    s = s.replace(/^[^/?#]*@/, "");
++    s = s.replace(/^www\./i, "");
++    s = s.replace(/\/$/, "");
++    return s;
+   },
+ 
+-  remove: function ctrlTab_remove(aPreview) {
+-    if (aPreview._tab) {
+-      gBrowser.removeTab(aPreview._tab);
++  /**
++   * Extracts uppercase initial letter from host for fallback tile.
++   */
++  _hostInitial(aURL) {
++    if (!aURL) {
++      return "";
+     }
++    let host = "";
++    try {
++      host = Services.io.newURI(aURL).displayHost || "";
++    } catch (e) {
++      host = aURL.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split("/")[0];
++    }
++    const letter = host.replace(/^www\./i, "").charAt(0);
++    return letter ? letter.toUpperCase() : "";
+   },
+ 
+-  attachTab: function ctrlTab_attachTab(aTab, aPos) {
+-    // If the tab is hidden, don't add it to the list unless it's selected
+-    // (Normally hidden tabs would be unhidden when selected, but that doesn't
+-    // happen for Firefox View).
+-    if (aTab.closing || (aTab.hidden && !aTab.selected)) {
++  /**
++   * Sets the active selection to the given index with wrapping.
++   */
++  _selectIndex(index) {
++    let count = this.tabPreviewCount;
++    if (count <= 0) {
+       return;
+     }
+-
+-    // If the tab is already in the list, remove it before re-inserting it.
+-    this.detachTab(aTab);
+-
+-    if (aPos == 0) {
+-      this._recentlyUsedTabs.unshift(aTab);
+-    } else if (aPos) {
+-      this._recentlyUsedTabs.splice(aPos, 0, aTab);
+-    } else {
+-      this._recentlyUsedTabs.push(aTab);
+-    }
++    this._selectedIndex = (index + count) % count;
++    this._updateSelectedPreview();
+   },
+ 
+-  detachTab: function ctrlTab_detachTab(aTab) {
+-    var i = this._recentlyUsedTabs.indexOf(aTab);
+-    if (i >= 0) {
+-      this._recentlyUsedTabs.splice(i, 1);
++  /**
++   * Synchronizes visual selection attribute and tab warmup.
++   */
++  _updateSelectedPreview() {
++    for (let i = 0; i < this.previews.length; i++) {
++      let preview = this.previews[i];
++      if (i === this._selectedIndex && !preview.hidden) {
++        preview.setAttribute("selected", "true");
++        preview.focus();
++        if (preview._tab) {
++          gBrowser.warmupTab(preview._tab);
++        }
++      } else {
++        preview.removeAttribute("selected");
++      }
+     }
+   },
+ 
+-  open: function ctrlTab_open() {
+-    if (this.isOpen) {
++  /**
++   * Steps selection forward or backward.
++   */
++  advanceFocus: function ctrlTab_advanceFocus(aForward) {
++    let count = this.tabPreviewCount;
++    if (count <= 0) {
+       return;
+     }
+ 
+-    if (this.previews.length != this.maxTabPreviews + 1) {
+-      this._buildPreviews();
+-    }
+-    this.canvasWidth = Math.ceil(
+-      (screen.availWidth * 0.85) / this.previewsPerRow
+-    );
+-    this.canvasHeight = Math.round(this.canvasWidth * tabPreviews.aspectRatio);
+-    this.updatePreviews();
+-    this._selectedIndex = 1;
+-    gBrowser.warmupTab(this.selected._tab);
++    let delta = aForward ? 1 : -1;
++    this._selectIndex(this._selectedIndex + delta);
+ 
+-    // Add a slight delay before showing the UI, so that a quick
+-    // "ctrl-tab" keypress just flips back to the MRU tab.
+-    this._timer = setTimeout(() => {
++    // Ardia: Keyboard navigation marks pointer stale so resting mouse doesn't hijack selection
++    this.pointerStale = true;
++
++    // If timer was waiting to open panel, cancel delay and show immediately
++    if (this._timer) {
++      clearTimeout(this._timer);
+       this._timer = null;
+       this._openPanel();
+-    }, 200);
++    }
+   },
+ 
+-  _openPanel: function ctrlTab_openPanel() {
+-    tabPreviewPanelHelper.opening(this);
+-
+-    let width = Math.min(
+-      screen.availWidth * 0.99,
+-      this.canvasWidth * 1.25 * this.previewColumnCount
+-    );
+-    this.panel.style.width = width + "px";
+-    let previewRows = Math.ceil(this.tabPreviewCount / this.previewsPerRow);
+-    var estimateHeight = this.canvasHeight * 1.25 * previewRows + 75;
+-    this.panel.openPopupAtScreen(
+-      screen.availLeft + (screen.availWidth - width) / 2,
+-      screen.availTop + (screen.availHeight - estimateHeight) / 2,
+-      false
+-    );
++  /**
++   * Commits the switcher to the picked preview or currently selected tab.
++   */
++  pick: function ctrlTab_pick(aPreview) {
++    let preview = aPreview || this.selected;
++    let tab = preview ? preview._tab : null;
++    this.close(tab);
+   },
+ 
++  /**
++   * Closes the switcher and activates the target tab if provided.
++   */
+   close: function ctrlTab_close(aTabToSelect) {
+     if (!this.isOpen) {
+       return;
+@@ -573,111 +459,105 @@
+     this.panel.hidePopup();
+   },
+ 
+-  setupGUI: function ctrlTab_setupGUI() {
+-    this.selected.focus();
+-    this._selectedIndex = -1;
+-  },
+-
+-  suspendGUI: function ctrlTab_suspendGUI() {
+-    for (let preview of this.previews) {
+-      this.updatePreview(preview, null);
+-    }
+-  },
+-
+-  onKeyDown(event) {
+-    let action = ShortcutUtils.getSystemActionForEvent(event);
+-    if (action != ShortcutUtils.CYCLE_TABS) {
++  /**
++   * Opens the switcher session with 140ms fast-switch delay.
++   */
++  open: function ctrlTab_open(aBackward = false) {
++    if (this.isOpen || this.tabCount < 2) {
+       return;
+     }
+ 
+-    // keyboard lock may have default prevented
+-    if (
+-      event.defaultPrevented ||
+-      this.KeyboardLockUtils.mustWaitForKeyboardLockRequestedReply(event)
+-    ) {
+-      return;
++    if (this.previews.length !== this.maxTabPreviews) {
++      this._buildPreviews();
+     }
+ 
+-    event.preventDefault();
+-    event.stopPropagation();
++    this.updatePreviews();
+ 
+-    if (this.isOpen) {
+-      this.advanceFocus(!event.shiftKey);
+-      return;
+-    }
++    let count = this.tabPreviewCount;
++    // Ardia: initial index is backward ? count - 1 : 1
++    this._selectedIndex = aBackward ? count - 1 : 1;
+ 
+-    if (event.shiftKey) {
+-      this.showAllTabs("shift-tab");
+-      return;
++    let targetTab = this.tabList[this._selectedIndex];
++    if (targetTab) {
++      gBrowser.warmupTab(targetTab);
+     }
+ 
+-    document.addEventListener("keyup", this, { mozSystemGroup: true });
+-
+-    let tabs = gBrowser.visibleTabs;
+-    if (tabs.length > 2) {
+-      this.open();
+-    } else if (tabs.length == 2) {
+-      let index = tabs[0].selected ? 1 : 0;
+-      gBrowser.setSelectedTab(
+-        tabs[index],
+-        gBrowser.TabMetrics.userTriggeredContext(
+-          gBrowser.TabMetrics.METRIC_SOURCE.CTRL_TAB
+-        )
+-      );
+-    }
++    // Ardia SHOW_AFTER_MS: 140ms delay before presenting UI.
++    // Releasing Ctrl before 140ms executes immediate switch with zero UI flash.
++    this._timer = setTimeout(() => {
++      this._timer = null;
++      this._openPanel();
++    }, this.SHOW_AFTER_MS);
+   },
+ 
+-  onKeyPress(event) {
+-    if (!this.isOpen || !event.ctrlKey) {
+-      return;
+-    }
++  /**
++   * Positions and displays the floating card.
++   *
++   * Ardia positions the card with:
++   *   left = (windowWidth - WIDTH) / 2
++   *   top  = max(40, (windowHeight - height) / 2 - 40)
++   *
++   * The popup window gets SHADOW_MARGIN of transparent padding on every side so
++   * the card's drop shadow is not clipped by the popup bounds; the extra space
++   * is subtracted again when the card is centered.
++   */
++  _openPanel: function ctrlTab_openPanel() {
++    tabPreviewPanelHelper.opening(this);
+ 
+-    event.preventDefault();
+-    event.stopPropagation();
++    // TabSwitcher constants (keep in sync with ctrlTab.css).
++    const SWITCHER_WIDTH = 400;
++    const HEADER_HEIGHT = 26;
++    const ROW_HEIGHT = 40;
++    const PANEL_PAD = 8; // SWITCHER_PAD, on each side.
++    const SHADOW_MARGIN = 24; // Transparent gutter for the card shadow.
+ 
+-    if (event.keyCode == event.DOM_VK_DELETE) {
+-      this.remove(this.selected);
+-      return;
+-    }
++    let rowCount = this.tabPreviewCount;
++    let cardHeight = HEADER_HEIGHT + rowCount * ROW_HEIGHT + PANEL_PAD * 2;
++    let panelWidth = SWITCHER_WIDTH + SHADOW_MARGIN * 2;
+ 
+-    switch (event.charCode) {
+-      case this.keys.close:
+-        this.remove(this.selected);
+-        break;
+-      case this.keys.find:
+-        this.showAllTabs("ctrltab-key-find");
+-        break;
+-      case this.keys.selectAll:
+-        this.showAllTabs("ctrltab-key-selectAll");
+-        break;
+-    }
++    let left =
++      window.screenX + Math.round((window.outerWidth - panelWidth) / 2);
++    // Ardia keeps the card 40px above the window center, but never closer than
++    // 40px to the top edge.
++    let topOffset = Math.max(
++      40,
++      Math.round((window.outerHeight - cardHeight) / 2) - 40
++    );
++    let top = window.screenY + topOffset - SHADOW_MARGIN;
++
++    this.panel.style.width = panelWidth + "px";
++
++    this.panel.openPopupAtScreen(left, top, false);
++
++    // Ardia: Ignore resting cursor until mouse moves
++    this.pointerStale = true;
++    this.lastMouseX = -1;
++    this.lastMouseY = -1;
++
++    this._updateSelectedPreview();
+   },
+ 
++  setupGUI() {
++    this.panel.addEventListener("mousemove", this);
++  },
++
++  suspendGUI() {
++    this.panel.removeEventListener("mousemove", this);
++    document.removeEventListener("keyup", this, { mozSystemGroup: true });
++    this.pointerStale = false;
++  },
++
+   removeClosingTabFromUI: function ctrlTab_removeClosingTabFromUI(aTab) {
+-    if (this.tabCount == 2) {
++    if (this.tabCount < 2) {
+       this.close();
+       return;
+     }
+-
+     this.updatePreviews();
+-
+-    if (this.selected.hidden) {
+-      this.advanceFocus(false);
++    if (this._selectedIndex >= this.tabPreviewCount) {
++      this._selectIndex(this.tabPreviewCount - 1);
++    } else {
++      this._updateSelectedPreview();
+     }
+-    if (this.selected == this.showAllButton) {
+-      this.advanceFocus(false);
+-    }
+-
+-    // If the current tab is removed, another tab can steal our focus.
+-    if (aTab.selected && this.panel.state == "open") {
+-      setTimeout(
+-        function (selected) {
+-          selected.focus();
+-        },
+-        0,
+-        this.selected
+-      );
+-    }
+   },
+ 
+   handleEvent: function ctrlTab_handleEvent(event) {
+@@ -686,8 +566,6 @@
+         this._initRecentlyUsedTabs();
+         break;
+       case "TabAttrModified":
+-        // tab attribute modified (i.e. label, busy, image)
+-        // update preview only if tab attribute modified in the list
+         if (
+           event.detail.changed.some(elem =>
+             ["label", "busy", "image"].includes(elem)
+@@ -706,10 +584,8 @@
+         break;
+       case "TabSelect": {
+         this.attachTab(event.target, 0);
+-        // If the previous tab was hidden (e.g. Firefox View), remove it from
+-        // the list when it's deselected.
+         let previousTab = event.detail.previousTab;
+-        if (previousTab.hidden) {
++        if (previousTab && previousTab.hidden) {
+           this.detachTab(previousTab);
+         }
+         break;
+@@ -733,79 +609,152 @@
+       case "keydown":
+         this.onKeyDown(event);
+         break;
+-      case "keypress":
+-        this.onKeyPress(event);
+-        break;
+       case "keyup":
+-        // During cycling tabs, we avoid sending keyup event to content document.
+         event.preventDefault();
+         event.stopPropagation();
+-
+-        if (event.keyCode === event.DOM_VK_CONTROL) {
++        if (event.keyCode === event.DOM_VK_CONTROL || event.key === "Control") {
+           document.removeEventListener("keyup", this, { mozSystemGroup: true });
+-
+           if (this.isOpen) {
+             this.pick();
+           }
+         }
+         break;
+-      case "popupshowing":
+-        if (event.target.id == "menu_viewPopup") {
+-          document.getElementById("menu_showAllTabs").hidden =
+-            !gTabsPanel.canOpen;
++      case "mousemove":
++        if (this.lastMouseX < 0) {
++          this.lastMouseX = event.screenX;
++          this.lastMouseY = event.screenY;
++          return;
+         }
+-        break;
+-      case "mouseover":
+-        // relatedTarget is the element the mouse came from. It is null when we
+-        // get a synthetic mouse event.
+-        if (event.relatedTarget) {
+-          event.currentTarget.focus();
++        // Ardia resting pointer check: cursor must travel >= 3px before hovering selects
++        if (
++          Math.hypot(
++            event.screenX - this.lastMouseX,
++            event.screenY - this.lastMouseY
++          ) >= 3
++        ) {
++          this.pointerStale = false;
++          this.lastMouseX = event.screenX;
++          this.lastMouseY = event.screenY;
++
++          let targetRow = event.target.closest(".ctrlTab-preview");
++          if (targetRow && targetRow.dataset.index !== undefined) {
++            let index = parseInt(targetRow.dataset.index, 10);
++            if (index !== this._selectedIndex && !targetRow.hidden) {
++              this._selectIndex(index);
++            }
++          }
+         }
+         break;
+-      case "command":
+-        this.pick(event.currentTarget);
+-        break;
+       case "click":
+-        if (event.button == 1) {
+-          this.remove(event.currentTarget);
+-        } else if (AppConstants.platform == "macosx" && event.button == 2) {
+-          // Control+click is a right click on macOS, but in this case we want
+-          // to handle it like a left click.
+-          this.pick(event.currentTarget);
++        let row = event.target.closest(".ctrlTab-preview");
++        if (row && row._tab) {
++          this.pick(row);
+         }
+         break;
+     }
+   },
+ 
+-  filterForThumbnailExpiration(aCallback) {
+-    // Save a few more thumbnails than we actually display, so that when tabs
+-    // are closed, the previews we add instead still get thumbnails.
+-    const extraThumbnails = 3;
+-    const thumbnailCount = Math.min(
+-      this.tabPreviewCount + extraThumbnails,
+-      this.tabCount
+-    );
++  onKeyDown(event) {
++    if (this.isOpen) {
++      if (event.keyCode === event.DOM_VK_DOWN) {
++        event.preventDefault();
++        event.stopPropagation();
++        this.advanceFocus(true);
++        return;
++      }
++      if (event.keyCode === event.DOM_VK_UP) {
++        event.preventDefault();
++        event.stopPropagation();
++        this.advanceFocus(false);
++        return;
++      }
++      if (event.keyCode === event.DOM_VK_ESCAPE) {
++        event.preventDefault();
++        event.stopPropagation();
++        this.close(); // Cancel without switching
++        return;
++      }
++      if (event.keyCode === event.DOM_VK_RETURN) {
++        event.preventDefault();
++        event.stopPropagation();
++        this.pick();
++        return;
++      }
++    }
+ 
+-    let urls = [];
+-    for (let i = 0; i < thumbnailCount; i++) {
+-      urls.push(this.tabList[i].linkedBrowser.currentURI.spec);
++    let action = ShortcutUtils.getSystemActionForEvent(event);
++    if (action != ShortcutUtils.CYCLE_TABS) {
++      return;
+     }
+ 
+-    aCallback(urls);
++    if (
++      event.defaultPrevented ||
++      this.KeyboardLockUtils.mustWaitForKeyboardLockRequestedReply(event)
++    ) {
++      return;
++    }
++
++    event.preventDefault();
++    event.stopPropagation();
++
++    if (this.isOpen) {
++      this.advanceFocus(!event.shiftKey);
++      return;
++    }
++
++    document.addEventListener("keyup", this, { mozSystemGroup: true });
++
++    if (this.tabCount >= 2) {
++      this.open(event.shiftKey);
++    }
+   },
++
+   _sortRecentlyUsedTabs() {
+     this._recentlyUsedTabs.sort(
+       (tab1, tab2) => tab2.lastAccessed - tab1.lastAccessed
+     );
+   },
++
    _initRecentlyUsedTabs() {
      this._recentlyUsedTabs = Array.prototype.filter.call(
        gBrowser.tabs,
@@ -39,3 +1135,73 @@ index 727e21f1754b0842080d8f3e29060baad445df66..ee9df3a311fc72954e064a2cbc56b716
      );
      this._sortRecentlyUsedTabs();
    },
+ 
++  attachTab: function ctrlTab_attachTab(aTab, aPos) {
++    if (!this._recentlyUsedTabs) {
++      return;
++    }
++
++    if (aTab.closing || (aTab.hidden && !aTab.selected) || aTab.hasAttribute("zen-empty-tab")) {
++      return;
++    }
++
++    let curPos = this._recentlyUsedTabs.indexOf(aTab);
++    if (curPos != -1) {
++      this._recentlyUsedTabs.splice(curPos, 1);
++    }
++
++    if (aPos != undefined) {
++      this._recentlyUsedTabs.splice(aPos, 0, aTab);
++    } else {
++      this._recentlyUsedTabs.push(aTab);
++    }
++  },
++
++  detachTab: function ctrlTab_detachTab(aTab) {
++    if (!this._recentlyUsedTabs) {
++      return;
++    }
++
++    let i = this._recentlyUsedTabs.indexOf(aTab);
++    if (i != -1) {
++      this._recentlyUsedTabs.splice(i, 1);
++    }
++  },
++
+   _init: function ctrlTab__init(enable) {
+     var toggleEventListener = enable
+       ? "addEventListener"
+@@ -828,19 +777,6 @@
+     }
+     document[toggleEventListener]("keypress", this);
+     gBrowser.tabbox.handleCtrlTab = !enable;
+-
+-    if (enable) {
+-      PageThumbs.addExpirationFilter(this);
+-    } else {
+-      PageThumbs.removeExpirationFilter(this);
+-    }
+-
+-    // If we're not running, hide the "Show All Tabs" menu item,
+-    // as Shift+Ctrl+Tab will be handled by the tab bar.
+-    document.getElementById("menu_showAllTabs").hidden = !enable;
+-    document
+-      .getElementById("menu_viewPopup")
+-      [toggleEventListener]("popupshowing", this);
+   },
+ };
+ 
+@@ -851,8 +787,11 @@
+ XPCOMUtils.defineLazyPreferenceGetter(
+   ctrlTab,
+   "maxTabPreviews",
+-  "browser.ctrlTab.maxPreviews",
+-  7,
++  "zen.ctrlTab.max-previews",
++  9, // Ardia MAX_ROWS
+   null,
+   value => Math.max(4, Math.min(49, value))
+ );
++
++// Automatically initialize preferences and start observing
++ctrlTab.observePref();
