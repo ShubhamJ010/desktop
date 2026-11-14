@@ -24,7 +24,7 @@ nsresult ZenCommonUtils::PlayHapticFeedbackInternal() {
     id<NSHapticFeedbackPerformer> performer =
         [NSHapticFeedbackManager defaultPerformer];
     [performer performFeedbackPattern:NSHapticFeedbackPatternAlignment
-                      performanceTime:NSHapticFeedbackPerformanceTimeDefault];
+                      performanceTime:NSHapticFeedbackPerformanceTimeNow];
   }
   return NS_OK;
   NS_OBJC_END_TRY_BLOCK_RETURN(NS_OK);
