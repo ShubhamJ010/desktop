@@ -2012,7 +2012,8 @@ class nsZenWorkspaces {
     if (
       previousWorkspace &&
       previousWorkspace.uuid !== workspace.uuid &&
-      !onInit
+      !onInit &&
+      !whileScrolling
     ) {
       /* eslint-disable-next-line mozilla/valid-services */
       Services.zen?.playHapticFeedback?.();

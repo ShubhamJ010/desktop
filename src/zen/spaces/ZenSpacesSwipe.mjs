@@ -184,11 +184,58 @@ export class ZenSpacesSwipe {
         library: libraryOpen || lazy.ZenLibrary.readySwipeOpenLibrary(),
         addSpace: this.#addSwipe.readySwipeAddSpace(),
       },
+      detentCrossed: false,
     };
     if (libraryOpen) {
       lazy.ZenLibrary.startSwipe();
     }
     this.#applySwipeThreshold(event);
+  }
+
+  #canSwitchWorkspace(offset) {
+    const ws = gZenWorkspaces;
+    const workspaces = ws.getWorkspaces();
+    if (workspaces.length <= 1) {
+      return false;
+    }
+    if (ws.shouldWrapAroundNavigation) {
+      return true;
+    }
+    const activeWorkspace = ws.getActiveWorkspace();
+    const currentIndex = workspaces.indexOf(activeWorkspace);
+    if (currentIndex < 0) {
+      return false;
+    }
+    const targetIndex = currentIndex + offset;
+    return targetIndex >= 0 && targetIndex < workspaces.length;
+  }
+
+  #handleDetentHaptic(event) {
+    if (this.#swipeState.action) {
+      return;
+    }
+
+    const ws = gZenWorkspaces;
+    const isRTL = document.documentElement.matches(":-moz-locale-dir(rtl)");
+    const moveForward =
+      (event.direction === SimpleGestureEvent.DIRECTION_RIGHT) !== isRTL;
+    const rawDirection = moveForward ? 1 : -1;
+    const direction = ws.naturalScroll ? -1 : 1;
+    const offset = rawDirection * direction;
+
+    if (!this.#canSwitchWorkspace(offset)) {
+      return;
+    }
+
+    const progress =
+      Math.abs(event.delta) / ZenSpacesSwipe.SUCCESS_THRESHOLD;
+    const crossed = progress >= 0.6;
+
+    if (crossed && !this.#swipeState.detentCrossed) {
+      this.#swipeState.detentCrossed = true;
+      /* eslint-disable-next-line mozilla/valid-services */
+      Services.zen?.playHapticFeedback?.();
+    }
   }
 
   #handleSwipeUpdate(event) {
@@ -197,6 +244,8 @@ export class ZenSpacesSwipe {
     if (!ws.workspaceEnabled || !this.#swipeState?.isGestureActive) {
       return;
     }
+
+    this.#handleDetentHaptic(event);
 
     const stripWidth = this.#stripWidth;
 
@@ -312,6 +361,7 @@ export class ZenSpacesSwipe {
       direction: null,
       action: null,
       allowed: { library: false, addSpace: false },
+      detentCrossed: false,
     };
 
     this.#toggleSwipeGestureAttr(false);
