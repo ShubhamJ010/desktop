@@ -1,0 +1,28 @@
+--- a/browser/components/extensions/parent/ext-menus.js
++++ b/browser/components/extensions/parent/ext-menus.js
+@@ -122,6 +122,25 @@
+         return false;
+       }
+     }
++
++    try {
++      let win = contextData.menu?.documentGlobal || contextData.menu?.ownerGlobal;
++      let nativeTab = contextData.tab || win?.gBrowser?.selectedTab;
++      let spaceId =
++        nativeTab?.getAttribute?.("zen-workspace-id") ||
++        win?.gZenWorkspaces?.activeWorkspace;
++      if (spaceId) {
++        let raw = Services.prefs.getStringPref(
++          "zen.workspaces.disabled-extensions",
++          "{}"
++        );
++        let map = JSON.parse(raw);
++        if (Array.isArray(map[spaceId]) && map[spaceId].includes(extension.id)) {
++          return false;
++        }
++      }
++    } catch (e) {}
++
+     return true;
+   },
+ 

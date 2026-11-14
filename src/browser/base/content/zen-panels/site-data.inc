@@ -36,7 +36,16 @@
       </hbox>
       <vbox id="zen-site-data-section-addons" class="zen-site-data-section">
         <hbox class="zen-site-data-section-header">
-          <label data-l10n-id="unified-extensions-header-title" flex="1" />
+          <hbox id="zen-site-data-addons-header-title-box" flex="1" align="center">
+            <label id="zen-site-data-addons-title-normal" data-l10n-id="unified-extensions-header-title" />
+            <hbox id="zen-site-data-addons-title-disabled" align="center" hidden="true">
+              <box id="zen-site-data-disabled-space-icon-wrapper" class="zen-site-data-space-icon-wrapper">
+                <image id="zen-site-data-disabled-space-icon-img" class="zen-site-data-space-icon" hidden="true" />
+                <label id="zen-site-data-disabled-space-icon-text" class="zen-site-data-space-icon-text" hidden="true" />
+              </box>
+              <label id="zen-site-data-disabled-title-label" value="Disabled" />
+            </hbox>
+          </hbox>
           <label data-l10n-id="zen-generic-manage" id="zen-site-data-manage-addons" />
         </hbox>
         <hbox class="panel-subview-body" context="unified-extensions-context-menu" id="zen-site-data-addons">
@@ -52,9 +61,30 @@
             <!-- active visible extensions go here -->
           </vbox>
 
+          <vbox id="zen-site-data-disabled-stack-container" hidden="true">
+            <toolbarbutton id="zen-site-data-disabled-stack-button"
+                           class="subviewbutton toolbarbutton-1"
+                           tooltiptext="Disabled Extensions"
+                           closemenu="none"
+                           hidden="true">
+              <box class="zen-disabled-stack-wrapper">
+                <box class="zen-disabled-stack-card zen-disabled-stack-card-left">
+                  <image class="zen-disabled-stack-icon" />
+                </box>
+                <box class="zen-disabled-stack-card zen-disabled-stack-card-right">
+                  <image class="zen-disabled-stack-icon" />
+                </box>
+                <box class="zen-disabled-stack-card zen-disabled-stack-card-center">
+                  <image class="zen-disabled-stack-icon" />
+                </box>
+              </box>
+            </toolbarbutton>
+          </vbox>
+
           <vbox id="zen-site-data-new-addon-button-container">
             <toolbarbutton id="zen-site-data-new-addon-button"
-                  class="subviewbutton toolbarbutton-1" />
+                  class="subviewbutton toolbarbutton-1"
+                  closemenu="none" />
           </vbox>
 
 # We don't really use this, but again, to keep firefox happy
