@@ -452,3 +452,335 @@ body,
     contain: none;
   }
 }
+
+/* Ardia-style History Swipe Capsule for macOS Trackpad Gestures */
+.browserStack {
+  position: relative !important;
+}
+
+#historySwipeAnimationContainer {
+  /* Ardia spring(response: 0.2, damping: 0.9) sampled as a CSS spring curve. */
+  --zen-swipe-spring: linear(
+    0,
+    0.136 10%,
+    0.378 20%,
+    0.598 30%,
+    0.761 40%,
+    0.868 50%,
+    0.933 60%,
+    0.969 70%,
+    0.988 80%,
+    0.997 90%,
+    1
+  );
+  --zen-swipe-spring-duration: 200ms;
+  --zen-swipe-fade: 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+
+  position: absolute !important;
+  inset: 0 !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+  z-index: 99999 !important;
+}
+
+/* Full-height edge rails: the capsule stays anchored to its window edge and
+   vertically centred while it grows, exactly like Ardia's `top` + size spring. */
+#historySwipeAnimationPreviousArrow,
+#historySwipeAnimationNextArrow {
+  position: absolute !important;
+  inset-block: 0 !important;
+  width: 72px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  pointer-events: none !important;
+  display: flex !important;
+  align-items: center !important;
+  will-change: transform, opacity !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+#historySwipeAnimationPreviousArrow {
+  left: 0 !important;
+  justify-content: flex-start !important;
+}
+
+#historySwipeAnimationNextArrow {
+  right: 0 !important;
+  justify-content: flex-end !important;
+}
+
+#historySwipeAnimationPreviousArrow[collapsed="true"],
+#historySwipeAnimationNextArrow[collapsed="true"] {
+  display: none !important;
+}
+
+.zen-swipe-capsule {
+  width: 72px;
+  height: 72px;
+  /* Never let the 72px rail shrink the confirmed 82px capsule into an oval. */
+  flex: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  /* Frosted disc: Ardia renders a real `VisualEffect material="popover"`. The
+     surface is the shared Ardia glass recipe (zen-ardia-glass.css) so the disc
+     reads as the same material as the sidebar's acrylic panels and the tab
+     hover preview: a heavy blur over a tinted fill that page text never shows
+     through. */
+  background-color: var(--zen-ardia-glass-fill);
+  backdrop-filter: var(--zen-ardia-glass-filter) !important;
+  -webkit-backdrop-filter: var(--zen-ardia-glass-filter) !important;
+  /* Ardia SHADOWS.swipe: radius 8, offset (0, 2), opacity 0.2 light / 0.25 dark. */
+  box-shadow: var(--zen-ardia-glass-shadow);
+  /* Ardia windowColors.swipeRim. */
+  border: var(--zen-ardia-glass-rim);
+  box-sizing: border-box;
+  /* The dismissal animates opacity and transform only, so keep the disc on its
+     own compositor layer instead of repainting the blurred glass each frame. */
+  will-change: transform, opacity;
+  transition: width var(--zen-swipe-spring-duration) var(--zen-swipe-spring),
+              height var(--zen-swipe-spring-duration) var(--zen-swipe-spring);
+}
+
+.zen-swipe-capsule-wash {
+  position: absolute;
+  inset: 0;
+  /* Ardia paints SWIPE_CONFIRMED_WASH as a plain fill over the surface; it must
+     not be its own disc, or the sheet shows an ellipse inside the rounded rect. */
+  border-radius: inherit;
+  /* Ardia SWIPE_CONFIRMED_WASH, applied in light mode only. */
+  background-color: light-dark(rgba(255, 255, 255, 0.4), transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--zen-swipe-fade);
+}
+
+.zen-swipe-chevron {
+  /* Ardia windowColors.swipeChevron: #000000D9 / #FFFFFFD9. */
+  color: light-dark(rgba(0, 0, 0, 0.851), rgba(255, 255, 255, 0.851));
+  /* SF Symbol chevron at pointSize 28 weight bold */
+  width: 15px;
+  height: 25px;
+  opacity: 0.85;
+  transition: opacity var(--zen-swipe-fade),
+              transform var(--zen-swipe-spring-duration) var(--zen-swipe-spring);
+}
+
+/* Confirmed state (when Math.abs(delta) >= 0.25) */
+#historySwipeAnimationPreviousArrow.will-navigate .zen-swipe-capsule,
+#historySwipeAnimationNextArrow.will-navigate .zen-swipe-capsule {
+  width: 82px;
+  height: 82px;
+}
+
+#historySwipeAnimationPreviousArrow.will-navigate .zen-swipe-capsule-wash,
+#historySwipeAnimationNextArrow.will-navigate .zen-swipe-capsule-wash {
+  opacity: 1;
+}
+
+#historySwipeAnimationPreviousArrow.will-navigate .zen-swipe-chevron,
+#historySwipeAnimationNextArrow.will-navigate .zen-swipe-chevron {
+  opacity: 1.0;
+  transform: scale(1.214); /* Ardia ICON_CONFIRMED / ICON = 34 / 28 */
+}
+
+/* Ensure any legacy Firefox SVG icon is never shown */
+.swipe-nav-icon {
+  display: none !important;
+}
+
+/* ---------------------------------------------------------------------------
+ * Ardia history sheet: the capsule grows into a list of destinations when the
+ * confirmed swipe is held still. Ported from Ardia's SwipeOverlay
+ * (`DestinationList`, LIST_WIDTH 200, LIST_ROW 38, LIST_PAD 8, LIST_RADIUS 12)
+ * and driven by browser-gestureSupport.js `_presentSwipeHistory`).
+ * ------------------------------------------------------------------------- */
+
+/* The sheet is 200pt wide, so the rail that centres the capsule has to widen
+   with it; without this the capsule would be clipped by the 72pt rail. */
+#historySwipeAnimationPreviousArrow.has-list,
+#historySwipeAnimationNextArrow.has-list {
+  width: 200px !important;
+  /* Ardia pops the list in over the confirmation icon. */
+  --zen-swipe-list-spring: linear(
+    0,
+    0.136 10%,
+    0.377 20%,
+    0.598 30%,
+    0.761 40%,
+    0.868 50%,
+    0.933 60%,
+    0.969 70%,
+    0.988 80%,
+    0.997 90%,
+    1
+  );
+  --zen-swipe-list-spring-duration: 270ms;
+}
+
+/* Ardia's sheet is a rounded rect, not a disc, and clips its rows. */
+.zen-swipe-capsule.has-list {
+  /* The sheet is denser than the plain disc: rows of text over a live page have
+     to stay legible, so the shared glass gets a more opaque fill here. */
+  --zen-ardia-glass-fill: light-dark(
+    rgba(246, 246, 250, 0.94),
+    rgba(32, 33, 37, 0.94)
+  );
+  align-items: stretch;
+  justify-content: flex-start;
+  /* Overrides the 82pt confirmed disc; the exact size is set inline because it
+     depends on how many destinations the sheet lists. */
+  width: 200px;
+  transition: width var(--zen-swipe-list-spring-duration) var(--zen-swipe-spring),
+              height var(--zen-swipe-list-spring-duration) var(--zen-swipe-spring),
+              transform var(--zen-swipe-list-spring-duration) var(--zen-swipe-spring);
+}
+
+/* Reversing the swipe does not morph the sheet back into the chevron: the
+   dismissal throws the glass away in one quick beat, driven from JS (see
+   `_dismissSwipeSheet` in browser-gestureSupport.js), so there is no collapse
+   transition to describe here. */
+
+/* The chevron fades out as the list fades in (Ardia multiplies the icon
+   opacity by the inverse of the list's appear value). The arrow variants have
+   to outrank the `will-navigate` rule that raises the chevron to full opacity
+   - same specificity, later in the file wins - otherwise the confirmed icon
+   stays painted in the sheet's corner. No !important: the reverse tracking
+   fades the chevron back in with an inline opacity (see _trackSheetReverse). */
+.zen-swipe-capsule.has-list .zen-swipe-chevron,
+#historySwipeAnimationPreviousArrow.has-list .zen-swipe-chevron,
+#historySwipeAnimationNextArrow.has-list .zen-swipe-chevron {
+  opacity: 0;
+}
+
+.zen-swipe-list {
+  /* Ardia `DestinationList` is absolutely positioned at the surface origin, so
+     it never shares a flex line with the (faded out) chevron. As a flex child
+     it used to be pushed right by the chevron and clipped by the capsule. */
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  padding: 8px 0; /* Ardia LIST_PAD = space.m */
+  box-sizing: border-box;
+  /* Ardia SWIPE_MOTION.list: duration.slow (250ms), curve.fade, opacity plus a
+     0.9 -> 1 scale (`DestinationList` appear). */
+  animation: zen-swipe-list-in 250ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+@keyframes zen-swipe-list-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Cancelling dismisses the whole sheet in one quick fade-and-shrink beat (see
+   `_dismissSwipeSheet` in browser-gestureSupport.js); the rows leave with the
+   glass, so there is no collapse animation to describe here. */
+
+.zen-swipe-list-pill {
+  position: absolute;
+  inset-inline: 8px; /* Ardia space.m */
+  top: 8px; /* Ardia LIST_PAD */
+  height: 38px; /* Ardia LIST_ROW */
+  /* Ardia concentric(LIST_RADIUS 16, space.m 8). */
+  border-radius: 8px;
+  pointer-events: none;
+  /* Ardia windowColors.swipeSelection */
+  background-color: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
+  /* Ardia SWIPE_PILL_SPRING: response 0.27, damping 0.9. */
+  transition: transform 270ms var(--zen-swipe-list-spring);
+}
+
+.zen-swipe-list-row {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px; /* Ardia space.ml */
+  height: 38px; /* Ardia LIST_ROW */
+  padding-inline: 16px; /* Ardia space.xl */
+  box-sizing: border-box;
+  /* Ardia font.body 13 / lineHeight.body 16. */
+  font-size: 13px;
+  line-height: 16px;
+  /* Ardia textSecondary */
+  color: light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.5));
+}
+
+.zen-swipe-list-row-selected {
+  /* Ardia textPrimary */
+  color: light-dark(#000000, #ffffff);
+}
+
+.zen-swipe-list-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Ardia's row slot is a fixed 16pt box: the favicon once it resolves, the
+   site initial in a tile otherwise (`Favicon` / `FaviconFallback`). */
+.zen-swipe-list-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  /* Ardia radius.hair for a 16pt icon. */
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.zen-swipe-list-tile {
+  display: grid;
+  place-items: center;
+  width: 14px; /* round(16 * 14 / 16) */
+  height: 14px;
+  /* Ardia tile * 0.32. */
+  border-radius: 4.5px;
+  /* Ardia faviconTile */
+  background-color: light-dark(rgba(0, 0, 0, 0.13), rgba(247, 245, 255, 0.2));
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.5));
+}
+
+.zen-swipe-list-favicon {
+  position: absolute;
+  inset: 0;
+  width: 16px;
+  height: 16px;
+  object-fit: cover;
+  display: none;
+}
+
+.zen-swipe-list-icon.has-favicon .zen-swipe-list-favicon {
+  display: block;
+}
+
+.zen-swipe-list-icon.has-favicon .zen-swipe-list-tile {
+  display: none;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .zen-swipe-list-pill {
+    background-color: light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.14));
+  }
+}

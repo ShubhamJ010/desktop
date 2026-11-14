@@ -1,0 +1,406 @@
+name: Build macOS Twilight
+
+# Fast single-arch macOS Twilight build. Mirrors the upstream Twilight build
+# (build.yml -> macos-release-build.yml with release-branch: twilight): surfer
+# ci --brand twilight, release-build.sh, npm run package. No PGO, no language
+# packs, no release bookkeeping. Personal app identity and update-host
+# overrides are applied to the CI checkout only; the artifact ships an
+# update-disabled policy without committing personal overrides to build config.
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "Target architecture"
+        required: true
+        type: choice
+        options:
+          - aarch64
+          - x86_64
+        default: aarch64
+      display_version:
+        description: "Twilight display version"
+        required: true
+        type: string
+        default: "1.25t"
+  push:
+    branches:
+      - zen-enh-main
+      - main
+
+concurrency:
+  group: macos-twilight-${{ github.ref }}-${{ inputs.arch || 'aarch64' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Twilight macOS - ${{ inputs.arch || 'aarch64' }}
+    runs-on: ubuntu-24.04
+    # A wedged cross-compile otherwise sits until GitHub's 6h ceiling, holding
+    # the concurrency group and hiding the last useful log line.
+    timeout-minutes: 180
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      ARCH: ${{ inputs.arch || 'aarch64' }}
+      DISPLAY_VERSION: ${{ inputs.display_version || '1.25t' }}
+
+    steps:
+      # A cross-compiled Gecko build needs far more disk than the runner ships
+      # with. Without this the build dies with "No space left on device" part
+      # way through the link step.
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@cf1e78c50ca91e757bab3edc229027eebfc07871
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # `surfer download` ends by committing the imported Firefox source into
+      # engine/.git. Without an identity that commit fails ("Please tell me who
+      # you are"), the engine repo ends up with zero commits, and the following
+      # `mach bootstrap` dies with "your current branch 'zen_browser' does not
+      # have any commits yet".
+      - name: Setup Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run sccache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+        with:
+          disable_annotations: true
+
+      - name: Expose actions cache variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env['ACTIONS_CACHE_URL'])
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env['ACTIONS_RUNTIME_TOKEN'])
+
+      - name: Install system dependencies
+        run: |
+          set -uo pipefail
+          packages=(
+            python3 python3-pip python3-launchpadlib zstd yasm nasm build-essential
+            libgtk-3-dev libpython3-dev m4 uuid libasound2-dev libcurl4-openssl-dev
+            libdbus-1-dev libdrm-dev libdbus-glib-1-dev libpulse-dev
+            libx11-xcb-dev libxt-dev xvfb libvips-dev pkg-config
+          )
+          apt_opts=(
+            -o Acquire::Retries=3
+            -o Acquire::http::Timeout=20
+            -o Acquire::https::Timeout=20
+            -o Acquire::ForceIPv4=true
+          )
+
+          # The runner's default mirror (azure.archive.ubuntu.com, referenced through
+          # /etc/apt/apt-mirrors.txt) intermittently fails DNS or stalls. When it does,
+          # apt never finishes: a single build sat 45min in this step while the same
+          # workflow on another runner installed everything in under 4min. Point apt at
+          # the public Ubuntu mirrors instead.
+          use_public_mirrors() {
+            echo "::warning::Switching apt to archive.ubuntu.com / security.ubuntu.com"
+            sudo sed -i -E \
+              -e 's#https?://[a-z0-9.-]*archive\.ubuntu\.com/ubuntu#http://archive.ubuntu.com/ubuntu#g' \
+              -e 's#mirror\+file:/etc/apt/apt-mirrors\.txt#http://archive.ubuntu.com/ubuntu#g' \
+              -e 's#https?://security\.ubuntu\.com/ubuntu#http://security.ubuntu.com/ubuntu#g' \
+              /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+            sudo rm -rf /var/lib/apt/lists/*
+          }
+
+          # Probe the mirror first so a dead one costs seconds, not a build slot.
+          if ! curl -fsS -m 15 -o /dev/null \
+              http://azure.archive.ubuntu.com/ubuntu/dists/noble/Release; then
+            use_public_mirrors
+          fi
+
+          # Bounded attempts: timeout keeps a stalled fetch from hanging the job.
+          for attempt in 1 2 3 4; do
+            if sudo timeout 300 apt-get "${apt_opts[@]}" update \
+              && sudo timeout 1200 apt-get "${apt_opts[@]}" install -y --fix-missing "${packages[@]}"; then
+              echo "System dependencies installed on attempt $attempt"
+              exit 0
+            fi
+            echo "::warning::apt-get failed or timed out (attempt $attempt of 4); retrying"
+            sudo rm -rf /var/lib/apt/lists/partial
+            [ "$attempt" -ge 2 ] && use_public_mirrors
+            sleep 10
+          done
+
+          echo "::error::Unable to install system dependencies after 4 attempts"
+          exit 1
+
+      - name: Install npm dependencies
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then exit 0; fi
+            echo "::warning::npm ci failed (attempt $attempt); retrying"
+            rm -rf node_modules
+            sleep 15
+          done
+          exit 1
+
+      - name: Load Surfer CI setup
+        run: npm run surfer -- ci --brand twilight --display-version "$DISPLAY_VERSION"
+
+      # Keep personal profile isolation and update suppression out of committed
+      # build config. Fail closed if upstream changes either expected value.
+      - name: Apply personal macOS build overrides
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          surfer_path = Path("surfer.json")
+          surfer = json.loads(surfer_path.read_text())
+          if surfer.get("appId") != "zen":
+              raise SystemExit("surfer.json appId changed; review personal override")
+          if surfer.get("updateHostname") != "updates.zen-browser.app":
+              raise SystemExit("surfer.json updateHostname changed; review personal override")
+          surfer["appId"] = "zen-twilight"
+          surfer["updateHostname"] = "127.0.0.1"
+          surfer_path.write_text(json.dumps(surfer, indent=2) + "\n")
+
+          patch_path = Path("src/build/moz-build.patch")
+          patch = patch_path.read_text()
+          upstream = '+    appini_defines["MOZ_APPUPDATE_HOST"] = "updates.zen-browser.app"'
+          personal = '+    appini_defines["MOZ_APPUPDATE_HOST"] = "127.0.0.1"'
+          if patch.count(upstream) != 1:
+              raise SystemExit("moz-build.patch update-host line changed; review personal override")
+          patch_path.write_text(patch.replace(upstream, personal, 1))
+          PY
+
+      - name: Download Firefox engine and dependencies
+        run: npm run download
+
+      - name: mac-cross Cache
+        id: cache-mac-cross
+        uses: actions/cache@v4
+        with:
+          path: ~/mac-cross
+          key: mac-cross-linux64
+
+      - name: Setup macOS cross toolchain
+        if: steps.cache-mac-cross.outputs.cache-hit != 'true'
+        run: |
+          set -ex
+          mkdir -p ~/mac-cross
+          cd engine/
+          ./mach artifact toolchain --from-build linux64-cctools-port linux64-libdmg linux64-hfsplus
+          mv cctools dmg hfsplus ~/mac-cross/
+
+      - name: Setup Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          . "$HOME/.cargo/env"
+          rustup target add "$ARCH-apple-darwin"
+
+      # Import and bootstrap are separate steps on purpose: `surfer import`
+      # rewrites engine/ and `mach bootstrap` has to see the imported tree.
+      - name: Import patches
+        run: |
+          set -ex
+          export SURFER_COMPAT="$ARCH" SURFER_PLATFORM=darwin
+          . "$HOME/.cargo/env"
+          npm run import -- --verbose
+
+      - name: Bootstrap
+        run: |
+          set -ex
+          export SURFER_COMPAT="$ARCH" SURFER_PLATFORM=darwin
+          . "$HOME/.cargo/env"
+          npm run bootstrap
+
+      # This repo only carries the zen-* strings; the Firefox Fluent files are
+      # fetched from the pinned firefox-l10n commit at build time, and the
+      # language packs are what register them. Without it the tree keeps the
+      # empty locale stubs, so about:preferences renders as category icons with
+      # no labels and a blank pane. The sj build has always run this step.
+      - name: Build language packs
+        run: |
+          set -x
+          sh scripts/download-language-packs.sh
+
+      # Reuse the compiled object dir from the newest successful build of this
+      # arch. Keys are unique per run (cache entries are immutable), and the
+      # restore-keys prefix pulls in the previous objects so make only rebuilds
+      # what actually changed.
+      #
+      # This is a plain restore, not actions/cache: with actions/cache a
+      # restore-key hit skips the save, so the cache would stay frozen on the
+      # first successful build forever. The matching save step below stores the
+      # new state after a successful build.
+      #
+      # Do not delete engine/obj-*/dist from here: that tree holds generated
+      # sources (dist/include/*.h from the IDL compiler, dist/xpcrs/*.rs from
+      # the Rust bindings) which are guarded by build stamps. Removing the
+      # files while keeping the stamps makes make skip regenerating them.
+      - name: Restore compiled objects
+        uses: actions/cache/restore@v4
+        with:
+          path: engine/obj-${{ env.ARCH }}-apple-darwin
+          key: obj-${{ env.ARCH }}-${{ hashFiles('surfer.json') }}-${{ github.run_id }}
+          restore-keys: |
+            obj-${{ env.ARCH }}-${{ hashFiles('surfer.json') }}-
+            obj-${{ env.ARCH }}-
+
+      # The restored object dir carries the previous run's app bundle, and make
+      # treats it as up to date: the cached timestamps are newer than the
+      # bundle's dependencies, so nothing rebuilds it and the DMG ends up
+      # staging the previous build. Drop the bundles and the old image so the
+      # build has to assemble them again.
+      #
+      # Only the bundles and the image are removed. The rest of dist/ holds
+      # generated sources (dist/include/*.h from the IDL compiler,
+      # dist/xpcrs/*.rs from the Rust bindings) that are guarded by build
+      # stamps -- deleting those files while keeping the stamps makes make
+      # skip regenerating them.
+      - name: Drop stale packaged output
+        run: |
+          set -ex
+          shopt -s nullglob
+          for dist in engine/obj-*/dist; do
+            find "$dist" -maxdepth 2 -name "*.app" -type d ! -path "*/dist/bin/*" -exec rm -rf {} +
+            find "$dist" -maxdepth 1 -name "*.dmg" -delete 2>/dev/null || true
+          done
+
+      # Same build invocation as the upstream macOS release build
+      # (macos-release-build.yml): release-build.sh with ZEN_CROSS_COMPILING and,
+      # for a twilight build, ZEN_RELEASE_BRANCH=twilight. MOZ_BUILD_DATE is the
+      # build ID upstream generates per run in its buildid job.
+      - name: Build
+        run: |
+          set -x
+          export SURFER_COMPAT="$ARCH" SURFER_PLATFORM=darwin
+          export ZEN_CROSS_COMPILING=1 ZEN_RELEASE_BRANCH=twilight ZEN_GA_DISABLE_PGO=1
+          export MOZ_BUILD_DATE=$(date +%Y%m%d%H%M%S)
+          bash .github/workflows/src/release-build.sh
+
+      # Same packaging command as the upstream macOS release build. The DMG it
+      # stages stays in dist/ and is not uploaded; the app bundle becomes a zip.
+      - name: Package
+        run: |
+          set -x
+          export SURFER_COMPAT="$ARCH" SURFER_PLATFORM=darwin
+          export ZEN_CROSS_COMPILING=1 ZEN_GA_DISABLE_PGO=true ZEN_RELEASE=1
+          npm run package
+
+      # A dead update URL alone does not stop an update: the in-app updater and
+      # its scheduler still run, so the bundle has to say updates are off. This
+      # mirrors the local updater.py safety guard.
+      #
+      # Applied to dist/zen/<brand>.app, the tree surfer stages for the archive.
+      # Writing into the macbuild template instead only reaches
+      # dist/<brand>.app, which is not what gets zipped. Editing here invalidates
+      # the package step's signature, so drop it; the local installer signs the
+      # bundle ad-hoc after installation.
+      - name: Disable app updates in the bundle
+        run: |
+          set -ex
+          bundle="engine/obj-$ARCH-apple-darwin/dist/zen/Twilight.app"
+          resources="$bundle/Contents/Resources"
+          test -d "$bundle"
+          mkdir -p "$resources/distribution" "$resources/defaults/pref"
+          printf '%s\n' \
+            '{' \
+            '  "policies": {' \
+            '    "DisableAppUpdate": true,' \
+            '    "ManualAppUpdateOnly": true,' \
+            '    "BackgroundAppUpdate": false,' \
+            '    "AppAutoUpdate": false' \
+            '  }' \
+            '}' \
+            > "$resources/distribution/policies.json"
+          printf '%s\n' \
+            'pref("app.update.auto", false);' \
+            'pref("app.update.enabled", false);' \
+            'pref("app.update.background.scheduling.enabled", false);' \
+            'pref("app.update.service.enabled", false);' \
+            > "$resources/defaults/pref/zen-no-update.js"
+          rm -rf "$bundle/Contents/_CodeSignature"
+
+      - name: Create app bundle zip
+        run: |
+          set -ex
+          mkdir -p ./output
+          # The assembled bundle, at the same path surfer packages into the MAR:
+          # <obj>/dist/<binaryName>/<brand>.app.
+          bundle="engine/obj-$ARCH-apple-darwin/dist/zen/Twilight.app"
+          test -f "$bundle/Contents/MacOS/zen"
+          echo "Zipping $bundle"
+          # zip updates an existing archive in place, so a leftover file from an
+          # earlier run would survive with entries that are no longer built.
+          rm -f "$GITHUB_WORKSPACE/output/zen-twilight-macos-$ARCH.zip"
+          # -y keeps symlinks as symlinks, which the framework bundles use.
+          (cd "$(dirname "$bundle")" && zip -q -r -y "$GITHUB_WORKSPACE/output/zen-twilight-macos-$ARCH.zip" "$(basename "$bundle")")
+
+      # Verify the artifact itself, not a directory next to it.
+      #
+      # Reading application.ini straight out of the archive is the only check
+      # that cannot be fooled: the earlier version inspected a bundle on disk
+      # that had already been refreshed after the image was staged, so it
+      # reported a stale DMG as current.
+      - name: Verify bundle integrity
+        run: |
+          # pipefail: without it, a failing `unzip | grep` pipeline can report
+          # the status of whichever end the shell feels like, and an `if` around
+          # it would turn an unreadable archive into a pass.
+          set -exo pipefail
+          zip="output/zen-twilight-macos-$ARCH.zip"
+          test -f "$zip"
+          echo "Artifact: $zip ($(du -h "$zip" | cut -f1))"
+          unzip -l "$zip" | grep -q "Twilight.app/Contents/MacOS/zen"
+          echo "Bundle in the archive:"
+          unzip -p "$zip" "Twilight.app/Contents/Resources/application.ini" | grep -E "^(SourceStamp|URL|Version)="
+          # The bundle has to be this commit's build.
+          unzip -p "$zip" "Twilight.app/Contents/Resources/application.ini" \
+            | grep -q "^SourceStamp=${{ github.sha }}$"
+          # The update host has to be the dead one set by
+          # src/build/moz-build.patch, which replaces Mozilla's aus5.mozilla.org
+          # default in build/moz.build (surfer.json's updateHostname never
+          # reaches application.ini). Combined with this fork's own MAR signing
+          # cert, the updater in this build can never install an official
+          # release.
+          unzip -p "$zip" "Twilight.app/Contents/Resources/application.ini" \
+            | grep -q "^URL=https://127.0.0.1/"
+          # Shipping the bundle means shipping its update wiring: both policy
+          # and pref must be in the archive.
+          unzip -p "$zip" "Twilight.app/Contents/Resources/distribution/policies.json" \
+            | grep -q '"DisableAppUpdate": true'
+          unzip -p "$zip" "Twilight.app/Contents/Resources/defaults/pref/zen-no-update.js" \
+            | grep -q 'app.update.auto", false'
+
+      # Store the object dir of this successful build so the next run can
+      # restore it. Saving only after a successful build keeps a broken build
+      # from poisoning the cache for every run after it.
+      - name: Save compiled objects
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: engine/obj-${{ env.ARCH }}-apple-darwin
+          key: obj-${{ env.ARCH }}-${{ hashFiles('surfer.json') }}-${{ github.run_id }}
+
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: zen-twilight-macos-${{ inputs.arch || 'aarch64' }}
+          path: ./output/zen-twilight-macos-${{ inputs.arch || 'aarch64' }}.zip
+          retention-days: 7

@@ -325,6 +325,7 @@
   #overflowed-extensions-list,
   #unified-extensions-area,
   .unified-extensions-list,
+  #zen-site-data-disabled-stack-container:not([hidden="true"]),
   #zen-site-data-new-addon-button-container {
     display: contents;
 
@@ -364,7 +365,301 @@
       }
     }
   }
+
+  #zen-site-data-disabled-stack-container[hidden="true"],
+  #zen-site-data-disabled-stack-container[hidden="true"] > *,
+  #zen-site-data-disabled-stack-button[hidden="true"] {
+    display: none !important;
+  }
+
+  /* 3-Card Fan Stack for Disabled Extensions */
+  #zen-site-data-disabled-stack-button {
+    padding: 0 !important;
+    margin: 0 !important;
+    position: relative;
+    overflow: visible !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  /* Hide default Firefox toolbarbutton icon and label to prevent offset */
+  #zen-site-data-disabled-stack-button > .toolbarbutton-icon,
+  #zen-site-data-disabled-stack-button > .toolbarbutton-text,
+  #zen-site-data-disabled-stack-button > .toolbarbutton-badge-stack {
+    display: none !important;
+  }
+
+  #zen-site-data-disabled-stack-button > .toolbarbutton-box {
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  .zen-disabled-stack-wrapper {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    pointer-events: none !important;
+  }
+
+  .zen-disabled-stack-card {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 18px;
+    height: 18px;
+    margin-top: -9px;
+    margin-left: -9px;
+    border-radius: 5px;
+    backdrop-filter: blur(12px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    pointer-events: none;
+    box-sizing: border-box;
+    transition:
+      transform 0.22s cubic-bezier(0.2, 0, 0, 1),
+      background-color 0.2s ease,
+      box-shadow 0.22s ease,
+      opacity 0.2s ease;
+
+    &[hidden="true"] {
+      display: none !important;
+    }
+
+    & .zen-disabled-stack-icon {
+      width: 12px;
+      height: 12px;
+      object-fit: contain;
+      display: block;
+      pointer-events: none;
+    }
+  }
+
+  /* Single icon */
+  .zen-disabled-stack-card[stack-mode="single"] {
+    z-index: 2;
+    background: rgba(45, 45, 50, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+    transform: scale(1.1);
+  }
+
+
+
+  /* 3-Card Triple Fan (symmetrically centered, matching sketch) */
+  .zen-disabled-stack-card-left,
+  .zen-disabled-stack-card[stack-mode="triple-left"] {
+    z-index: 1;
+    background: rgba(30, 30, 34, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.28);
+    transform: translate(-7.5px, 1px) rotate(-13deg);
+    opacity: 0.9;
+  }
+
+  .zen-disabled-stack-card-right,
+  .zen-disabled-stack-card[stack-mode="triple-right"] {
+    z-index: 1;
+    background: rgba(30, 30, 34, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.28);
+    transform: translate(7.5px, 1px) rotate(13deg);
+    opacity: 0.9;
+  }
+
+  .zen-disabled-stack-card-center,
+  .zen-disabled-stack-card[stack-mode="triple-center"] {
+    z-index: 3;
+    background: rgba(52, 52, 58, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    box-shadow: 0 3px 9px rgba(0, 0, 0, 0.5);
+    transform: translate(0, -1.5px);
+  }
+
+  #zen-site-data-disabled-stack-button:hover .zen-disabled-stack-card-left,
+  #zen-site-data-disabled-stack-button:hover .zen-disabled-stack-card[stack-mode="triple-left"] {
+    transform: translate(-10px, 1px) rotate(-18deg);
+    opacity: 1;
+  }
+
+  #zen-site-data-disabled-stack-button:hover .zen-disabled-stack-card-right,
+  #zen-site-data-disabled-stack-button:hover .zen-disabled-stack-card[stack-mode="triple-right"] {
+    transform: translate(10px, 1px) rotate(18deg);
+    opacity: 1;
+  }
+
+  #zen-site-data-disabled-stack-button:hover .zen-disabled-stack-card-center,
+  #zen-site-data-disabled-stack-button:hover .zen-disabled-stack-card[stack-mode="triple-center"] {
+    transform: scale(1.1) translate(0, -2.5px);
+    box-shadow: 0 5px 12px rgba(0, 0, 0, 0.6);
+  }
+
+  /* Placeholder card for unfilled slots (< 3 extensions) */
+  .zen-disabled-stack-card[placeholder="true"] {
+    background: rgba(28, 28, 32, 0.45) !important;
+    border: 1px dashed rgba(255, 255, 255, 0.22) !important;
+    box-shadow: none !important;
+    opacity: 0.5 !important;
+
+    & .zen-disabled-stack-icon {
+      opacity: 0.35;
+      width: 10px;
+      height: 10px;
+      -moz-context-properties: fill;
+      fill: currentColor;
+    }
+  }
+
+  #zen-site-data-disabled-stack-button:hover .zen-disabled-stack-card[placeholder="true"] {
+    opacity: 0.7 !important;
+    border-color: rgba(255, 255, 255, 0.35) !important;
+  }
 }
+
+/* In-place folder transitions - at top level so #zen-site-data-section-addons matches */
+#zen-site-data-section-addons:not([disabled-folder="true"]) [data-zen-space-disabled="true"] {
+  display: none !important;
+}
+
+#zen-site-data-section-addons[disabled-folder="true"] [data-zen-space-disabled="false"] {
+  display: none !important;
+}
+
+#zen-site-data-section-addons[disabled-folder="true"] #zen-site-data-disabled-stack-container,
+#zen-site-data-section-addons[disabled-folder="true"] #zen-site-data-disabled-stack-button {
+  display: none !important;
+}
+
+#zen-site-data-section-addons[disabled-folder="true"] [data-zen-space-disabled="true"] {
+  animation: zen-addon-folder-enter 0.22s cubic-bezier(0.2, 0, 0, 1) both;
+  cursor: pointer !important;
+  transition: transform 0.15s cubic-bezier(0.2, 0, 0, 1), filter 0.15s ease, background-color 0.15s ease;
+}
+
+#zen-site-data-section-addons[disabled-folder="true"] [data-zen-space-disabled="true"]:hover {
+  transform: scale(1.08) !important;
+  background-color: color-mix(in srgb, currentcolor 14%, transparent) !important;
+  filter: brightness(1.2);
+}
+
+#zen-site-data-section-addons[disabled-folder="true"] [data-zen-space-disabled="true"]:active {
+  transform: scale(0.95) !important;
+}
+
+@keyframes zen-addon-folder-enter {
+  0% {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Addons Header & Title Morphing */
+#zen-site-data-addons-header-title-box {
+  display: flex;
+  align-items: center;
+}
+
+#zen-site-data-addons-title-disabled {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+#zen-site-data-section-addons:not([disabled-folder="true"]) #zen-site-data-addons-title-disabled {
+  display: none !important;
+}
+
+#zen-site-data-section-addons:not([disabled-folder="true"]) #zen-site-data-addons-title-normal {
+  display: flex !important;
+}
+
+#zen-site-data-section-addons[disabled-folder="true"] #zen-site-data-addons-title-normal {
+  display: none !important;
+}
+
+#zen-site-data-section-addons[disabled-folder="true"] #zen-site-data-addons-title-disabled {
+  display: flex !important;
+}
+
+.zen-site-data-space-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.zen-site-data-space-icon {
+  width: 14px;
+  height: 14px;
+  -moz-context-properties: fill, stroke;
+  fill: currentColor;
+}
+
+.zen-site-data-space-icon-text {
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* Plus button morphing to Close (✕) with danger red blur */
+#zen-site-data-new-addon-button .toolbarbutton-icon {
+  transition:
+    transform 0.22s cubic-bezier(0.2, 0, 0, 1),
+    fill 0.2s ease,
+    stroke 0.2s ease,
+    filter 0.2s ease !important;
+}
+
+#zen-site-data-section-addons[disabled-folder="true"] #zen-site-data-new-addon-button {
+  transform: none !important;
+  background-color: rgba(255, 69, 58, 0.16) !important;
+  border: 1px solid rgba(255, 69, 58, 0.38) !important;
+  backdrop-filter: blur(12px) !important;
+}
+
+#zen-site-data-section-addons[disabled-folder="true"] #zen-site-data-new-addon-button:hover {
+  background-color: rgba(255, 69, 58, 0.28) !important;
+  border-color: rgba(255, 69, 58, 0.6) !important;
+  transform: scale(1.05) !important;
+}
+
+#zen-site-data-section-addons[disabled-folder="true"] #zen-site-data-new-addon-button:active:hover {
+  background-color: rgba(255, 69, 58, 0.42) !important;
+  transform: scale(0.95) !important;
+}
+
+#zen-site-data-section-addons[disabled-folder="true"] #zen-site-data-new-addon-button .toolbarbutton-icon {
+  transform: rotate(45deg);
+  -moz-context-properties: fill, stroke !important;
+  fill: #ff453a !important;
+  stroke: #ff453a !important;
+  filter: drop-shadow(0 0 3px rgba(255, 69, 58, 0.5));
+}
+
+/* Per-Space Extension Behavioral Isolation - strictly scoped to browser toolbars */
+#nav-bar toolbarbutton[data-zen-space-hidden="true"],
+#nav-bar toolbaritem[data-zen-space-hidden="true"],
+#TabsToolbar toolbarbutton[data-zen-space-hidden="true"],
+#PersonalToolbar toolbarbutton[data-zen-space-hidden="true"] {
+  display: none !important;
+}
+
 
 .zen-site-data-section {
   gap: var(--zen-space-2);
@@ -832,6 +1127,8 @@
 
 %include zen-library-widget.css
 %include zen-library-media-preview.css
+
+%include zen-ardia-glass.css
 
 .zen-swipe-add-space-container {
   position: absolute;

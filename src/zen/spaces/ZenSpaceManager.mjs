@@ -2009,6 +2009,16 @@ class nsZenWorkspaces {
       return;
     }
 
+    if (
+      previousWorkspace &&
+      previousWorkspace.uuid !== workspace.uuid &&
+      !onInit &&
+      !whileScrolling
+    ) {
+      /* eslint-disable-next-line mozilla/valid-services */
+      Services.zen?.playHapticFeedback?.();
+    }
+
     const workspaces = this.getWorkspaces();
     gZenFolders.cancelPopupTimer();
 

@@ -1,11 +1,22 @@
 diff --git a/toolkit/themes/shared/pictureinpicture/player.css b/toolkit/themes/shared/pictureinpicture/player.css
-index 2e502fb075546bab4349f3da97069e764528d763..4ff7f2ee47085c2d2131f54a647468fab81c7d88 100644
+index c808890..0ef696b 100644
 --- a/toolkit/themes/shared/pictureinpicture/player.css
 +++ b/toolkit/themes/shared/pictureinpicture/player.css
-@@ -738,3 +738,17 @@ input:checked + .slider::before {
+@@ -810,3 +810,194 @@ body:not(:fullscreen) #fullscreen {
      justify-self: center;
    }
  }
++
++:root,
++html,
++body,
++#player,
++#video-container,
++.video-wrapper,
++video {
++  background-color: #000000 !important;
++  color-scheme: dark !important;
++}
 +
 +#minimize {
 +  background-image: url("chrome://browser/skin/zen-icons/unpin.svg");
@@ -19,4 +30,170 @@ index 2e502fb075546bab4349f3da97069e764528d763..4ff7f2ee47085c2d2131f54a647468fa
 +#minimize[mac="true"] {
 +  right: auto;
 +  left: 50px;
++}
++
++body.pip-gesture-active .control-item,
++body.pip-gesture-active #controls,
++body.pip-gesture-active #controls-bottom,
++body.pip-gesture-active #controls-bottom-gradient {
++  opacity: 0 !important;
++  pointer-events: none !important;
++  transition: opacity 120ms ease-out !important;
++}
++
++/* Google Meet PiP Controls */
++#meet-controls {
++  display: none !important;
++}
++
++#meet-controls::after,
++#meet-controls::before,
++.meet-btn::after,
++.meet-btn::before,
++#meet-mic-btn::after,
++#meet-mic-btn::before,
++#meet-camera-btn::after,
++#meet-camera-btn::before,
++#meet-leave-btn::after,
++#meet-leave-btn::before {
++  display: none !important;
++  content: none !important;
++}
++
++body.is-google-meet #controls-bottom-gradient {
++  display: none !important;
++}
++
++body.is-google-meet #controls-bottom {
++  display: flex !important;
++  flex-direction: row !important;
++  justify-content: center !important;
++  align-items: center !important;
++  padding-bottom: 14px !important;
++}
++
++body.is-google-meet .controls-bottom-upper,
++body.is-google-meet .controls-bottom-lower,
++body.is-google-meet #playpause,
++body.is-google-meet #seekBackward,
++body.is-google-meet #seekForward,
++body.is-google-meet #scrubber,
++body.is-google-meet .scrubber-no-drag,
++body.is-google-meet #timestamp,
++body.is-google-meet #audio,
++body.is-google-meet #audio-scrubber,
++body.is-google-meet #closed-caption,
++body.is-google-meet #settings,
++body.is-google-meet #fullscreen,
++body.is-google-meet .start-controls,
++body.is-google-meet .center-controls,
++body.is-google-meet .end-controls {
++  display: none !important;
++}
++
++body.is-google-meet #meet-controls {
++  display: flex !important;
++  flex-direction: row !important;
++  align-items: center !important;
++  justify-content: center !important;
++  gap: 14px !important;
++  margin: 0 auto !important;
++  pointer-events: auto !important;
++}
++
++/* The call controls float over the video, so they use the same Ardia frosted
++   glass as the swipe capsule (chrome://browser/content/zen-styles/
++   zen-ardia-glass.css, linked from player.xhtml): they blur the frame behind
++   them instead of painting a flat grey disc on top of it. */
++.meet-btn {
++  display: flex !important;
++  align-items: center !important;
++  justify-content: center !important;
++  width: 44px !important;
++  height: 44px !important;
++  min-width: 44px !important;
++  min-height: 44px !important;
++  max-width: 44px !important;
++  max-height: 44px !important;
++  border-radius: 50% !important;
++  border: var(--zen-ardia-glass-rim-over-video) !important;
++  outline: none !important;
++  background-color: var(--zen-ardia-glass-fill-over-video) !important;
++  backdrop-filter: var(--zen-ardia-glass-filter) !important;
++  -webkit-backdrop-filter: var(--zen-ardia-glass-filter) !important;
++  cursor: pointer !important;
++  box-shadow: var(--zen-ardia-glass-shadow-over-video) !important;
++  box-sizing: border-box !important;
++  /* Keep the upstream .control-item fade in the transition, so the call controls
++     appear and disappear with the rest of the PiP chrome. */
++  transition: background-color 150ms ease, transform 150ms cubic-bezier(0.2, 0, 0, 1),
++    opacity 160ms linear !important;
++  padding: 0 !important;
++  margin: 0 !important;
++  position: relative !important;
++}
++
++.meet-btn svg {
++  width: 22px !important;
++  height: 22px !important;
++  min-width: 22px !important;
++  min-height: 22px !important;
++  display: block !important;
++  fill: #ffffff !important;
++  pointer-events: none !important;
++}
++
++.meet-btn svg path {
++  fill: #ffffff !important;
++}
++
++.meet-btn:hover {
++  background-color: rgba(95, 99, 104, 0.82) !important;
++  transform: scale(1.08) !important;
++}
++
++.meet-btn:active {
++  transform: scale(0.94) !important;
++}
++
++#meet-mic-btn.is-muted {
++  background-color: rgba(234, 67, 53, 0.88) !important;
++}
++
++#meet-mic-btn.is-muted:hover {
++  background-color: rgba(217, 48, 37, 0.92) !important;
++}
++
++#meet-camera-btn.is-off {
++  background-color: rgba(234, 67, 53, 0.88) !important;
++}
++
++#meet-camera-btn.is-off:hover {
++  background-color: rgba(217, 48, 37, 0.92) !important;
++}
++
++.meet-btn-hangup {
++  background-color: rgba(234, 67, 53, 0.88) !important;
++}
++
++.meet-btn-hangup:hover {
++
++/*
++ * Diagnostic frame for the resize pipeline, enabled with the `zen.pip.debug`
++ * pref. Red traces the window; lime traces the remote <browser> element that
++ * holds the video. A black band inside the lime box belongs to the child, a band
++ * between the two borders to this document.
++ */
++body.pip-debug::after {
++  content: "";
++  position: fixed;
++  inset: 0;
++  border: 4px solid #ff0033;
++  pointer-events: none;
++  z-index: 2147483647;
++}
++
++body.pip-debug #browser {
++  outline: 4px solid #00ff44 !important;
++  outline-offset: -4px;
 +}

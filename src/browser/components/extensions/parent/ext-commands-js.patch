@@ -1,0 +1,24 @@
+--- a/browser/components/extensions/parent/ext-commands.js
++++ b/browser/components/extensions/parent/ext-commands.js
+@@ -16,6 +16,21 @@
+ 
+       let listener = (eventName, commandName) => {
+         let nativeTab = tabTracker.activeTab;
++        try {
++          let spaceId =
++            nativeTab?.getAttribute?.("zen-workspace-id") ||
++            nativeTab?.ownerGlobal?.gZenWorkspaces?.activeWorkspace;
++          if (spaceId) {
++            let raw = Services.prefs.getStringPref(
++              "zen.workspaces.disabled-extensions",
++              "{}"
++            );
++            let map = JSON.parse(raw);
++            if (Array.isArray(map[spaceId]) && map[spaceId].includes(extension.id)) {
++              return;
++            }
++          }
++        } catch (e) {}
+         tabManager.addActiveTabPermission(nativeTab);
+         fire.async(commandName, tabManager.convert(nativeTab));
+       };
