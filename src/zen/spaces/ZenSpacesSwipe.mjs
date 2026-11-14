@@ -17,7 +17,7 @@ ChromeUtils.defineLazyGetter(lazy, "toolbarBackgroundElement", () => {
 ChromeUtils.defineESModuleGetters(
   lazy,
   { ZenLibrary: "moz-src:///zen/library/ZenLibrary.mjs" },
-  { global: "current" }
+  { global: "current" },
 );
 
 export class ZenSpacesSwipe {
@@ -72,7 +72,7 @@ export class ZenSpacesSwipe {
 
   get #stripWidth() {
     return window.windowUtils.getBoundsWithoutFlushing(
-      document.getElementById("navigator-toolbox")
+      document.getElementById("navigator-toolbox"),
     ).width;
   }
 
@@ -119,7 +119,7 @@ export class ZenSpacesSwipe {
 
     if (
       event.target.closest(
-        '#urlbar[zen-floating-urlbar="true"], #zen-workspaces-button, #zen-library-download-list'
+        '#urlbar[zen-floating-urlbar="true"], #zen-workspaces-button, #zen-library-download-list',
       )
     ) {
       return;
@@ -145,10 +145,10 @@ export class ZenSpacesSwipe {
       "#tabbrowser-arrowscrollbox",
       ".zen-browser-grain",
     ];
-    elements.forEach(el =>
+    elements.forEach((el) =>
       document
         .querySelectorAll(el)
-        .forEach(node => node?.toggleAttribute("swipe-gesture", enable))
+        .forEach((node) => node?.toggleAttribute("swipe-gesture", enable)),
     );
   }
 
@@ -177,7 +177,7 @@ export class ZenSpacesSwipe {
       lastDelta: 0,
       direction: null,
       deltaMultiplier: Services.prefs.getIntPref(
-        "zen.workspaces.swipe-actions.delta-multiplier"
+        "zen.workspaces.swipe-actions.delta-multiplier",
       ),
       action: libraryOpen ? ZenSpacesSwipe.ACTIONS.LIBRARY : null,
       allowed: {
@@ -227,8 +227,7 @@ export class ZenSpacesSwipe {
       return;
     }
 
-    const progress =
-      Math.abs(event.delta) / ZenSpacesSwipe.SUCCESS_THRESHOLD;
+    const progress = Math.abs(event.delta) / ZenSpacesSwipe.SUCCESS_THRESHOLD;
     const crossed = progress >= 0.6;
 
     if (crossed && !this.#swipeState.detentCrossed) {
@@ -257,7 +256,7 @@ export class ZenSpacesSwipe {
     // Add a force multiplier as we are translating the strip depending on how close to the edge we are
     let forceMultiplier = Math.min(
       1,
-      1 - Math.abs(translateX) / (stripWidth * 4.5)
+      1 - Math.abs(translateX) / (stripWidth * 4.5),
     ); // 4.5 instead of 4 to add a bit of a buffer
     if (forceMultiplier > 0.5) {
       translateX *= forceMultiplier;
@@ -367,9 +366,9 @@ export class ZenSpacesSwipe {
     this.#toggleSwipeGestureAttr(false);
     gZenUIManager.tabsWrapper.style.removeProperty("scrollbar-width");
     [lazy.browserBackgroundElement, lazy.toolbarBackgroundElement].forEach(
-      element => {
+      (element) => {
         element.style.setProperty("--zen-background-opacity", "1");
-      }
+      },
     );
     delete ws._hasAnimatedBackgrounds;
     ws.updateTabsContainers();
