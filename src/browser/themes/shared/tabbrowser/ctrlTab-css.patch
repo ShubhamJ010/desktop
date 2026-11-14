@@ -1,7 +1,7 @@
 diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/shared/tabbrowser/ctrlTab.css
 --- a/browser/themes/shared/tabbrowser/ctrlTab.css
 +++ b/browser/themes/shared/tabbrowser/ctrlTab.css
-@@ -2,118 +2,324 @@
+@@ -2,118 +2,355 @@
   * License, v. 2.0. If a copy of the MPL was not distributed with this
   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
  
@@ -121,6 +121,14 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +
 +  user-select: none;
 +  animation: ctrlTab-card-in 150ms cubic-bezier(0.2, 0, 0, 1);
++  transition: opacity 120ms cubic-bezier(0.2, 0, 0, 1),
++              transform 120ms cubic-bezier(0.2, 0, 0, 1);
++}
++
++.ctrlTab-card.closing {
++  opacity: 0 !important;
++  transform: scale(0.96) translateY(4px) !important;
++  pointer-events: none !important;
 +}
 +
 +/* Ardia <Panel fill={theme.panel} border={panelBorder} shadow={tabSwitcher}>
@@ -220,16 +228,40 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  box-sizing: border-box;
 +  width: 100%;
 +  height: 40px;
++  max-height: 40px;
 +  padding: 0 10px;
 +  border-radius: 8px;
 +  cursor: pointer;
 +  text-align: start;
-+  transition: background-color 100ms ease;
 +  user-select: none;
++  overflow: hidden;
++  transition: background-color 100ms ease,
++              border-color 100ms ease,
++              opacity 120ms cubic-bezier(0.2, 0, 0, 1),
++              transform 120ms cubic-bezier(0.2, 0, 0, 1),
++              max-height 120ms cubic-bezier(0.2, 0, 0, 1),
++              height 120ms cubic-bezier(0.2, 0, 0, 1),
++              padding-top 120ms cubic-bezier(0.2, 0, 0, 1),
++              padding-bottom 120ms cubic-bezier(0.2, 0, 0, 1),
++              margin 120ms cubic-bezier(0.2, 0, 0, 1);
  }
  
 -.ctrlTab-preview > .button-box {
 -  display: none;
++.ctrlTab-preview.closing {
++  opacity: 0 !important;
++  transform: translateX(14px) scale(0.96) !important;
++  max-height: 0 !important;
++  height: 0 !important;
++  padding-top: 0 !important;
++  padding-bottom: 0 !important;
++  margin-top: 0 !important;
++  margin-bottom: 0 !important;
++  border-width: 0 !important;
++  pointer-events: none !important;
+ }
+ 
+-.ctrlTab-favicon-container {
 +/* Focused/hovered row. Ardia fills the row and adds the same 0.5px ring:
 + *   backgroundColor: focused ? switcherFocus : undefined
 + *   borderWidth: focused ? hairline.ring : 0
@@ -240,9 +272,8 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +.ctrlTab-preview:focus {
 +  background-color: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.18));
 +  border-color: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.15));
- }
- 
--.ctrlTab-favicon-container {
++}
++
 +/* -------------------------------------------------------------------------
 + * Favicon — <TabIcon size={18}> / <Favicon size={18}>
 + *   borderRadius: size > 18 ? radius.control : radius.hair (2px)
