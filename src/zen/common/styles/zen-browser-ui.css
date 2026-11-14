@@ -483,6 +483,8 @@ body,
   z-index: 99999 !important;
 }
 
+/* stylelint-disable stylelint-plugin-mozilla/use-design-tokens */
+
 /* Full-height edge rails: the capsule stays anchored to its window edge and
    vertically centred while it grows, exactly like Ardia's `top` + size spring. */
 #historySwipeAnimationPreviousArrow,
@@ -784,3 +786,5 @@ body,
     background-color: light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.14));
   }
 }
+
+/* stylelint-enable stylelint-plugin-mozilla/use-design-tokens */
