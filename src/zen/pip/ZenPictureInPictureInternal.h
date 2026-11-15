@@ -30,7 +30,9 @@ constexpr CGFloat kReturnMargin = 16;
 constexpr CGFloat kButtonMargin = 12, kButtonSize = 28;
 constexpr CFTimeInterval kCornerBendDuration = 0.2;
 
-// Virtual key codes for keyboard control
+// Virtual key codes for keyboard control.
+constexpr unsigned short kKeyW = 13;
+constexpr unsigned short kKeyEscape = 53;
 constexpr unsigned short kKeySpace = 49;
 constexpr unsigned short kKeyLeftArrow = 123;
 constexpr unsigned short kKeyRightArrow = 124;
@@ -69,6 +71,9 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 + (instancetype)forWindow:(NSWindow *)window;
 + (BOOL)attachToWindow:(NSWindow *)window;
 + (void)detachFromWindow:(NSWindow *)window;
+// Enter/exit bookkeeping for the card under the pointer. Called by the local and
+// the global mouse monitors; a no-op when the hovered card has not changed.
++ (void)updateHoverState;
 + (void)updateShadowPathForWindow:(NSWindow *)window radius:(CGFloat)radius;
 + (void)updateShadowPathForWindow:(NSWindow *)window size:(CGSize)size radius:(CGFloat)radius;
 - (instancetype)initWithWindow:(NSWindow *)window;
@@ -86,6 +91,14 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (BOOL)handleKeyDown:(NSEvent *)event;
 - (void)mouseEnteredWindow;
 - (void)mouseExitedWindow;
+// Move the keyboard into the card, activating Zen only when another app is
+// frontmost and demoting every other Zen window so the browser does not come
+// forward with it. Safe to call at any time; does nothing for a closed card.
+- (void)focusPiP;
+// Delayed hover-focus request (opt-in, cancellable).
+- (void)scheduleHoverFocus;
+- (void)cancelHoverFocus;
+- (void)hoverFocusFired;
 - (void)pinchBegan;
 - (void)pinchEnded;
 - (void)pinchEndedAtFrame:(NSRect)target;
@@ -140,6 +153,15 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
   BOOL _isSmartMagnified;
   NSRect _unmagnifiedFrame;
   BOOL _isPinching;
+  // The current gesture began while another app was frontmost, so activation
+  // during it must not bring Zen's other windows forward.
+  BOOL _startedUnderOtherApp;
+  // A focus request has activated the app and is waiting for activation to
+  // settle; see -activateAppForPiPFocus.
+  BOOL _focusingPiP;
+  // Pointer is over this card. Guards the enter/exit path against the duplicate
+  // events the local and global monitors both deliver.
+  BOOL _isMouseOver;
   BOOL _isElevated;
   BOOL _liveResizing;
   // A live resize this code started (pinch/scroll), as opposed to the user
@@ -191,6 +213,10 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (void)windowMoved;
 - (void)appBecameActive;
 - (void)sendOtherWindowsBack;
+- (void)keyPiPWithoutActivating;
+- (void)activateAppForPiPFocus;
+- (void)finishPiPFocus;
+- (BOOL)gestureStartedUnderOtherApp;
 - (void)fitCorners:(BOOL)animated;
 - (void)bendCornersTo:(CGFloat)radius animated:(BOOL)animated;
 - (void)screenChanged;

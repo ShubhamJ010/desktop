@@ -10,6 +10,7 @@
 
 #import <objc/runtime.h>
 #import <QuartzCore/QuartzCore.h>
+#import <ApplicationServices/ApplicationServices.h>
 #import <os/log.h>
 #import <os/signpost.h>
 
@@ -17,13 +18,32 @@ using namespace zen_pip;
 
 namespace {
 
+// The card whose window the pointer last entered. Hover is window-global rather
+// than per controller: the pointer can cross from one PiP to another and only
+// one of them may be in the hovered state at a time. Held unretained; the owning
+// controller clears it in -detach, before the window can go away.
+__unsafe_unretained NSWindow *sHoveredWindow = nil;
+// Session-wide scroll tap (see PiPScrollTapCallback). NULL when the process is
+// not trusted for Input Monitoring; every user of it checks first.
+CFMachPortRef sEventTap = NULL;
+CFRunLoopSourceRef sEventTapSource = NULL;
+
 NSString *const kKeepOnTopDefault = @"ZenPictureInPictureKeepOnTop";
 NSString *const kGestureTimingDefault = @"ZenPictureInPictureGestureTiming";
+NSString *const kHoverFocusDefault = @"ZenPictureInPictureHoverFocus";
 // A resize has to stay visible over whatever app is frontmost. Floating level
 // beats another app's normal windows, but not its panels or sheets, so the card
 // is lifted for the gesture only. Modal-panel level is still below the menu bar,
 // which keeps the card from drawing over it.
 constexpr NSInteger kGestureFrontLevel = NSModalPanelWindowLevel;
+// How long the pointer has to rest over the card before hover focus may take
+// the keyboard. Long enough that crossing the card on the way elsewhere never
+// activates Zen, short enough to feel like a hover rather than a click.
+constexpr NSTimeInterval kHoverFocusDelay = 0.25;
+// Upper bound on waiting for an activation to settle. AppKit posts the
+// activation notification within a loop turn or two; this only covers the case
+// where it never arrives (activation refused, or already in progress).
+constexpr NSTimeInterval kFocusSettleTimeout = 1.0;
 const void *const kControllerKey = &kControllerKey;
 
 os_log_t PiPGestureLog() {
@@ -33,6 +53,14 @@ os_log_t PiPGestureLog() {
     log = os_log_create("app.zen-browser.pip", "gesture");
   });
   return log;
+}
+
+// Opt-in, off by default: hover focus activates Zen, so it must never be a
+// surprise. Read on every use instead of cached, because the context-menu
+// toggle has to affect a request that is already in flight.
+BOOL HoverFocusEnabled() {
+  id value = [NSUserDefaults.standardUserDefaults objectForKey:kHoverFocusDefault];
+  return value ? [value boolValue] : NO;
 }
 
 // Gated probe: `defaults write app.zen-browser.zen-custom ZenPictureInPictureGestureTiming -bool YES`
@@ -122,6 +150,11 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
   ZenPiPController *controller = [[[ZenPiPController alloc] initWithWindow:window] autorelease];
   // Clicking or gesturing the PiP must front the window, not the whole app.
   [window _setPreventsActivation:YES];
+  // The pinch/scroll paths resize through AppKit's own live-resize machinery,
+  // which only works on a resizable window. Page-created PiP windows may not
+  // declare themselves resizable; the aspect ratio is locked either way, so the
+  // only thing this allows is a resize the card was already taking.
+  window.styleMask |= NSWindowStyleMaskResizable;
   // The card follows the user across Spaces, including another app's full-screen
   // space: a PiP that disappears when the frontmost app goes full screen cannot
   // be resized at all.
@@ -224,6 +257,11 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
 - (void)detach {
   if (_detached) return;
   _detached = YES;
+  if (sHoveredWindow == _window) {
+    sHoveredWindow = nil;
+  }
+  _isMouseOver = NO;
+  _focusingPiP = NO;
   [self endOwnedLiveResize];
   _liveResizing = NO;
   [self retain];
@@ -557,23 +595,104 @@ static void NotifyPiPGestureHover() {
   _frontedForGesture = NO;
   if (!_window) return;
   _window.level = static_cast<NSWindowLevel>(_restingLevel);
+  [_window orderFrontRegardless];
 }
 
-// AppKit can activate Zen as a side effect of a resize that began under another
-// app. Activation brings every window of the app forward, browser window
-// included, which is the one thing a floating PiP must not cause. During a
-// gesture only the card is allowed in front, so everything else is sent back.
+// ---------------------------------------------------------------------------
+// Focus
+//
+// The card lives in Zen's process but, most of the time, another app is
+// frontmost. Getting keyboard input into it (transport keys, click to drag,
+// optional hover focus) therefore means activating Zen, and activation is the
+// one thing a floating PiP must do as quietly as possible. Three rules:
+//
+//   1. Only the card comes forward. Activation raises the app's main window
+//      too, so every other window is demoted again afterwards.
+//   2. Only when asked. Hover focus is opt-in and delayed; key presses, clicks
+//      and a completed swipe are explicit requests.
+//   3. `preventsActivation` goes back up. That flag is what makes a plain click
+//      on the card front the window instead of activating Zen; it has to be
+//      lowered while the app activates, or AppKit keys the browser window
+//      rather than the card.
+// ---------------------------------------------------------------------------
+
+- (void)focusPiP {
+  if (!_window || !_window.isVisible) return;
+  if (NSApp.isActive) {
+    [self keyPiPWithoutActivating];
+    return;
+  }
+  [self activateAppForPiPFocus];
+}
+
+// Zen is already frontmost: keying the card cannot disturb any other app, so
+// `preventsActivation` is lifted and restored around the single call.
+- (void)keyPiPWithoutActivating {
+  if (!_window || _window.isKeyWindow) return;
+  const BOOL prevented = [_window _preventsActivation];
+  if (prevented) [_window _setPreventsActivation:NO];
+  [_window makeKeyWindow];
+  [_window orderFrontRegardless];
+  if (prevented) [_window _setPreventsActivation:YES];
+}
+
+// Another app is frontmost. Activation is asynchronous and AppKit keys the
+// app's main window on the way in, so the card is keyed once more when
+// activation settles (-appBecameActive), and `preventsActivation` stays lowered
+// until then.
+- (void)activateAppForPiPFocus {
+  _focusingPiP = YES;
+  [_window _setPreventsActivation:NO];
+  [_window makeKeyWindow];
+  [_window orderFrontRegardless];
+  [self sendOtherWindowsBack];
+  [NSRunningApplication.currentApplication activateWithOptions:0];
+
+  // Safety net for an activation that never reports back (refused, or already
+  // in progress): the card must not stay focus-stealing. Retained explicitly
+  // because the block holds a raw pointer in this (non-ARC) translation unit.
+  [self retain];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kFocusSettleTimeout * NSEC_PER_SEC)),
+                 dispatch_get_main_queue(), ^{
+                   [self finishPiPFocus];
+                   [self release];
+                 });
+}
+
+// The focus session is over: hand the card its click-through behaviour back.
+// Idempotent, so both the activation notification and the safety-net timer can
+// call it.
+- (void)finishPiPFocus {
+  if (!_focusingPiP) return;
+  _focusingPiP = NO;
+  if (_window) [_window _setPreventsActivation:YES];
+}
+
+// A gesture that began while another app was frontmost keeps Zen's other
+// windows out of the way for its whole duration, and only for that case: a
+// gesture the user started inside already-active Zen needs no demotion.
+- (BOOL)gestureStartedUnderOtherApp {
+  return _startedUnderOtherApp && (_isPinching || _liveResizing || _swiping || _animating);
+}
+
+// AppKit can activate Zen as a side effect of a resize or a focus request. The
+// notification arrives before the app's windows have finished being raised, so
+// the demotion is applied twice: now, and once more on the next loop turn.
 - (void)appBecameActive {
   if (!_window) return;
-  if (!(_isPinching || _liveResizing || _swiping || _animating)) return;
+  if (!_focusingPiP && ![self gestureStartedUnderOtherApp]) return;
   [self sendOtherWindowsBack];
-  // Activation finishes raising the app's windows after the notification, so the
-  // same demotion runs once more on the next loop turn.
+  [_window makeKeyWindow];
+  [_window orderFrontRegardless];
   [self retain];
-  __unsafe_unretained ZenPiPController *weakSelf = self;
   dispatch_async(dispatch_get_main_queue(), ^{
-    [weakSelf sendOtherWindowsBack];
-    [weakSelf release];
+    if (!_detached && _window && (_focusingPiP || [self gestureStartedUnderOtherApp])) {
+      [self sendOtherWindowsBack];
+      [_window makeKeyWindow];
+      [_window orderFrontRegardless];
+    }
+    [self finishPiPFocus];
+    [self release];
   });
 }
 
@@ -581,6 +700,9 @@ static void NotifyPiPGestureHover() {
   if (!_window || !_window.isVisible) return;
   for (NSWindow *win in NSApp.windows) {
     if (win == _window || !win.isVisible) continue;
+    // Other PiP cards are peers, not the browser window: demoting them would
+    // reorder one card behind another every time either one is focused.
+    if ([ZenPiPController forWindow:win]) continue;
     [win orderBack:nil];
   }
   [_window orderFrontRegardless];
@@ -591,6 +713,14 @@ static void NotifyPiPGestureHover() {
   [NSUserDefaults.standardUserDefaults setBool:_keepOnTop forKey:kKeepOnTopDefault];
 }
 
+// Menu toggle. The preference is read when a request fires, so switching it off
+// also has to cancel a request that is already pending.
+- (void)toggleHoverFocus:(id)sender {
+  const BOOL enabled = !HoverFocusEnabled();
+  [NSUserDefaults.standardUserDefaults setBool:enabled forKey:kHoverFocusDefault];
+  if (!enabled) [self cancelHoverFocus];
+}
+
 - (NSMenu *)menu {
   NSMenu *menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
   NSMenuItem *back = [menu addItemWithTitle:@"Back to Tab" action:@selector(backToTabFromMenu:) keyEquivalent:@""];
@@ -599,6 +729,10 @@ static void NotifyPiPGestureHover() {
   NSMenuItem *top = [menu addItemWithTitle:@"Keep Window on Top" action:@selector(toggleKeepOnTop:) keyEquivalent:@""];
   top.target = self;
   top.state = _keepOnTop ? NSControlStateValueOn : NSControlStateValueOff;
+  // Off by default: see kHoverFocusDelay for why the hover is delayed.
+  NSMenuItem *hover = [menu addItemWithTitle:@"Focus on Hover" action:@selector(toggleHoverFocus:) keyEquivalent:@""];
+  hover.target = self;
+  hover.state = HoverFocusEnabled() ? NSControlStateValueOn : NSControlStateValueOff;
   return menu;
 }
 
@@ -1106,6 +1240,7 @@ static void NotifyPiPGestureHover() {
   // elevation, cursor and PiP-UI changes are all deferred (see beginGestureChrome).
   [self cancelMotion];
   _swiping = YES;
+  _startedUnderOtherApp = !NSApp.isActive;
   // Any pinch still in flight loses: its idle timer would otherwise snap the window
   // in the middle of this flick. Safe here because endGestureChrome no-ops while
   // `_swiping` is set.
@@ -1143,16 +1278,61 @@ static void NotifyPiPGestureHover() {
   return NSMakePoint(x.velocity, y.velocity);
 }
 
+// The PiP card under the pointer, or nil. Uses the window server's stacking
+// order rather than a frame test over Zen's own windows: the card routinely
+// sits under the pointer while another app is frontmost, and possibly with one
+// of that app's windows above it, in which case the pointer is not over the
+// card at all.
 + (ZenPiPController *)controllerUnderPointer {
-  NSPoint mouse = NSEvent.mouseLocation;
-  for (NSWindow *candidate in NSApp.orderedWindows) {
-    if (!candidate.visible) continue;
-    if (NSPointInRect(mouse, candidate.frame)) {
-      ZenPiPController *controller = [self forWindow:candidate];
-      if (controller) return controller;
+  const NSPoint mouse = NSEvent.mouseLocation;
+  const NSInteger windowNumber = [NSWindow windowNumberAtPoint:mouse belowWindowWithWindowNumber:0];
+  if (windowNumber > 0) {
+    NSWindow *window = [NSApp windowWithWindowNumber:windowNumber];
+    // A PiP card can own child panels; resolve up to the window that has a
+    // controller.
+    while (window && ![self forWindow:window] && window.parentWindow) {
+      window = window.parentWindow;
     }
+    ZenPiPController *controller = window ? [self forWindow:window] : nil;
+    // Whatever is on top is not ours, so the pointer is over another app's
+    // window. Never fall through to a frame test: it would claim the card is
+    // hovering while it is actually behind that window.
+    return (controller && controller.window.isVisible) ? controller : nil;
+  }
+
+  // No window under the pointer at all (a gap between windows, or the desktop).
+  // A frame test over our own windows is close enough to tell which card, if
+  // any, the pointer is over.
+  for (NSWindow *candidate in NSApp.windows) {
+    if (!candidate.visible) continue;
+    if (!NSPointInRect(mouse, candidate.frame)) continue;
+    ZenPiPController *controller = [self forWindow:candidate];
+    if (controller) return controller;
   }
   return nil;
+}
+
+// Enter/exit bookkeeping for the card under the pointer, driven by the mouse
+// monitors. Both a local and a global monitor call it, because Zen's own
+// monitors see nothing while another app is frontmost - which is the state the
+// hover behaviour exists for. Idempotent per controller (see _isMouseOver), so
+// the duplicate calls this causes are cheap.
++ (void)updateHoverState {
+  ZenPiPController *current = [self controllerUnderPointer];
+  NSWindow *currentWindow = (current && current.window.isVisible) ? current.window : nil;
+  if (currentWindow == sHoveredWindow) {
+    if (current) [current restoreUIOnMouseMove];
+    return;
+  }
+  if (sHoveredWindow) {
+    ZenPiPController *previous = [self forWindow:sHoveredWindow];
+    sHoveredWindow = nil;
+    [previous mouseExitedWindow];
+  }
+  if (currentWindow) {
+    sHoveredWindow = currentWindow;
+    [current mouseEnteredWindow];
+  }
 }
 
 // Chrome for both gesture kinds: activate, front the window, hide the PiP UI, the
@@ -1204,6 +1384,7 @@ static void NotifyPiPGestureHover() {
 // when another animation (the pinch snap) is about to own the controls itself.
 - (void)endGestureChrome:(BOOL)restoreUI {
   if (!_window || _swiping) return;
+  _startedUnderOtherApp = NO;
   [self showCursorIfNeeded];
   if (restoreUI) [self setPiPUIVisible:YES];
   // Rebuild the resting shadow once, from the final frame.
@@ -1312,6 +1493,11 @@ static void NotifyPiPGestureHover() {
     // already returned on lift.
   } else {
     [self endGestureChrome:YES];
+    // A swipe that came to rest over the card leaves the pointer there with the
+    // keyboard still in the app it was taken from. Hand it to the card: the user
+    // just interacted with it, and the gesture suppressed the hover request that
+    // would otherwise have done this.
+    [self focusPiP];
   }
   os_signpost_event_emit(PiPGestureLog(), gGestureSignpost, "end");
   if (GestureTimingEnabled()) {
@@ -1333,7 +1519,12 @@ static void NotifyPiPGestureHover() {
 }
 
 - (void)mouseEnteredWindow {
-  if (!_window) return;
+  if (!_window || _isMouseOver) return;
+  _isMouseOver = YES;
+  // Scheduled before the gesture guards below: a pointer that comes to rest on
+  // the card while it is being pinched, swiped or animated has still asked for
+  // hover focus, and the request has to survive until the gesture is done.
+  [self scheduleHoverFocus];
   // Freeze hover while the window is already moving.
   if (_swiping || _animating) return;
   // Growing the card during a resize makes AppKit post enters under a pointer
@@ -1351,12 +1542,45 @@ static void NotifyPiPGestureHover() {
 }
 
 - (void)mouseExitedWindow {
+  if (!_isMouseOver) return;
+  _isMouseOver = NO;
+  [self cancelHoverFocus];
   [self disarmSwipe];
+}
+
+// Hover focus is a delayed, cancellable request: the pointer has to rest over
+// the card, and leaving cancels it, so a pointer merely crossing the card never
+// takes the keyboard away from the frontmost app.
+- (void)scheduleHoverFocus {
+  [self cancelHoverFocus];
+  if (!HoverFocusEnabled()) return;
+  [self performSelector:@selector(hoverFocusFired) withObject:nil afterDelay:kHoverFocusDelay];
+}
+
+- (void)cancelHoverFocus {
+  [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(hoverFocusFired) object:nil];
+}
+
+// Everything can change while a hover request waits: the pointer may have left,
+// the preference may have been switched off, a gesture may have started. All of
+// it is re-checked here instead of being trusted from enter time.
+- (void)hoverFocusFired {
+  if (!HoverFocusEnabled() || !_isMouseOver) return;
+  if (_swiping || _isPinching || _liveResizing || _animating) {
+    // A gesture owns the card: neither stealing the keyboard mid-gesture nor
+    // dropping the request is right, so it is deferred by one more delay. This
+    // stops as soon as the pointer leaves (mouseExitedWindow cancels) or the
+    // gesture ends, and a gesture cannot last forever.
+    [self performSelector:@selector(hoverFocusFired) withObject:nil afterDelay:kHoverFocusDelay];
+    return;
+  }
+  [self focusPiP];
 }
 
 - (void)pinchBegan {
   if (_swiping) [self abandonSwipe];
   _isPinching = YES;
+  _startedUnderOtherApp = !NSApp.isActive;
   _awaitingMouseMoveToShowUI = NO;
   [self frontForGesture];
   // Announce the gesture now, not one main-loop turn later with the chrome: the
@@ -1380,6 +1604,7 @@ static void NotifyPiPGestureHover() {
 // on screen if the gesture overflowed an edge while following the pointer.
 - (void)pinchEndedAtFrame:(NSRect)target {
   _isPinching = NO;
+  _startedUnderOtherApp = NO;
   _isSmartMagnified = NO;  // Next double-tap scales from the new frame
   // The page holds the video's remote viewport frozen for the gesture; this is
   // its cue to let it settle. It waits for the window to stop changing size, so
@@ -1475,22 +1700,29 @@ static void NotifyPiPGestureHover() {
   }
 }
 
+// Keyboard control while the pointer is over the card. Returns YES when the
+// event was consumed and must not reach the browser.
 - (BOOL)handleKeyDown:(NSEvent *)event {
-  unsigned short code = event.keyCode;
+  const unsigned short code = event.keyCode;
+  // Close the card. This is also the only way out of a PiP that has the
+  // keyboard while the pointer is parked over it.
+  if (code == kKeyEscape || ((event.modifierFlags & NSEventModifierFlagCommand) && code == kKeyW)) {
+    [_window performClose:nil];
+    return YES;
+  }
+  // Everything else is the unmodified transport set below; a shortcut with
+  // Command, Control or Option belongs to the browser or the system.
+  const NSEventModifierFlags mods = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
+  if (mods & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption)) {
+    return NO;
+  }
   // Space (play/pause), Left (seek -5s), Right (seek +5s), Down (vol -), Up (vol +), M (mute)
   if (code == kKeySpace || code == kKeyLeftArrow || code == kKeyRightArrow ||
       code == kKeyDownArrow || code == kKeyUpArrow || code == kKeyM) {
-    // The only path that needs app activation. Lift prevents-activation first so
-    // the PiP can become key, then activate: AppKit raises the key window (the PiP),
-    // not the browser window.
-    const BOOL prevented = [_window _preventsActivation];
-    if (prevented) [_window _setPreventsActivation:NO];
-    [_window makeKeyWindow];
-    if (!NSApp.isActive) {
-      [NSRunningApplication.currentApplication activateWithOptions:0];
-    }
+    // The page only reacts to a key event if its window is key, so this is the
+    // one shortcut path that activates the app.
+    [self focusPiP];
     [_window sendEvent:event];
-    if (prevented) [_window _setPreventsActivation:YES];
     return YES;
   }
   return NO;
@@ -1515,13 +1747,57 @@ static void NotifyPiPGestureHover() {
 
 namespace zen_pip {
 
+// Scroll is routed by the window under the pointer, so an inactive app still
+// receives scrolls aimed at the card - where they would scroll the other app in
+// the background instead of moving or resizing the card. A local monitor only
+// sees Zen's own events, and a global one cannot consume them, so a session
+// event tap is what lets the card take the scroll and swallow it for everyone
+// else. Only the scroll wheel is tapped, and only while another app is
+// frontmost: while Zen is active the local monitor already owns the event.
+static CGEventRef PiPScrollTapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef cgEvent,
+                                       void *refcon) {
+  // macOS disables a tap whose callback ran too long. Re-enable it, or the card
+  // would silently stop receiving scrolls for the rest of the session.
+  if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
+    if (sEventTap) CGEventTapEnable(sEventTap, true);
+    return cgEvent;
+  }
+  if (type != kCGEventScrollWheel) return cgEvent;
+  if (NSApp.isActive) return cgEvent;
+
+  NSEvent *event = [NSEvent eventWithCGEvent:cgEvent];
+  if (!event || ![ZenPiPController controllerUnderPointer]) return cgEvent;
+  // NULL swallows the event: it became a card gesture, not a page scroll.
+  return ([ZenPiPController handleSwipe:event] || [ZenPiPZoom handle:event]) ? NULL : cgEvent;
+}
+
+// The tap needs the process to be trusted for Accessibility / Input Monitoring.
+// Without it CGEventTapCreate returns NULL and the card simply behaves as it did
+// before: gestures only work while Zen itself is frontmost.
+static void InstallScrollTap() {
+  sEventTap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault,
+                               CGEventMaskBit(kCGEventScrollWheel), PiPScrollTapCallback, NULL);
+  if (!sEventTap) return;
+  sEventTapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, sEventTap, 0);
+  if (!sEventTapSource) return;
+  CFRunLoopAddSource(CFRunLoopGetMain(), sEventTapSource, kCFRunLoopCommonModes);
+  CGEventTapEnable(sEventTap, true);
+}
+
 void InstallMonitors() {
   static dispatch_once_t onceToken;
   dispatch_once(&onceToken, ^{
+    InstallScrollTap();
+
     [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskRightMouseDown
                                           handler:^NSEvent *(NSEvent *event) {
-      ZenPiPController *controller = (event.window && [event.window isKindOfClass:[NSWindow class]]) ? [ZenPiPController forWindow:event.window] : nil;
+      NSWindow *window = event.window;
+      ZenPiPController *controller = (window && [window isKindOfClass:[NSWindow class]]) ? [ZenPiPController forWindow:window] : nil;
+      if (!controller) {
+        controller = [ZenPiPController controllerUnderPointer];
+      }
       if (!controller) return event;
+      [controller focusPiP];
       [NSMenu popUpContextMenu:[controller menu] withEvent:event forView:controller.overlay];
       return nil;
     }];
@@ -1531,8 +1807,12 @@ void InstallMonitors() {
       if (event.type == NSEventTypeLeftMouseDown) {
         NSWindow *window = event.window;
         ZenPiPController *controller = (window && [window isKindOfClass:[NSWindow class]]) ? [ZenPiPController forWindow:window] : nil;
+        if (!controller) {
+          controller = [ZenPiPController controllerUnderPointer];
+          if (controller) window = controller.window;
+        }
         if (!controller) return event;
-        [window orderFrontRegardless];
+        [controller focusPiP];
         gDragged = window;
         [ZenPiPController abandonSwipeOn:window];
         [ZenPiPZoom abandonZoomOn:window];
@@ -1572,17 +1852,7 @@ void InstallMonitors() {
     [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel | NSEventMaskMagnify | NSEventMaskSmartMagnify
                                           handler:^NSEvent *(NSEvent *event) {
       if (event.type == NSEventTypeSmartMagnify) {
-        NSWindow *window = event.window;
-        if (!window || ![window isKindOfClass:[NSWindow class]]) {
-          NSPoint p = [NSEvent mouseLocation];
-          for (NSWindow *candidate in NSApp.orderedWindows) {
-            if (candidate.visible && NSPointInRect(p, candidate.frame)) {
-              window = candidate;
-              break;
-            }
-          }
-        }
-        ZenPiPController *controller = (window && [window isKindOfClass:[NSWindow class]]) ? [ZenPiPController forWindow:window] : nil;
+        ZenPiPController *controller = [ZenPiPController controllerUnderPointer];
         if (controller) {
           [controller toggleSmartMagnify];
           return nil;
@@ -1592,16 +1862,17 @@ void InstallMonitors() {
       return [ZenPiPController handleSwipe:event] || [ZenPiPZoom handle:event] ? nil : event;
     }];
 
-    // Scroll reaches an inactive app because it is routed by the window under the
-    // pointer. Magnify is routed to the active app only, so while another app is
-    // frontmost the local monitor never sees it and a pinch cannot front the PiP.
-    // A global monitor sees events addressed to other apps; it cannot consume them,
-    // so the other app may also get the first step. One step, then we are active.
+    // Magnify is delivered to the active app only, so while another app is
+    // frontmost the local monitor never sees the pinch and a pinch could not
+    // front the card. A global monitor does see it, but cannot consume it, so
+    // the other app may also get the first step; one step in, the card is keyed
+    // and the local monitor owns the rest of the gesture.
     [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMagnify
-                                          handler:^(NSEvent *event) {
-      if (NSApp.isActive) return;  // the local monitor owns the gesture then
+                                           handler:^(NSEvent *event) {
+      if (NSApp.isActive) return;
       ZenPiPController *controller = [ZenPiPController controllerUnderPointer];
       if (!controller || ![ZenPiPZoom zooms:controller.window]) return;
+      [controller frontForGesture];
       if (GestureTimingEnabled()) {
         NSLog(@"[pip-gesture] pinch (global) key=%d prevents=%d", controller.window.isKeyWindow,
               [controller.window _preventsActivation]);
@@ -1609,47 +1880,30 @@ void InstallMonitors() {
       [ZenPiPZoom handle:event];
     }];
 
-    [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskMouseMoved
+    // Hover tracking. Both monitors are needed: the local one is the only one
+    // that sees moves inside Zen, the global one the only one that sees moves
+    // over the card while another app is frontmost. Drags are tracked as well so
+    // hover state does not freeze when the pointer is held down.
+    const NSEventMask mouseMask = NSEventMaskMouseMoved | NSEventMaskLeftMouseDragged |
+                                  NSEventMaskRightMouseDragged | NSEventMaskOtherMouseDragged;
+
+    [NSEvent addLocalMonitorForEventsMatchingMask:mouseMask
                                           handler:^NSEvent *(NSEvent *event) {
-      NSWindow *window = event.window;
-      if (!window || ![window isKindOfClass:[NSWindow class]]) {
-        NSPoint p = [NSEvent mouseLocation];
-        for (NSWindow *candidate in NSApp.orderedWindows) {
-          if (candidate.visible && NSPointInRect(p, candidate.frame)) {
-            window = candidate;
-            break;
-          }
-        }
-      }
-      if (window && [window isKindOfClass:[NSWindow class]]) {
-        ZenPiPController *controller = [ZenPiPController forWindow:window];
-        [controller restoreUIOnMouseMove];
-      }
+      [ZenPiPController updateHoverState];
       return event;
     }];
 
-    [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMouseMoved
+    [NSEvent addGlobalMonitorForEventsMatchingMask:mouseMask
                                            handler:^(NSEvent *event) {
-      NSPoint p = [NSEvent mouseLocation];
-      for (NSWindow *candidate in NSApp.orderedWindows) {
-        if (candidate.visible && NSPointInRect(p, candidate.frame)) {
-          ZenPiPController *controller = [ZenPiPController forWindow:candidate];
-          [controller restoreUIOnMouseMove];
-          break;
-        }
-      }
+      [ZenPiPController updateHoverState];
     }];
 
     [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                           handler:^NSEvent *(NSEvent *event) {
-      NSPoint mouse = NSEvent.mouseLocation;
-      for (NSWindow *candidate in NSApp.orderedWindows) {
-        if (!candidate.visible) continue;
-        ZenPiPController *controller = [ZenPiPController forWindow:candidate];
-        if (controller && NSPointInRect(mouse, candidate.frame)) {
-          if ([controller handleKeyDown:event]) {
-            return nil;
-          }
+      ZenPiPController *controller = [ZenPiPController controllerUnderPointer];
+      if (controller) {
+        if ([controller handleKeyDown:event]) {
+          return nil;
         }
       }
       return event;
