@@ -71,6 +71,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -142,6 +144,7 @@ jobs:
       - name: Checkout build branch
         uses: actions/checkout@v4
         with:
+          persist-credentials: false
           ref: ${{ inputs.branch || 'zen-enh-main' }}
           fetch-depth: 0
           token: ${{ github.token }}
@@ -199,7 +202,8 @@ jobs:
         if: ${{ steps.merge.outputs.changed == 'true' }}
         env:
           BRANCH: ${{ inputs.branch || 'zen-enh-main' }}
-        run: git push origin "HEAD:${BRANCH}"
+          GH_TOKEN: ${{ github.token }}
+        run: git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${BRANCH}"
 
       - name: Compute PGO cache key
         id: pgo
@@ -250,6 +254,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          persist-credentials: false
           ref: ${{ needs.sync.outputs.sha }}
           submodules: recursive
 
@@ -419,6 +424,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          persist-credentials: false
           ref: ${{ needs.sync.outputs.sha }}
 
       - name: Setup Node.js
@@ -574,6 +580,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          persist-credentials: false
           ref: ${{ needs.sync.outputs.sha }}
           submodules: recursive
 
@@ -787,6 +794,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          persist-credentials: false
           ref: ${{ needs.sync.outputs.sha }}
 
       - name: Setup Node.js
@@ -885,7 +893,8 @@ jobs:
           P12_BASE64: ${{ secrets.ZEN_CODESIGN_P12_BASE64 }}
           P12_PASSWORD: ${{ secrets.ZEN_CODESIGN_P12_PASSWORD }}
         run: |
-          set -ex
+          # No xtrace here: it would print the p12 and its password to public logs.
+          set -e
           keychain_password=$(openssl rand -hex 16)
           security create-keychain -p "$keychain_password" build.keychain
           security set-keychain-settings -lut 21600 build.keychain
@@ -971,6 +980,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          persist-credentials: false
           ref: ${{ needs.sync.outputs.sha }}
 
       - name: Download signmar
