@@ -363,9 +363,11 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +          return false;
 +        }
 +        // Pins and essentials live in the sidebar; only the ones the user
-+        // actually visited this session count as recent tabs.
-+        if (this._isPinnedOrEssential(tab) && !this._usedTabs.has(tab)) {
-+          return false;
++        // actually visited this session and are not unloaded count as recent tabs.
++        if (this._isPinnedOrEssential(tab)) {
++          if (tab.hasAttribute("pending") || !this._usedTabs.has(tab)) {
++            return false;
++          }
 +        }
 +        return true;
 +      })
@@ -1256,6 +1258,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
  
 -  close: function ctrlTab_close(aTabToSelect) {
 +  _unloadTab(tab) {
++    this._usedTabs.delete(tab);
++    tab.toggleAttribute("pending", true);
 +    if (tab === gBrowser.selectedTab) {
 +      let fallbackTab = this.tabList.find(t => t !== tab && !t.closing);
 +      if (fallbackTab) {
@@ -1269,8 +1273,6 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +      gBrowser.explicitUnloadTabs([tab]);
 +    } else if (typeof gBrowser.discardBrowser === "function") {
 +      gBrowser.discardBrowser(tab);
-+    } else {
-+      tab.toggleAttribute("pending", true);
 +    }
 +  },
 +
@@ -1329,6 +1331,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +        this._card.classList.add("closing");
 +      }
 +      if (isPinnedOrEssential) {
++        this._usedTabs.delete(tab);
 +        this.detachTab(tab);
 +        this._unloadTab(tab);
 +      } else {
@@ -1367,6 +1370,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -      this.advanceFocus(!event.shiftKey);
 -      return;
 +    if (isPinnedOrEssential) {
++      this._usedTabs.delete(tab);
 +      this.detachTab(tab);
 +      this._unloadTab(tab);
 +    } else {
@@ -1404,6 +1408,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +
 +    this.updatePreviews();
 +    this._updateSelectedPreview();
++    this._positionPanel();
 +
 +    if (this.selected?._tab) {
 +      gBrowser.warmupTab(this.selected._tab);
@@ -1463,6 +1468,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
  
 -    this.updatePreviews();
 +    for (let tab of pinnedOrEssential) {
++      this._usedTabs.delete(tab);
 +      this.detachTab(tab);
 +      this._unloadTab(tab);
 +    }
@@ -1907,6 +1913,9 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  detachTab: function ctrlTab_detachTab(aTab) {
++    if (aTab?.closing) {
++      this._usedTabs?.delete(aTab);
++    }
 +    if (!this._recentlyUsedTabs) {
 +      return;
 +    }
