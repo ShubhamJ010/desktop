@@ -233,7 +233,9 @@ jobs:
     needs: [detect, sync]
     if: ${{ needs.detect.outputs.build == 'true' && needs.sync.outputs.pgo_hit != 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 300
+    # Cold instrumented cross build on 4 vCPUs; the PGO cache is empty on the
+    # first run, so the stage has to fit the whole build in one job.
+    timeout-minutes: 350
     env:
       SCCACHE_GHA_ENABLED: "true"
       CARGO_TERM_COLOR: always
@@ -247,9 +249,27 @@ jobs:
           android: true
           dotnet: true
           haskell: true
-          large-packages: false
-          docker-images: false
+          large-packages: true
+          docker-images: true
           swap-storage: false
+
+      # An instrumented, thin-LTO Gecko build peaks well above the 16 GiB a
+      # hosted runner has. Without swap the OOM killer takes the runner itself
+      # and GitHub reports "the hosted runner lost communication with the
+      # server", which hides the real cause. Swap turns that into a slow build.
+      - name: Add swap space
+        run: |
+          set -euo pipefail
+          # Own file, next to whatever swap the image already enabled.
+          swap=/swapfile-rc
+          sudo rm -f "$swap"
+          sudo fallocate -l 16G "$swap" \
+            || sudo dd if=/dev/zero of="$swap" bs=1M count=16384 status=none
+          sudo chmod 600 "$swap"
+          sudo mkswap "$swap"
+          sudo swapon "$swap"
+          free -h
+          df -h /
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -391,8 +411,27 @@ jobs:
           ZEN_GA_GENERATE_PROFILE: "1"
           MOZ_BUILD_DATE: ${{ needs.detect.outputs.build_id }}
         run: |
+          set -xo pipefail
+          # Keep a copy so a runner death still leaves something to inspect.
+          bash .github/workflows/src/release-build.sh 2>&1 \
+            | tee "$GITHUB_WORKSPACE/build-pgo-stage1.log"
+
+      - name: Report build log and resource state
+        if: always()
+        run: |
           set -x
-          bash .github/workflows/src/release-build.sh
+          free -h || true
+          df -h / || true
+          tail -n 200 "$GITHUB_WORKSPACE/build-pgo-stage1.log" 2>/dev/null || true
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 7
+          if-no-files-found: ignore
+          name: rc-pgo-stage1-build-log
+          path: build-pgo-stage1.log
 
       - name: Package instrumented app
         env:
@@ -573,9 +612,27 @@ jobs:
           android: true
           dotnet: true
           haskell: true
-          large-packages: false
-          docker-images: false
+          large-packages: true
+          docker-images: true
           swap-storage: false
+
+      # An instrumented, thin-LTO Gecko build peaks well above the 16 GiB a
+      # hosted runner has. Without swap the OOM killer takes the runner itself
+      # and GitHub reports "the hosted runner lost communication with the
+      # server", which hides the real cause. Swap turns that into a slow build.
+      - name: Add swap space
+        run: |
+          set -euo pipefail
+          # Own file, next to whatever swap the image already enabled.
+          swap=/swapfile-rc
+          sudo rm -f "$swap"
+          sudo fallocate -l 16G "$swap" \
+            || sudo dd if=/dev/zero of="$swap" bs=1M count=16384 status=none
+          sudo chmod 600 "$swap"
+          sudo mkswap "$swap"
+          sudo swapon "$swap"
+          free -h
+          df -h /
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -739,8 +796,26 @@ jobs:
           ZEN_RELEASE_BRANCH: release
           MOZ_BUILD_DATE: ${{ needs.detect.outputs.build_id }}
         run: |
+          set -xo pipefail
+          bash .github/workflows/src/release-build.sh 2>&1 \
+            | tee "$GITHUB_WORKSPACE/build-pgo-stage3.log"
+
+      - name: Report build log and resource state
+        if: always()
+        run: |
           set -x
-          bash .github/workflows/src/release-build.sh
+          free -h || true
+          df -h / || true
+          tail -n 200 "$GITHUB_WORKSPACE/build-pgo-stage3.log" 2>/dev/null || true
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 7
+          if-no-files-found: ignore
+          name: rc-pgo-stage3-build-log
+          path: build-pgo-stage3.log
 
       - name: Stage app bundle and platform.ini
         run: |
