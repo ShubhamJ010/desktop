@@ -1,5 +1,6 @@
---- windsign-temp/zen_ctrlTab/ctrlTab.css.upstream	2026-11-14 16:39:27
-+++ windsign-temp/zen_ctrlTab/ctrlTab.css	2026-11-15 05:04:02
+diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/shared/tabbrowser/ctrlTab.css
+--- a/browser/themes/shared/tabbrowser/ctrlTab.css
++++ b/browser/themes/shared/tabbrowser/ctrlTab.css
 @@ -2,118 +2,460 @@
   * License, v. 2.0. If a copy of the MPL was not distributed with this
   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */

@@ -1,5 +1,6 @@
---- windsign-temp/zen_ctrlTab/browser-ctrlTab.js.upstream.orig	2026-11-14 16:39:27
-+++ windsign-temp/zen_ctrlTab/browser-ctrlTab.js	2026-11-15 05:12:55
+diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/components/tabbrowser/content/browser-ctrlTab.js
+--- a/browser/components/tabbrowser/content/browser-ctrlTab.js
++++ b/browser/components/tabbrowser/content/browser-ctrlTab.js
 @@ -3,157 +3,40 @@
   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
  
