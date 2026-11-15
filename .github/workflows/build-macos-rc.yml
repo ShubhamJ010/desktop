@@ -19,6 +19,11 @@ on:
         description: "Upstream release tag to build (default: latest zen-browser/desktop release)"
         required: false
         type: string
+      branch:
+        description: "Branch to merge upstream into and build"
+        required: false
+        type: string
+        default: "zen-enh-main"
       force:
         description: "Rebuild even if a release with this tag already exists"
         required: false
@@ -59,12 +64,9 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.meta.outputs.version }}
-      firefox: ${{ steps.meta.outputs.firefox }}
       build_id: ${{ steps.meta.outputs.build_id }}
       build: ${{ steps.meta.outputs.build }}
       publish: ${{ steps.meta.outputs.publish }}
-      pgo_key: ${{ steps.meta.outputs.pgo_key }}
-      pgo_hit: ${{ steps.pgo.outputs.hit }}
 
     steps:
       - name: Checkout
@@ -95,8 +97,6 @@ jobs:
             exit 1
           fi
 
-          firefox=$(node -p "require('./surfer.json').version.version")
-
           build=true
           if gh release view "$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             if [ "$INPUT_FORCE" != "true" ]; then
@@ -119,33 +119,115 @@ jobs:
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "firefox=$firefox" >> "$GITHUB_OUTPUT"
           echo "build_id=$(date +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Target: $version, build=$build, publish=$publish"
+
+  sync:
+    name: Sync upstream dev
+    needs: [detect]
+    if: ${{ needs.detect.outputs.build == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.merge.outputs.sha }}
+      firefox: ${{ steps.pgo.outputs.firefox }}
+      pgo_key: ${{ steps.pgo.outputs.pgo_key }}
+      pgo_hit: ${{ steps.cache.outputs.hit }}
+
+    steps:
+      - name: Checkout build branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || 'zen-enh-main' }}
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      # Merge, never rebase: fork commits stay intact and a conflict aborts the
+      # run before any build time is spent.
+      - name: Merge upstream dev
+        id: merge
+        run: |
+          set -euo pipefail
+          git fetch --no-tags https://github.com/zen-browser/desktop.git dev
+          if git merge-base --is-ancestor FETCH_HEAD HEAD; then
+            echo "Already contains upstream dev"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            if ! git merge --no-edit FETCH_HEAD; then
+              echo "::error::Upstream merge conflicts. Resolve locally, then rerun:"
+              git diff --name-only --diff-filter=U
+              git merge --abort
+              exit 1
+            fi
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install npm dependencies
+        if: ${{ steps.merge.outputs.changed == 'true' }}
+        run: npm ci
+
+      - name: Download Firefox engine
+        if: ${{ steps.merge.outputs.changed == 'true' }}
+        run: npm run download
+
+      - name: Verify patches apply
+        if: ${{ steps.merge.outputs.changed == 'true' }}
+        run: npm run import
+
+      # The import check may rewrite generated files. Push the merge commit,
+      # not whatever the check touched in the working tree.
+      - name: Drop validation changes
+        if: ${{ steps.merge.outputs.changed == 'true' }}
+        run: git reset --hard HEAD
+
+      - name: Push merged branch
+        if: ${{ steps.merge.outputs.changed == 'true' }}
+        env:
+          BRANCH: ${{ inputs.branch || 'zen-enh-main' }}
+        run: git push origin "HEAD:${BRANCH}"
+
+      - name: Compute PGO cache key
+        id: pgo
+        run: |
+          set -euo pipefail
+          firefox=$(node -p "require('./surfer.json').version.version")
+          echo "firefox=$firefox" >> "$GITHUB_OUTPUT"
           echo "pgo_key=rc-profdata-ff${firefox}-${{ hashFiles('src/zen/common/sys/ZenPGOTraining.sys.mjs', 'src/build/pgo/profileserver-py.patch', 'src/testing/profiles/profileserver/user-js.patch') }}-aarch64" >> "$GITHUB_OUTPUT"
-          echo "Target: $version, Firefox $firefox, build=$build, publish=$publish"
 
       - name: Look up cached PGO profile
         id: pgo-cache
-        if: ${{ steps.meta.outputs.build == 'true' }}
         uses: actions/cache/restore@v4
         with:
-          key: ${{ steps.meta.outputs.pgo_key }}
+          key: ${{ steps.pgo.outputs.pgo_key }}
           path: ~/artifact
           lookup-only: true
 
       - name: Report cache state
-        id: pgo
-        if: ${{ steps.meta.outputs.build == 'true' }}
+        id: cache
         run: |
           hit="${{ steps.pgo-cache.outputs.cache-hit }}"
           if [ "$hit" = "true" ]; then echo "hit=true" >> "$GITHUB_OUTPUT"; else echo "hit=false" >> "$GITHUB_OUTPUT"; fi
 
+
   pgo-stage1:
     name: PGO stage 1 (instrumented)
-    needs: [detect]
-    if: ${{ needs.detect.outputs.build == 'true' && needs.detect.outputs.pgo_hit != 'true' }}
+    needs: [detect, sync]
+    if: ${{ needs.detect.outputs.build == 'true' && needs.sync.outputs.pgo_hit != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     env:
@@ -168,6 +250,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.sync.outputs.sha }}
           submodules: recursive
 
       - name: Setup Node.js
@@ -327,14 +410,16 @@ jobs:
 
   pgo-profile:
     name: PGO profile data (macOS)
-    needs: [detect, pgo-stage1]
-    if: ${{ needs.detect.outputs.build == 'true' && needs.detect.outputs.pgo_hit != 'true' }}
+    needs: [detect, sync, pgo-stage1]
+    if: ${{ needs.detect.outputs.build == 'true' && needs.sync.outputs.pgo_hit != 'true' }}
     runs-on: macos-26
     timeout-minutes: 300
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync.outputs.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -449,7 +534,7 @@ jobs:
       - name: Cache profile data
         uses: actions/cache/save@v4
         with:
-          key: ${{ needs.detect.outputs.pgo_key }}
+          key: ${{ needs.sync.outputs.pgo_key }}
           path: ~/artifact
 
       - name: Upload profile data
@@ -463,10 +548,10 @@ jobs:
 
   build:
     name: PGO stage 3 (release build)
-    needs: [detect, pgo-stage1, pgo-profile]
+    needs: [detect, sync, pgo-stage1, pgo-profile]
     # always(): a cached profile skips both PGO jobs, and defaults would skip
     # this job with them.
-    if: ${{ always() && needs.detect.outputs.build == 'true' && (needs.detect.outputs.pgo_hit == 'true' || needs.pgo-profile.result == 'success') }}
+    if: ${{ always() && needs.detect.outputs.build == 'true' && (needs.sync.outputs.pgo_hit == 'true' || needs.pgo-profile.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
@@ -489,6 +574,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.sync.outputs.sha }}
           submodules: recursive
 
       - name: Setup Node.js
@@ -617,15 +703,15 @@ jobs:
         run: sh scripts/download-language-packs.sh
 
       - name: Restore profile data (cache)
-        if: ${{ needs.detect.outputs.pgo_hit == 'true' }}
+        if: ${{ needs.sync.outputs.pgo_hit == 'true' }}
         uses: actions/cache/restore@v4
         with:
-          key: ${{ needs.detect.outputs.pgo_key }}
+          key: ${{ needs.sync.outputs.pgo_key }}
           path: ~/artifact
           fail-on-cache-miss: true
 
       - name: Download profile data (artifact)
-        if: ${{ needs.detect.outputs.pgo_hit != 'true' }}
+        if: ${{ needs.sync.outputs.pgo_hit != 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: rc-profdata-aarch64
@@ -693,13 +779,15 @@ jobs:
 
   package:
     name: Codesign and MAR
-    needs: [detect, build]
+    needs: [detect, sync, build]
     runs-on: macos-26
     timeout-minutes: 240
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync.outputs.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -871,7 +959,7 @@ jobs:
 
   publish:
     name: Sign MAR and publish
-    needs: [detect, build, package]
+    needs: [detect, sync, build, package]
     if: ${{ needs.detect.outputs.build == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -882,6 +970,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync.outputs.sha }}
 
       - name: Download signmar
         uses: actions/download-artifact@v4
@@ -995,7 +1085,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.detect.outputs.version }}
-          FIREFOX: ${{ needs.detect.outputs.firefox }}
+          FIREFOX: ${{ needs.sync.outputs.firefox }}
+          COMMIT: ${{ needs.sync.outputs.sha }}
         run: |
           set -euo pipefail
           if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -1011,7 +1102,7 @@ jobs:
           cat > notes.md <<EOF
           RC build for upstream Zen $VERSION, Firefox $FIREFOX.
 
-          Commit: $GITHUB_SHA
+          Commit: $COMMIT
           macOS arm64, PGO, self-signed.
           EOF
           gh release create "$VERSION" \
