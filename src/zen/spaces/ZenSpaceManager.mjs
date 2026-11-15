@@ -2009,7 +2009,6 @@ class nsZenWorkspaces {
       return;
     }
 
-
     const workspaces = this.getWorkspaces();
     gZenFolders.cancelPopupTimer();
 

@@ -55,9 +55,13 @@ constexpr double kScrollTau = 0.055;
   BOOL _hitMaxHaptic;
 }
 
+// A card can be zoomed when it is on screen and not stashed against a screen
+// edge. `styleMask` is deliberately not part of this: the controller makes every
+// PiP window resizable at attach time, and the resize is driven through
+// AppKit's live-resize machinery rather than a drag handle.
 + (BOOL)zooms:(NSWindow *)window {
   if (!window || ![window isKindOfClass:[NSWindow class]]) return NO;
-  if (!window.visible || !(window.styleMask & NSWindowStyleMaskResizable)) return NO;
+  if (!window.visible) return NO;
   ZenPiPController *controller = [ZenPiPController forWindow:window];
   if (controller) return controller.stashedEdge == ZenPiPEdgeNone;
   return NO;
@@ -106,41 +110,63 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   }
 }
 
+// Two event kinds resize the card, gated differently:
+//   - A trackpad scroll is first offered to the swipe handler (repositioning the
+//     card) and is a resize only while Command is held; a mouse wheel, which has
+//     no gesture phases, is always an explicit resize.
+//   - A magnify (pinch) is always a resize.
+// `gZoomGesture` remembers the window for the length of one continuous gesture:
+// the pointer can leave the card mid-pinch and the remaining events still belong
+// to it, including the momentum phase that ends the session.
 + (BOOL)route:(NSEvent *)event {
+  if (event.type == NSEventTypeMagnify) return [self routeMagnify:event];
+  if (event.type == NSEventTypeScrollWheel) return [self routeScroll:event];
+  return NO;
+}
+
++ (BOOL)routeScroll:(NSEvent *)event {
   NSWindow *window = [self windowFor:event];
-  BOOL command = (event.modifierFlags & NSEventModifierFlagCommand) != 0;
-  BOOL scroll = event.type == NSEventTypeScrollWheel;
-  if (scroll) {
-    NSEventPhase phase = event.phase, momentum = event.momentumPhase;
-    BOOL wheel = phase == NSEventPhaseNone && momentum == NSEventPhaseNone;
-    if (wheel || (phase & (NSEventPhaseBegan | NSEventPhaseMayBegin))) {
-      gZoomGesture = nil;
-    }
-    if (gZoomGesture) window = gZoomGesture;
-    if (!window || (!command && gZoomGesture != window)) return NO;
-    if (![self zooms:window]) return NO;
-    // Front once per gesture. A precise trackpad scroll arrives at up to 120 Hz
-    // and an orderFront per event is a WindowServer round trip each time.
-    if (gZoomGesture != window) [window orderFrontRegardless];
-    if (!wheel) gZoomGesture = window;
-    const BOOL ended = (momentum & (NSEventPhaseEnded | NSEventPhaseCancelled)) != 0;
-    if (ended) gZoomGesture = nil;
-    double dy = event.scrollingDeltaY;
-    if (dy != 0) {
-      [[self forWindow:window] zoomBy:zen_pip_zoom::ScrollFactor(dy, event.hasPreciseScrollingDeltas)
-                                   at:[self screenPoint:event]
-                                 ease:!event.hasPreciseScrollingDeltas];
-    }
-    if (ended) [[self forWindow:window] requestEnd];
-    return YES;
+  const BOOL command = (event.modifierFlags & NSEventModifierFlagCommand) != 0;
+  const NSEventPhase phase = event.phase, momentum = event.momentumPhase;
+  // A plain mouse wheel has no phases: every tick is a gesture of its own.
+  const BOOL wheel = phase == NSEventPhaseNone && momentum == NSEventPhaseNone;
+  if (wheel || (phase & (NSEventPhaseBegan | NSEventPhaseMayBegin))) gZoomGesture = nil;
+  if (gZoomGesture) window = gZoomGesture;
+  if (![self zooms:window]) return NO;
+  // Command is the explicit request to resize; without it a scroll only
+  // continues a resize that is already under way.
+  if (!command && gZoomGesture != window) return NO;
+  // Front once per gesture. A precise trackpad scroll arrives at up to 120 Hz
+  // and an orderFront per event is a WindowServer round trip each time.
+  if (gZoomGesture != window) [window orderFrontRegardless];
+  if (!wheel) gZoomGesture = window;
+  const BOOL ended = (momentum & (NSEventPhaseEnded | NSEventPhaseCancelled)) != 0;
+  if (ended) gZoomGesture = nil;
+  const double dy = event.scrollingDeltaY;
+  if (dy != 0) {
+    [[self forWindow:window] zoomBy:zen_pip_zoom::ScrollFactor(dy, event.hasPreciseScrollingDeltas)
+                                 at:[self screenPoint:event]
+                               ease:!event.hasPreciseScrollingDeltas];
   }
-  if (!window || ![self zooms:window]) return NO;
+  if (ended) [[self forWindow:window] requestEnd];
+  return YES;
+}
+
++ (BOOL)routeMagnify:(NSEvent *)event {
+  NSWindow *window = [self windowFor:event];
+  const NSEventPhase phase = event.phase;
+  if (phase & (NSEventPhaseBegan | NSEventPhaseMayBegin)) gZoomGesture = nil;
+  if (gZoomGesture) window = gZoomGesture;
+  if (![self zooms:window]) return NO;
+  if (gZoomGesture != window) [window orderFrontRegardless];
+  gZoomGesture = window;
+  if (phase & (NSEventPhaseEnded | NSEventPhaseCancelled)) gZoomGesture = nil;
   [[self forWindow:window] handleMagnify:event];
   return YES;
 }
 
 + (NSPoint)screenPoint:(NSEvent *)event {
-  return event.window ? [event.window convertPointToScreen:event.locationInWindow] : event.locationInWindow;
+  return event.window ? [event.window convertPointToScreen:event.locationInWindow] : NSEvent.mouseLocation;
 }
 
 // The PiP window is created with `lockaspectratio`, so AppKit already knows the
