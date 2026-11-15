@@ -344,10 +344,13 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    }
 +    let showPending = this._showPendingTabs();
 +
-+    // Read the tab strip instead of the MRU bookkeeping: session restore,
-+    // window sync and folder expansion all add tabs the switcher never got a
-+    // TabOpen for, and a tab missing from that list is a missing row.
-+    return Array.from(gBrowser.tabs)
++    let allTabs =
++      window.gZenWorkspaces?.workspaceEnabled &&
++      window.gZenWorkspaces.allStoredTabs?.length
++        ? window.gZenWorkspaces.allStoredTabs
++        : gBrowser.tabs;
++
++    return Array.from(new Set(allTabs))
 +      .filter(tab => {
 +        if (!tab || tab.closing || tab.hasAttribute("zen-empty-tab")) {
 +          return false;
@@ -359,13 +362,13 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +          return true;
 +        }
 +        // Sleeping tabs belong to the space as much as loaded ones.
-+        if (!showPending && tab.hasAttribute("pending")) {
++        if (!showPending && (tab.hasAttribute("pending") || tab.discarded)) {
 +          return false;
 +        }
 +        // Pins and essentials live in the sidebar; only the ones the user
 +        // actually visited this session and are not unloaded count as recent tabs.
 +        if (this._isPinnedOrEssential(tab)) {
-+          if (tab.hasAttribute("pending") || !this._usedTabs.has(tab)) {
++          if (tab.hasAttribute("pending") || tab.discarded || !this._usedTabs.has(tab)) {
 +            return false;
 +          }
 +        }
@@ -382,8 +385,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +   */
 +  _fallbackList(spaceId) {
 +    return this._buildList(spaceId, { gates: false });
-   },
- 
++  },
++
 +  /**
 +   * The list the card shows for `spaceId`, and whether it is the raw one because
 +   * our own filters hid every tab. Both the paint before a switch and the paint
@@ -437,19 +440,23 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  _isTabInWorkspace(tab, workspaceId, containerId, workspaces) {
-+    if (!window.gZenWorkspaces || !workspaceId) {
++    if (!window.gZenWorkspaces?.workspaceEnabled || !workspaceId) {
 +      return true;
 +    }
-+    // Zen already owns the "does this tab belong to this space" rule: essential
-+    // tabs, container-scoped essentials, and tabs that have no space yet. Reuse
-+    // it instead of re-deriving DOM heuristics, which dropped every tab without
-+    // a `zen-workspace-id` and ended in a silent `return false`.
-+    return window.gZenWorkspaces._shouldShowTab(
-+      tab,
-+      workspaceId,
-+      containerId,
-+      workspaces || window.gZenWorkspaces.getWorkspaces()
-+    );
++    if (tab.hasAttribute("zen-glance-tab")) {
++      return true;
++    }
++    const isEssential = tab.getAttribute("zen-essential") === "true";
++    if (isEssential) {
++      return window.gZenWorkspaces._shouldShowTab(
++        tab,
++        workspaceId,
++        containerId,
++        workspaces || window.gZenWorkspaces.getWorkspaces()
++      );
++    }
++    const tabWorkspaceId = tab.getAttribute("zen-workspace-id");
++    return tabWorkspaceId === workspaceId;
 +  },
 +
    init: function ctrlTab_init() {
@@ -782,7 +789,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
  
 -    let tabChanged = aPreview._tab != aTab;
 +    if (this._emptyLabel) {
-+      this._emptyLabel.hidden = this._cardState !== "empty";
++      this._emptyLabel.hidden =
++        Boolean(this._switchInFlight) || this._cardState !== "empty";
 +    }
 +    if (this._pill) {
 +      this._pill.classList.toggle("is-visible", count > 0);
@@ -1578,6 +1586,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +
 +    this._updateSelectedPreview();
 +    this._switchInFlight = null;
++    this._syncCardState(settled.length);
 +
 +    if (this.selected?._tab) {
 +      gBrowser.warmupTab(this.selected._tab);
