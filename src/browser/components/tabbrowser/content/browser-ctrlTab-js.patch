@@ -204,7 +204,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      }
  
      if (host.tabToSelect) {
-@@ -192,82 +77,164 @@
+@@ -192,82 +77,134 @@
        );
        host.tabToSelect = null;
      }
@@ -223,6 +223,10 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  SHOW_AFTER_MS: 140,
 +
 +  _selectedIndex: 0,
++  // Tabs the user actually visited this session. Pins and essentials outside
++  // this set are left out of the card: they already live in the sidebar, and a
++  // restored tile nobody opened is not a recent tab.
++  _usedTabs: new WeakSet(),
 +  _timer: null,
 +  tabToSelect: null,
 +  _recentlyUsedTabs: null,
@@ -241,13 +245,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -    delete this.previewsContainer;
 -    return (this.previewsContainer =
 -      document.getElementById("ctrlTab-previews"));
-+
-+  get selected() {
-+    if (this._selectedIndex >= 0 && this._selectedIndex < this.previews.length) {
-+      return this.previews[this._selectedIndex];
-+    }
-+    return this.previews[0] || null;
-   },
+-  },
 -  get showAllButton() {
 -    delete this.showAllButton;
 -    this.showAllButton = document.createXULElement("button");
@@ -278,11 +276,16 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -    return (this.keys = keys);
 -  },
 -  _selectedIndex: 0,
--  get selected() {
++
+   get selected() {
 -    return this._selectedIndex < 0
 -      ? document.activeElement
 -      : this.previews[this._selectedIndex];
--  },
++    if (this._selectedIndex >= 0 && this._selectedIndex < this.previews.length) {
++      return this.previews[this._selectedIndex];
++    }
++    return this.previews[0] || null;
+   },
 +
    get isOpen() {
      return (
@@ -298,120 +301,84 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    get tabPreviewCount() {
      return Math.min(this.maxTabPreviews, this.tabCount);
    },
--  /**
--   * The number of grid columns the visible previews are laid out in, which is
--   * also the number of previews in the widest row.
--   */
--  get previewColumnCount() {
--    return Math.min(this.tabPreviewCount, this.previewsPerRow);
--  },
- 
-   get tabList() {
--    return this._recentlyUsedTabs;
-+    // Port of Ardia's recentTabIds (state/pins/tabCleanup.ts):
-+    //   1. drop tabs that are asleep (page unloaded),
-+    //   2. sort by last access,
-+    //   3. keep the two most recent tabs plus anything used in the last 12h.
-+    //
-+    // Step 1 matters a lot in Zen: every pinned tile restored on startup is a
-+    // pending/unloaded tab, so without it the switcher fills with old pins the
-+    // user never opened this session. Step 3 keeps the list recent instead of
-+    // growing to every tab the browser has ever seen.
-+    const STALE_AFTER_MS = 12 * 60 * 60 * 1000; // Ardia CLEAN_UP_AFTER_MS
-+    const now = Date.now();
-+    let currentWorkspace =
-+      this._currentWorkspaceId || window.gZenWorkspaces?.activeWorkspace;
-+    let workspacesEnabled = Boolean(window.gZenWorkspaces?.workspaceEnabled);
 +
-+    return this._recentlyUsedTabs
++  get tabList() {
++    // The card lists the tabs of the current space, so every tab of that space
++    // belongs in it, asleep or not. Ardia's "recent" shortlist (drop sleeping
++    // tabs, keep two plus anything touched in 12h) does not translate: after a
++    // restart, or in any space Zen has not loaded yet, it empties the card and
++    // the switcher looks broken.
++    let workspaces = null;
++    let containerId = null;
++    let currentWorkspace = this.currentSpaceId;
++    if (window.gZenWorkspaces?.workspaceEnabled) {
++      workspaces = window.gZenWorkspaces.getWorkspaces();
++      containerId =
++        window.gZenWorkspaces.getWorkspaceFromId(currentWorkspace)
++          ?.containerTabId?.toString() ?? null;
++    }
++    // Only an explicit opt-out hides sleeping tabs. The compiled default of the
++    // pref is false in shipped builds, and honouring that default is what left a
++    // space with a single row (the one tab that happened to be loaded).
++    let showPending =
++      !Services.prefs.prefHasUserValue("zen.ctrlTab.show-pending-tabs") ||
++      Services.prefs.getBoolPref("zen.ctrlTab.show-pending-tabs", true);
++
++    // Read the tab strip instead of the MRU bookkeeping: session restore,
++    // window sync and folder expansion all add tabs the switcher never got a
++    // TabOpen for, and a tab missing from that list is a missing row.
++    return Array.from(gBrowser.tabs)
 +      .filter(tab => {
-+        if (!tab || tab.closing || tab.hasAttribute("zen-empty-tab") || tab.hasAttribute("pending")) {
++        if (!tab || tab.closing || tab.hasAttribute("zen-empty-tab")) {
 +          return false;
 +        }
-+        if (workspacesEnabled && currentWorkspace) {
-+          if (!this._isTabInWorkspace(tab, currentWorkspace)) {
-+            return false;
-+          }
++        if (!showPending && tab.hasAttribute("pending")) {
++          return false;
 +        }
-+        return true;
-+      })
-+      .sort((a, b) => b.lastAccessed - a.lastAccessed)
-+      .filter((tab, i) => i < 2 || now - tab.lastAccessed < STALE_AFTER_MS);
-   },
- 
-+  _isTabInWorkspace(tab, workspaceId) {
-+    if (!tab || tab.closing || tab.hasAttribute("zen-empty-tab") || tab.hasAttribute("pending")) {
-+      return false;
-+    }
-+    if (!workspaceId) {
-+      return true;
-+    }
-+
-+    let isEssential =
-+      (tab.hasAttribute("zen-essential") &&
-+        tab.getAttribute("zen-essential") === "true") ||
-+      Boolean(tab.closest("#zen-essentials, .zen-essentials-container"));
-+
-+    if (isEssential) {
-+      if (window.gZenWorkspaces) {
-+        if (!window.gZenWorkspaces.containerSpecificEssentials) {
-+          return true;
++        if (this._isPinnedOrEssential(tab) && !this._usedTabs.has(tab)) {
++          return false;
 +        }
-+        let ws = window.gZenWorkspaces.getWorkspaceFromId(workspaceId);
-+        let tabContextId = tab.getAttribute("usercontextid") ?? "0";
-+        if (ws?.containerTabId) {
-+          return tabContextId == ws.containerTabId;
-+        }
-+        return (
-+          !tabContextId ||
-+          tabContextId === "0" ||
-+          !window.gZenWorkspaces
-+            .getWorkspaces()
-+            .some(w => w.containerTabId === parseInt(tabContextId, 10))
++        return this._isTabInWorkspace(
++          tab,
++          currentWorkspace,
++          containerId,
++          workspaces
 +        );
-+      }
-+      return true;
-+    }
-+
-+    // Direct check: is tab inside this workspace's container?
-+    let wsElement = window.gZenWorkspaces?.workspaceElement?.(workspaceId);
-+    if (wsElement?.contains(tab)) {
-+      return true;
-+    }
-+
-+    // Tab's own attribute
-+    let tabWs = tab.getAttribute("zen-workspace-id");
-+    if (tabWs) {
-+      return tabWs === workspaceId;
-+    }
-+
-+    // Ancestor container with zen-workspace-id
-+    let containerWs = tab
-+      .closest("[zen-workspace-id]")
-+      ?.getAttribute("zen-workspace-id");
-+    if (containerWs) {
-+      return containerWs === workspaceId;
-+    }
-+
-+    // If tab belongs to any other workspace container, exclude it
-+    if (window.gZenWorkspaces?.getWorkspaces) {
-+      for (let ws of window.gZenWorkspaces.getWorkspaces()) {
-+        if (ws.uuid !== workspaceId) {
-+          let otherEl = window.gZenWorkspaces.workspaceElement(ws.uuid);
-+          if (otherEl?.contains(tab)) {
-+            return false;
-+          }
-+        }
-+      }
-+    }
-+
-+    if (tabWs && tabWs !== workspaceId) {
-+      return false;
-+    }
-+
-+    return false;
++      })
++      .sort((a, b) => b.lastAccessed - a.lastAccessed);
 +  },
 +
+   /**
+-   * The number of grid columns the visible previews are laid out in, which is
+-   * also the number of previews in the widest row.
++   * Space the card is showing. Usually the live active space; a space switch
++   * started from inside the card ("2", "3"…) overrides it until the switch
++   * lands.
+    */
+-  get previewColumnCount() {
+-    return Math.min(this.tabPreviewCount, this.previewsPerRow);
++  get currentSpaceId() {
++    return this._spaceOverride || window.gZenWorkspaces?.activeWorkspace || "";
+   },
+ 
+-  get tabList() {
+-    return this._recentlyUsedTabs;
++  _isTabInWorkspace(tab, workspaceId, containerId, workspaces) {
++    if (!window.gZenWorkspaces || !workspaceId) {
++      return true;
++    }
++    // Zen already owns the "does this tab belong to this space" rule: essential
++    // tabs, container-scoped essentials, and tabs that have no space yet. Reuse
++    // it instead of re-deriving DOM heuristics, which dropped every tab without
++    // a `zen-workspace-id` and ended in a silent `return false`.
++    return window.gZenWorkspaces._shouldShowTab(
++      tab,
++      workspaceId,
++      containerId,
++      workspaces || window.gZenWorkspaces.getWorkspaces()
++    );
+   },
+ 
    init: function ctrlTab_init() {
 +    if (this.isOpen) {
 +      return;
@@ -419,7 +386,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      if (!this._recentlyUsedTabs) {
        this._initRecentlyUsedTabs();
        this._init(true);
-@@ -275,6 +242,9 @@
+@@ -275,6 +212,9 @@
    },
  
    uninit: function ctrlTab_uninit() {
@@ -429,7 +396,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      if (this._recentlyUsedTabs) {
        this._recentlyUsedTabs = null;
        this._init(false);
-@@ -294,8 +264,11 @@
+@@ -294,8 +234,11 @@
    },
  
    readPref: function ctrlTab_readPref() {
@@ -442,7 +409,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
        !Services.prefs.getBoolPref(
          "browser.ctrlTab.disallowForScreenReaders",
          false
-@@ -307,249 +280,459 @@
+@@ -307,249 +250,480 @@
        this.uninit();
      }
    },
@@ -456,48 +423,23 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +   */
    _buildPreviews() {
 -    this.previewsContainer.replaceChildren();
--    this.previews = [];
--    for (let i = 0; i < this.maxTabPreviews; i++) {
--      let preview = this._makePreview();
--      this.previewsContainer.appendChild(preview);
--      this.previews.push(preview);
--    }
--    this.previews.push(this.showAllButton);
--  },
 +    this.panel.classList.add("zen-ctrlTab-panel");
 +    this.panel.replaceChildren();
- 
--  _makePreview() {
--    let preview = document.createXULElement("button");
--    preview.className = "ctrlTab-preview";
--    preview.setAttribute("pack", "center");
--    preview.addEventListener("mouseover", this);
--    preview.addEventListener("command", this);
--    preview.addEventListener("click", this);
++
 +    // Floating frosted glass card container
 +    let card = (this._card = document.createElement("div"));
 +    card.className = "ctrlTab-card zen-ardia-glass";
- 
--    let previewInner = document.createXULElement("vbox");
--    previewInner.className = "ctrlTab-preview-inner";
--    preview.appendChild(previewInner);
++
 +    // Section header: Space icon + Recent Tabs label
 +    let header = document.createElement("div");
 +    header.className = "ctrlTab-header";
- 
--    let canvas = (preview._canvas = document.createXULElement("hbox"));
--    canvas.className = "ctrlTab-canvas";
--    previewInner.appendChild(canvas);
++
 +    let headerSpace = (this._headerSpace = document.createElement("div"));
 +    headerSpace.className = "ctrlTab-header-space";
 +    header.appendChild(headerSpace);
- 
--    let faviconContainer = document.createXULElement("hbox");
--    faviconContainer.className = "ctrlTab-favicon-container";
--    previewInner.appendChild(faviconContainer);
++
 +    card.appendChild(header);
- 
--    let favicon = (preview._favicon = document.createXULElement("image"));
++
 +    // List container
 +    let list = (this._list = document.createElement("div"));
 +    list.className = "ctrlTab-list";
@@ -511,30 +453,50 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +
 +    this.panel.appendChild(card);
 +
-+    this.previews = [];
-+    for (let i = 0; i < this.maxTabPreviews; i++) {
+     this.previews = [];
+     for (let i = 0; i < this.maxTabPreviews; i++) {
+-      let preview = this._makePreview();
+-      this.previewsContainer.appendChild(preview);
 +      let preview = this._makePreview(i);
 +      list.appendChild(preview);
-+      this.previews.push(preview);
-+    }
-+  },
-+
+       this.previews.push(preview);
+     }
+-    this.previews.push(this.showAllButton);
+   },
+ 
+-  _makePreview() {
+-    let preview = document.createXULElement("button");
+-    preview.className = "ctrlTab-preview";
+-    preview.setAttribute("pack", "center");
+-    preview.addEventListener("mouseover", this);
+-    preview.addEventListener("command", this);
+-    preview.addEventListener("click", this);
 +  updateSpaceHeader() {
 +    if (!this._headerSpace) {
 +      return;
 +    }
 +    this._headerSpace.replaceChildren();
-+
+ 
+-    let previewInner = document.createXULElement("vbox");
+-    previewInner.className = "ctrlTab-preview-inner";
+-    preview.appendChild(previewInner);
+-
+-    let canvas = (preview._canvas = document.createXULElement("hbox"));
+-    canvas.className = "ctrlTab-canvas";
+-    previewInner.appendChild(canvas);
 +    let iconContainer = document.createElement("span");
 +    iconContainer.className = "ctrlTab-space-icon";
-+
+ 
+-    let faviconContainer = document.createXULElement("hbox");
+-    faviconContainer.className = "ctrlTab-favicon-container";
+-    previewInner.appendChild(faviconContainer);
 +    let label = document.createElement("span");
 +    label.className = "ctrlTab-header-label";
 +    label.textContent = "Recent Tabs";
-+
+ 
+-    let favicon = (preview._favicon = document.createXULElement("image"));
 +    if (window.gZenWorkspaces?.workspaceEnabled) {
-+      let currentId =
-+        this._currentWorkspaceId || window.gZenWorkspaces.activeWorkspace;
++      let currentId = this.currentSpaceId;
 +      let workspace = window.gZenWorkspaces.getWorkspaceFromId(currentId);
 +      if (workspace) {
 +        let hasIcon = window.gZenWorkspaces.workspaceHasIcon(workspace);
@@ -626,12 +588,14 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -      this.previewColumnCount
 -    );
 -
-+    let count = this.tabPreviewCount;
++    // Read the MRU list once: the getter filters and sorts the whole tab set.
++    let tabs = this.tabList;
++    let count = Math.min(this.maxTabPreviews, tabs.length);
      for (let i = 0; i < this.previews.length; i++) {
 -      this.updatePreview(this.previews[i], this.tabList[i]);
 +      if (i < count) {
 +        this.previews[i].hidden = false;
-+        this.updatePreview(this.previews[i], this.tabList[i]);
++        this.updatePreview(this.previews[i], tabs[i]);
 +      } else {
 +        this.previews[i].hidden = true;
 +        this.previews[i]._tab = null;
@@ -662,10 +626,16 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
  
      if (!aTab) {
 -      aPreview._canvas.replaceChildren();
++      // Clear the row too: a hidden leftover would keep showing the previous
++      // space's title and URL next time the row is reused.
        aPreview.hidden = true;
 -      aPreview._label.removeAttribute("value");
 -      aPreview.removeAttribute("tooltiptext");
--      aPreview._favicon.removeAttribute("src");
++      aPreview._title.textContent = "";
++      aPreview._url.textContent = "";
++      aPreview._tile.textContent = "";
+       aPreview._favicon.removeAttribute("src");
++      aPreview._icon.classList.remove("has-favicon");
        return;
      }
  
@@ -696,7 +666,10 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    // Site initial for fallback tile
 +    aPreview._tile.textContent = this._hostInitial(spec);
 +
-+    // Load favicon
++    // Load favicon. Reset first, otherwise a row reused for a tab without an
++    // icon keeps the previous tab's favicon.
++    aPreview._favicon.removeAttribute("src");
++    aPreview._icon.classList.remove("has-favicon");
      if (aTab.image) {
 -      aPreview._favicon.setAttribute("src", aTab.image);
 +      aPreview._favicon.src = aTab.image;
@@ -859,23 +832,33 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -  remove: function ctrlTab_remove(aPreview) {
 -    if (aPreview._tab) {
 -      gBrowser.removeTab(aPreview._tab);
-+  /**
-+   * Closes the switcher and activates the target tab if provided.
-+   */
-+  close: function ctrlTab_close(aTabToSelect) {
-+    if (!this.isOpen) {
-+      this._currentWorkspaceId = null;
-+      return;
-     }
+-    }
 -  },
- 
+-
 -  attachTab: function ctrlTab_attachTab(aTab, aPos) {
 -    // If the tab is hidden, don't add it to the list unless it's selected
 -    // (Normally hidden tabs would be unhidden when selected, but that doesn't
 -    // happen for Firefox View).
 -    if (aTab.closing || (aTab.hidden && !aTab.selected)) {
-+    this._currentWorkspaceId = null;
-+
++  /**
++   * Closes the switcher and activates the target tab if provided.
++   */
++  close: function ctrlTab_close(aTabToSelect) {
++    if (!this.isOpen) {
++      this._spaceOverride = null;
+       return;
+     }
+ 
+-    // If the tab is already in the list, remove it before re-inserting it.
+-    this.detachTab(aTab);
++    this._spaceOverride = null;
+ 
+-    if (aPos == 0) {
+-      this._recentlyUsedTabs.unshift(aTab);
+-    } else if (aPos) {
+-      this._recentlyUsedTabs.splice(aPos, 0, aTab);
+-    } else {
+-      this._recentlyUsedTabs.push(aTab);
 +    if (this._timer) {
 +      clearTimeout(this._timer);
 +      this._timer = null;
@@ -888,39 +871,27 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +          )
 +        );
 +      }
-       return;
++      return;
      }
- 
--    // If the tab is already in the list, remove it before re-inserting it.
--    this.detachTab(aTab);
--
--    if (aPos == 0) {
--      this._recentlyUsedTabs.unshift(aTab);
--    } else if (aPos) {
--      this._recentlyUsedTabs.splice(aPos, 0, aTab);
--    } else {
--      this._recentlyUsedTabs.push(aTab);
--    }
-+    this.tabToSelect = aTabToSelect;
-+    this.panel.hidePopup();
-   },
+-  },
  
 -  detachTab: function ctrlTab_detachTab(aTab) {
 -    var i = this._recentlyUsedTabs.indexOf(aTab);
 -    if (i >= 0) {
 -      this._recentlyUsedTabs.splice(i, 1);
 -    }
--  },
--
++    this.tabToSelect = aTabToSelect;
++    this.panel.hidePopup();
+   },
+ 
 -  open: function ctrlTab_open() {
 -    if (this.isOpen) {
 +  /**
 +   * Opens the switcher session with 140ms fast-switch delay.
 +   */
 +  open: function ctrlTab_open(aBackward = false) {
-+    this._currentWorkspaceId = window.gZenWorkspaces?.activeWorkspace;
++    this._spaceOverride = null;
 +    if (this.isOpen || !this.tabCount) {
-+      this._currentWorkspaceId = null;
        return;
      }
  
@@ -976,7 +947,21 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -    let width = Math.min(
 -      screen.availWidth * 0.99,
 -      this.canvasWidth * 1.25 * this.previewColumnCount
-+    // TabSwitcher constants (keep in sync with ctrlTab.css).
++    this._positionPanel();
++
++    // Ardia: Ignore resting cursor until mouse moves
++    this.pointerStale = true;
++    this.lastMouseX = -1;
++    this.lastMouseY = -1;
++
++    this._updateSelectedPreview();
++  },
++
++  /**
++   * Places the card, or re-places it after a space switch changed the row count.
++   * Constants mirror TabSwitcher; keep in sync with ctrlTab.css.
++   */
++  _positionPanel() {
 +    const SWITCHER_WIDTH = 400;
 +    const HEADER_HEIGHT = 26;
 +    const ROW_HEIGHT = 40;
@@ -1006,14 +991,11 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +
 +    this.panel.style.width = panelWidth + "px";
 +
-+    this.panel.openPopupAtScreen(left, top, false);
-+
-+    // Ardia: Ignore resting cursor until mouse moves
-+    this.pointerStale = true;
-+    this.lastMouseX = -1;
-+    this.lastMouseY = -1;
-+
-+    this._updateSelectedPreview();
++    if (this.panel.state == "open" || this.panel.state == "showing") {
++      this.panel.moveTo(left, top);
++    } else {
++      this.panel.openPopupAtScreen(left, top, false);
++    }
 +  },
 +
 +  setupGUI() {
@@ -1063,7 +1045,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      if (!this.isOpen) {
        return;
      }
-@@ -557,137 +740,240 @@
+@@ -557,137 +731,249 @@
      if (this._timer) {
        clearTimeout(this._timer);
        this._timer = null;
@@ -1273,35 +1255,41 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +      return;
 +    }
 +    let targetWorkspace = workspaces[targetIndex];
-+    let currentId =
-+      this._currentWorkspaceId || window.gZenWorkspaces.activeWorkspace;
++    let currentId = this.currentSpaceId;
 +    if (currentId === targetWorkspace.uuid) {
 +      return;
 +    }
  
--    this.updatePreviews();
 +    let currentIndex = workspaces.findIndex(w => w.uuid === currentId);
 +    let isForward = targetIndex > currentIndex;
 +    let list = this._list;
- 
--    if (this.selected.hidden) {
--      this.advanceFocus(false);
-+    this._currentWorkspaceId = targetWorkspace.uuid;
 +
-+    try {
-+      window.gZenWorkspaces.changeWorkspace(targetWorkspace);
-+    } catch (e) {
-+      console.error(e);
-     }
--    if (this.selected == this.showAllButton) {
--      this.advanceFocus(false);
-+
++    this._spaceOverride = targetWorkspace.uuid;
 +    this.updateSpaceHeader();
 +
 +    while (this.previews.length < this.tabPreviewCount) {
 +      let newPreview = this._makePreview(this.previews.length);
 +      this._list.appendChild(newPreview);
 +      this.previews.push(newPreview);
++    }
++
+     this.updatePreviews();
+ 
+-    if (this.selected.hidden) {
+-      this.advanceFocus(false);
++    this._selectedIndex = 0;
++    this._updateSelectedPreview();
++
++    if (this.selected?._tab) {
++      gBrowser.warmupTab(this.selected._tab);
+     }
+-    if (this.selected == this.showAllButton) {
+-      this.advanceFocus(false);
++
++    if (list) {
++      list.classList.remove("anim-slide-next", "anim-slide-prev");
++      void list.offsetWidth; // Force reflow so keyframe animation triggers cleanly
++      list.classList.add(isForward ? "anim-slide-next" : "anim-slide-prev");
      }
  
 -    // If the current tab is removed, another tab can steal our focus.
@@ -1313,20 +1301,22 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -        0,
 -        this.selected
 -      );
-+    this.updatePreviews();
-+
-+    this._selectedIndex = 0;
-+    this._updateSelectedPreview();
-+
-+    if (this.selected?._tab) {
-+      gBrowser.warmupTab(this.selected._tab);
++    // The switch itself is asynchronous (animation, lazy restore of the space's
++    // tabs), so paint once more when it lands and re-centre the card for the
++    // row count it actually ended up with.
++    try {
++      await window.gZenWorkspaces.changeWorkspace(targetWorkspace);
++    } catch (e) {
++      console.error(e);
      }
-+
-+    if (list) {
-+      list.classList.remove("anim-slide-next", "anim-slide-prev");
-+      void list.offsetWidth; // Force reflow so keyframe animation triggers cleanly
-+      list.classList.add(isForward ? "anim-slide-next" : "anim-slide-prev");
-+    }
++    this.updateSpaceHeader();
++    this.updatePreviews();
++    this._selectedIndex = Math.min(
++      this._selectedIndex,
++      Math.max(0, this.tabPreviewCount - 1)
++    );
++    this._updateSelectedPreview();
++    this._positionPanel();
    },
  
 +  removeClosingTabFromUI: function ctrlTab_removeClosingTabFromUI(aTab) {
@@ -1388,9 +1378,11 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
          if (
            event.detail.changed.some(elem =>
              ["label", "busy", "image"].includes(elem)
-@@ -706,10 +992,8 @@
+@@ -705,11 +991,10 @@
+         }
          break;
        case "TabSelect": {
++        this._usedTabs.add(event.target);
          this.attachTab(event.target, 0);
 -        // If the previous tab was hidden (e.g. Firefox View), remove it from
 -        // the list when it's deselected.
@@ -1400,7 +1392,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
            this.detachTab(previousTab);
          }
          break;
-@@ -734,84 +1018,231 @@
+@@ -734,84 +1019,233 @@
          this.onKeyDown(event);
          break;
        case "keypress":
@@ -1442,7 +1434,6 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -            !gTabsPanel.canOpen;
 +      case "ZenWorkspacesUIUpdate":
 +        if (this.isOpen) {
-+          this._currentWorkspaceId = window.gZenWorkspaces?.activeWorkspace;
 +          this.updateSpaceHeader();
 +          this.updatePreviews();
 +          this._selectedIndex = 0;
@@ -1624,6 +1615,9 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +      tab => !tab.closing && !tab.hidden && !tab.hasAttribute("zen-empty-tab")
      );
      this._sortRecentlyUsedTabs();
++    if (gBrowser.selectedTab) {
++      this._usedTabs.add(gBrowser.selectedTab);
++    }
    },
  
 +  attachTab: function ctrlTab_attachTab(aTab, aPos) {
@@ -1668,7 +1662,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
  
      var tabContainer = gBrowser.tabContainer;
      tabContainer[toggleEventListener]("TabOpen", this);
-@@ -828,19 +1259,6 @@
+@@ -828,19 +1262,6 @@
      }
      document[toggleEventListener]("keypress", this);
      gBrowser.tabbox.handleCtrlTab = !enable;
@@ -1688,7 +1682,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    },
  };
  
-@@ -851,8 +1269,11 @@
+@@ -851,8 +1272,11 @@
  XPCOMUtils.defineLazyPreferenceGetter(
    ctrlTab,
    "maxTabPreviews",

@@ -1,7 +1,7 @@
 diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/shared/tabbrowser/ctrlTab.css
 --- a/browser/themes/shared/tabbrowser/ctrlTab.css
 +++ b/browser/themes/shared/tabbrowser/ctrlTab.css
-@@ -2,118 +2,460 @@
+@@ -2,118 +2,470 @@
   * License, v. 2.0. If a copy of the MPL was not distributed with this
   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
  
@@ -58,17 +58,10 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 -  background-color: transparent;
 -  @media not (-moz-platform: macos) {
 -    font-weight: var(--font-weight-bold);
--  }
 +  padding: var(--ctrl-tab-shadow-margin) !important;
 +  overflow: visible !important;
- }
- 
--#ctrlTab-previews {
--  display: grid;
--  grid-template-columns: repeat(var(--ctrlTab-previews-per-row), minmax(0, 1fr));
--  /* Add 10px to offset the negative margin-top on .ctrlTab-preview-inner so
--     wrapped rows keep a full row of spacing instead of nearly touching. */
--  row-gap: calc(var(--space-medium) + 10px);
++}
++
 +#ctrlTab-panel::part(content),
 +#ctrlTab-panel > .panel-arrowcontainer,
 +#ctrlTab-panel > .panel-arrowcontent {
@@ -86,11 +79,8 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  overflow: visible !important;
 +  max-width: none !important;
 +  max-height: none !important;
- }
- 
--.ctrlTab-preview {
--  min-width: 0;
--  padding: 0;
++}
++
 +/* -------------------------------------------------------------------------
 + * Floating card
 + *
@@ -135,28 +125,14 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  animation: ctrlTab-card-in 150ms cubic-bezier(0.2, 0, 0, 1);
 +  transition: opacity 120ms cubic-bezier(0.2, 0, 0, 1),
 +              transform 120ms cubic-bezier(0.2, 0, 0, 1);
- }
- 
--.ctrlTab-preview,
--#ctrlTab-showAll {
--  appearance: none;
--  color: inherit;
--  /* remove the :-moz-focusring outline from button.css on Windows */
--  outline: none !important;
--  margin: 0;
--  text-shadow:
--    0 0 1px hsl(0, 0%, 12%),
--    0 0 2px hsl(0, 0%, 12%);
--  border: none;
--  background-color: transparent;
++}
++
 +.ctrlTab-card.closing {
 +  opacity: 0 !important;
 +  transform: scale(0.96) translateY(4px) !important;
 +  pointer-events: none !important;
- }
- 
--.ctrlTab-preview > .button-box {
--  display: none;
++}
++
 +/* Ardia <Panel fill={theme.panel} border={panelBorder} shadow={tabSwitcher}>
 + * tabSwitcher = dialog shadow with radius 28 and a 12px drop. */
 +#ctrlTab-panel .ctrlTab-card.zen-ardia-glass {
@@ -175,32 +151,25 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +    light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
 +  box-shadow: 0 12px 28px
 +    light-dark(rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.5));
- }
- 
--.ctrlTab-favicon-container {
--  position: relative;
--  justify-content: flex-end;
++}
++
 +@keyframes ctrlTab-card-in {
 +  from {
 +    opacity: 0;
 +    transform: scale(0.96) translateY(-4px);
-+  }
+   }
 +  to {
 +    opacity: 1;
 +    transform: scale(1) translateY(0);
 +  }
  }
  
--.ctrlTab-favicon[src] {
--  width: 42px;
--  height: 42px;
--  margin-top: -44px;
--  margin-bottom: 2px;
--  margin-inline-end: -6px;
--  padding: 5px;
--  background-color: var(--background-color-box);
--  border-radius: var(--border-radius-small);
--  border: 1px solid var(--border-color-deemphasized);
+-#ctrlTab-previews {
+-  display: grid;
+-  grid-template-columns: repeat(var(--ctrlTab-previews-per-row), minmax(0, 1fr));
+-  /* Add 10px to offset the negative margin-top on .ctrlTab-preview-inner so
+-     wrapped rows keep a full row of spacing instead of nearly touching. */
+-  row-gap: calc(var(--space-medium) + 10px);
 +/* -------------------------------------------------------------------------
 + * Section header — Ardia <SectionLabel title="Recent Tabs">
 + *   Clean, un-slopped header with breathing room and bold text.
@@ -213,13 +182,9 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  align-items: center;
  }
  
--.ctrlTab-canvas {
--  color-scheme: light;
--  background-color: Canvas;
--  color: CanvasText;
--  box-shadow: 1px 1px 2px hsl(0, 0%, 12%);
--  margin-bottom: 8px;
+-.ctrlTab-preview {
 -  min-width: 0;
+-  padding: 0;
 +.ctrlTab-header-space {
 +  display: flex;
 +  align-items: center;
@@ -227,12 +192,20 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  overflow: hidden;
 +  text-overflow: ellipsis;
 +  white-space: nowrap;
-+}
+ }
  
--  @media (-moz-content-prefers-color-scheme: dark) {
--    /* Make the blank canvas match the default content background. */
--    color-scheme: dark;
--  }
+-.ctrlTab-preview,
+-#ctrlTab-showAll {
+-  appearance: none;
+-  color: inherit;
+-  /* remove the :-moz-focusring outline from button.css on Windows */
+-  outline: none !important;
+-  margin: 0;
+-  text-shadow:
+-    0 0 1px hsl(0, 0%, 12%),
+-    0 0 2px hsl(0, 0%, 12%);
+-  border: none;
+-  background-color: transparent;
 +.ctrlTab-space-icon {
 +  display: inline-flex;
 +  align-items: center;
@@ -244,11 +217,10 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  fill: currentColor;
 +  stroke: currentColor;
 +  color: var(--ctrl-tab-text-primary);
-+}
+ }
  
--  > img,
--  > canvas {
--    min-width: 0;
+-.ctrlTab-preview > .button-box {
+-  display: none;
 +.ctrlTab-space-icon-mask {
 +  display: inline-block;
 +  width: 15px;
@@ -260,8 +232,11 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  -webkit-mask-size: contain;
 +  -webkit-mask-position: center;
 +  -webkit-mask-repeat: no-repeat;
-+}
-+
+ }
+ 
+-.ctrlTab-favicon-container {
+-  position: relative;
+-  justify-content: flex-end;
 +.ctrlTab-space-icon-img {
 +  width: 15px;
 +  height: 15px;
@@ -270,8 +245,18 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  fill: currentColor;
 +  stroke: currentColor;
 +  color: var(--ctrl-tab-text-primary);
-+}
-+
+ }
+ 
+-.ctrlTab-favicon[src] {
+-  width: 42px;
+-  height: 42px;
+-  margin-top: -44px;
+-  margin-bottom: 2px;
+-  margin-inline-end: -6px;
+-  padding: 5px;
+-  background-color: var(--background-color-box);
+-  border-radius: var(--border-radius-small);
+-  border: 1px solid var(--border-color-deemphasized);
 +.ctrlTab-space-icon-badge {
 +  display: inline-flex;
 +  align-items: center;
@@ -283,8 +268,15 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  font-size: 10px;
 +  font-weight: 700;
 +  color: var(--ctrl-tab-text-primary);
-+}
-+
+ }
+ 
+-.ctrlTab-canvas {
+-  color-scheme: light;
+-  background-color: Canvas;
+-  color: CanvasText;
+-  box-shadow: 1px 1px 2px hsl(0, 0%, 12%);
+-  margin-bottom: 8px;
+-  min-width: 0;
 +.ctrlTab-header-label {
 +  font-size: 13.5px;
 +  font-weight: 750;
@@ -293,7 +285,10 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  color: var(--ctrl-tab-text-primary);
 +  opacity: 0.96;
 +}
-+
+ 
+-  @media (-moz-content-prefers-color-scheme: dark) {
+-    /* Make the blank canvas match the default content background. */
+-    color-scheme: dark;
 +/* -------------------------------------------------------------------------
 + * Vertical list. Ardia caps the visible rows at MAX_ROWS (9) and renders the
 + * rows back-to-back with no gap (ROW * 9 = 360px).
@@ -315,19 +310,26 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +    opacity: 1;
 +    transform: translateX(0);
 +  }
- }
++}
  
--.ctrlTab-placeholder {
--  visibility: hidden;
+-  > img,
+-  > canvas {
+-    min-width: 0;
 +@keyframes ctrlTabSlidePrev {
 +  0% {
 +    opacity: 0.2;
 +    transform: translateX(-12px);
-+  }
+   }
 +  100% {
 +    opacity: 1;
 +    transform: translateX(0);
 +  }
+ }
+ 
+-.ctrlTab-placeholder {
+-  visibility: hidden;
++.ctrlTab-list.anim-slide-next {
++  animation: ctrlTabSlideNext 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
  }
  
 -.ctrlTab-preview-inner,
@@ -335,20 +337,13 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 -  padding: 8px;
 -  border: 2px solid transparent;
 -  border-radius: 0.5em;
-+.ctrlTab-list.anim-slide-next {
-+  animation: ctrlTabSlideNext 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
++.ctrlTab-list.anim-slide-prev {
++  animation: ctrlTabSlidePrev 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
  }
  
 -.ctrlTab-preview-inner {
 -  margin-top: -10px;
 -  min-width: 0;
-+.ctrlTab-list.anim-slide-prev {
-+  animation: ctrlTabSlidePrev 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
- }
- 
--#ctrlTab-showAll {
--  background-color: var(--color-white-alpha-20);
--  margin-top: 0.5em;
 +.ctrlTab-empty {
 +  display: flex;
 +  align-items: center;
@@ -356,6 +351,19 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  height: 48px;
 +  font-size: 12px;
 +  color: light-dark(rgba(0, 0, 0, 0.45), rgba(255, 255, 255, 0.45));
+ }
+ 
+-#ctrlTab-showAll {
+-  background-color: var(--color-white-alpha-20);
+-  margin-top: 0.5em;
++/* `hidden` is implemented as a presentation attribute in Gecko, so the
++ * `display` rules above beat it: a row (or the empty label) set to hidden kept
++ * painting anyway. That left blank / stale rows in the card and let the empty
++ * label push real rows out of the clipped list. The controller toggles the
++ * attribute, so force it to win here. */
++.ctrlTab-preview[hidden],
++.ctrlTab-empty[hidden] {
++  display: none !important;
  }
  
 -.ctrlTab-preview:focus > .ctrlTab-preview-inner,
