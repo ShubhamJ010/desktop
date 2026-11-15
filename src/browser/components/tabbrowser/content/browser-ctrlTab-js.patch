@@ -1408,7 +1408,6 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +
 +    this.updatePreviews();
 +    this._updateSelectedPreview();
-+    this._positionPanel();
 +
 +    if (this.selected?._tab) {
 +      gBrowser.warmupTab(this.selected._tab);
