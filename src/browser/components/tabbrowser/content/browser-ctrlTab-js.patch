@@ -204,7 +204,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      }
  
      if (host.tabToSelect) {
-@@ -192,83 +77,164 @@
+@@ -192,82 +77,164 @@
        );
        host.tabToSelect = null;
      }
@@ -307,8 +307,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -  },
  
    get tabList() {
--    const canShowPending = Services.prefs.getBoolPref("zen.ctrlTab.show-pending-tabs", false);
--    return this._recentlyUsedTabs.filter(tab => !tab.hasAttribute("pending") || canShowPending);
+-    return this._recentlyUsedTabs;
 +    // Port of Ardia's recentTabIds (state/pins/tabCleanup.ts):
 +    //   1. drop tabs that are asleep (page unloaded),
 +    //   2. sort by last access,
@@ -420,7 +419,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      if (!this._recentlyUsedTabs) {
        this._initRecentlyUsedTabs();
        this._init(true);
-@@ -276,6 +242,9 @@
+@@ -275,6 +242,9 @@
    },
  
    uninit: function ctrlTab_uninit() {
@@ -430,7 +429,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      if (this._recentlyUsedTabs) {
        this._recentlyUsedTabs = null;
        this._init(false);
-@@ -295,8 +264,11 @@
+@@ -294,8 +264,11 @@
    },
  
    readPref: function ctrlTab_readPref() {
@@ -443,7 +442,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
        !Services.prefs.getBoolPref(
          "browser.ctrlTab.disallowForScreenReaders",
          false
-@@ -308,249 +280,459 @@
+@@ -307,249 +280,459 @@
        this.uninit();
      }
    },
@@ -482,24 +481,23 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -    let previewInner = document.createXULElement("vbox");
 -    previewInner.className = "ctrlTab-preview-inner";
 -    preview.appendChild(previewInner);
--
--    let canvas = (preview._canvas = document.createXULElement("hbox"));
--    canvas.className = "ctrlTab-canvas";
--    previewInner.appendChild(canvas);
 +    // Section header: Space icon + Recent Tabs label
 +    let header = document.createElement("div");
 +    header.className = "ctrlTab-header";
  
--    let faviconContainer = document.createXULElement("hbox");
--    faviconContainer.className = "ctrlTab-favicon-container";
--    previewInner.appendChild(faviconContainer);
+-    let canvas = (preview._canvas = document.createXULElement("hbox"));
+-    canvas.className = "ctrlTab-canvas";
+-    previewInner.appendChild(canvas);
 +    let headerSpace = (this._headerSpace = document.createElement("div"));
 +    headerSpace.className = "ctrlTab-header-space";
 +    header.appendChild(headerSpace);
  
--    let favicon = (preview._favicon = document.createXULElement("image"));
+-    let faviconContainer = document.createXULElement("hbox");
+-    faviconContainer.className = "ctrlTab-favicon-container";
+-    previewInner.appendChild(faviconContainer);
 +    card.appendChild(header);
-+
+ 
+-    let favicon = (preview._favicon = document.createXULElement("image"));
 +    // List container
 +    let list = (this._list = document.createElement("div"));
 +    list.className = "ctrlTab-list";
@@ -875,7 +873,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -    // If the tab is hidden, don't add it to the list unless it's selected
 -    // (Normally hidden tabs would be unhidden when selected, but that doesn't
 -    // happen for Firefox View).
--    if (aTab.closing || (aTab.hidden && !aTab.selected) || aTab.hasAttribute("zen-empty-tab")) {
+-    if (aTab.closing || (aTab.hidden && !aTab.selected)) {
 +    this._currentWorkspaceId = null;
 +
 +    if (this._timer) {
@@ -915,12 +913,13 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -  },
 -
 -  open: function ctrlTab_open() {
+-    if (this.isOpen) {
 +  /**
 +   * Opens the switcher session with 140ms fast-switch delay.
 +   */
 +  open: function ctrlTab_open(aBackward = false) {
 +    this._currentWorkspaceId = window.gZenWorkspaces?.activeWorkspace;
-     if (this.isOpen || !this.tabCount) {
++    if (this.isOpen || !this.tabCount) {
 +      this._currentWorkspaceId = null;
        return;
      }
@@ -1064,7 +1063,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      if (!this.isOpen) {
        return;
      }
-@@ -558,137 +740,240 @@
+@@ -557,137 +740,240 @@
      if (this._timer) {
        clearTimeout(this._timer);
        this._timer = null;
@@ -1389,7 +1388,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
          if (
            event.detail.changed.some(elem =>
              ["label", "busy", "image"].includes(elem)
-@@ -707,10 +992,8 @@
+@@ -706,10 +992,8 @@
          break;
        case "TabSelect": {
          this.attachTab(event.target, 0);
@@ -1401,7 +1400,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
            this.detachTab(previousTab);
          }
          break;
-@@ -735,70 +1018,184 @@
+@@ -734,84 +1018,231 @@
          this.onKeyDown(event);
          break;
        case "keypress":
@@ -1621,7 +1620,9 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    _initRecentlyUsedTabs() {
      this._recentlyUsedTabs = Array.prototype.filter.call(
        gBrowser.tabs,
-@@ -807,12 +1204,45 @@
+-      tab => !tab.closing && !tab.hidden
++      tab => !tab.closing && !tab.hidden && !tab.hasAttribute("zen-empty-tab")
+     );
      this._sortRecentlyUsedTabs();
    },
  
@@ -1667,7 +1668,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
  
      var tabContainer = gBrowser.tabContainer;
      tabContainer[toggleEventListener]("TabOpen", this);
-@@ -829,19 +1259,6 @@
+@@ -828,19 +1259,6 @@
      }
      document[toggleEventListener]("keypress", this);
      gBrowser.tabbox.handleCtrlTab = !enable;
@@ -1687,7 +1688,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    },
  };
  
-@@ -852,8 +1269,11 @@
+@@ -851,8 +1269,11 @@
  XPCOMUtils.defineLazyPreferenceGetter(
    ctrlTab,
    "maxTabPreviews",
