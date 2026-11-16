@@ -33,7 +33,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -    delete this.aspectRatio;
 -    return (this.aspectRatio = height / width);
 -  },
- 
+-
 -  /**
 -   * Get the stored thumbnail URL for a given page URL and wait up to 1s for it
 -   * to load. If the browser is discarded and there is no stored thumbnail, the
@@ -162,7 +162,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -    return canvas;
 -  },
 -};
--
+ 
  var tabPreviewPanelHelper = {
    opening(host) {
      host.panel.hidden = false;
@@ -181,7 +181,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    _generateHandler(host) {
      var self = this;
      return function listener(event) {
-@@ -163,11 +46,13 @@
+@@ -163,11 +46,13 @@ var tabPreviewPanelHelper = {
        }
      };
    },
@@ -195,7 +195,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    _popuphiding(host) {
      if ("suspendGUI" in host) {
        host.suspendGUI();
-@@ -180,7 +65,7 @@
+@@ -180,7 +65,7 @@ var tabPreviewPanelHelper = {
        );
        host._prevFocus = null;
      } else {
@@ -204,7 +204,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      }
  
      if (host.tabToSelect) {
-@@ -192,80 +77,213 @@
+@@ -192,82 +77,213 @@ var tabPreviewPanelHelper = {
        );
        host.tabToSelect = null;
      }
@@ -277,13 +277,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -    delete this.previews;
 -    this._buildPreviews();
 -    return this.previews;
-+
-+  get selected() {
-+    if (this._selectedIndex >= 0 && this._selectedIndex < this.previews.length) {
-+      return this.previews[this._selectedIndex];
-+    }
-+    return this.previews[0] || null;
-   },
+-  },
 -  get keys() {
 -    var keys = {};
 -    ["close", "find", "selectAll"].forEach(function (key) {
@@ -297,11 +291,16 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -    return (this.keys = keys);
 -  },
 -  _selectedIndex: 0,
--  get selected() {
++
+   get selected() {
 -    return this._selectedIndex < 0
 -      ? document.activeElement
 -      : this.previews[this._selectedIndex];
--  },
++    if (this._selectedIndex >= 0 && this._selectedIndex < this.previews.length) {
++      return this.previews[this._selectedIndex];
++    }
++    return this.previews[0] || null;
+   },
 +
    get isOpen() {
      return (
@@ -322,17 +321,13 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    return this._buildList(this.currentSpaceId);
 +  },
 +
-   /**
--   * The number of grid columns the visible previews are laid out in, which is
--   * also the number of previews in the widest row.
++  /**
 +   * Tabs of `spaceId`, most recently used first.
 +   *
 +   * With `gates: false` this returns the raw membership of the space, with no
 +   * pending or pin filtering. The card uses that to tell "this space is empty"
 +   * apart from "our own filters hid everything".
-    */
--  get previewColumnCount() {
--    return Math.min(this.tabPreviewCount, this.previewsPerRow);
++   */
 +  _buildList(spaceId, { gates = true } = {}) {
 +    let workspaces = null;
 +    let containerId = null;
@@ -375,18 +370,22 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +        return true;
 +      })
 +      .sort((a, b) => b.lastAccessed - a.lastAccessed);
++  },
++
+   /**
+-   * The number of grid columns the visible previews are laid out in, which is
+-   * also the number of previews in the widest row.
++   * Everything the space holds, gates ignored. Used only as a last resort so a
++   * space that has tabs never renders as "No recent tabs".
+    */
+-  get previewColumnCount() {
+-    return Math.min(this.tabPreviewCount, this.previewsPerRow);
++  _fallbackList(spaceId) {
++    return this._buildList(spaceId, { gates: false });
    },
  
 -  get tabList() {
 -    return this._recentlyUsedTabs;
-+  /**
-+   * Everything the space holds, gates ignored. Used only as a last resort so a
-+   * space that has tabs never renders as "No recent tabs".
-+   */
-+  _fallbackList(spaceId) {
-+    return this._buildList(spaceId, { gates: false });
-+  },
-+
 +  /**
 +   * The list the card shows for `spaceId`, and whether it is the raw one because
 +   * our own filters hid every tab. Both the paint before a switch and the paint
@@ -457,8 +456,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    }
 +    const tabWorkspaceId = tab.getAttribute("zen-workspace-id");
 +    return tabWorkspaceId === workspaceId;
-+  },
-+
+   },
+ 
    init: function ctrlTab_init() {
 +    if (this.isOpen) {
 +      return;
@@ -466,7 +465,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      if (!this._recentlyUsedTabs) {
        this._initRecentlyUsedTabs();
        this._init(true);
-@@ -275,6 +282,9 @@
+@@ -275,6 +291,9 @@ var ctrlTab = {
    },
  
    uninit: function ctrlTab_uninit() {
@@ -476,7 +475,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      if (this._recentlyUsedTabs) {
        this._recentlyUsedTabs = null;
        this._init(false);
-@@ -294,8 +304,11 @@
+@@ -294,8 +313,11 @@ var ctrlTab = {
    },
  
    readPref: function ctrlTab_readPref() {
@@ -489,7 +488,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
        !Services.prefs.getBoolPref(
          "browser.ctrlTab.disallowForScreenReaders",
          false
-@@ -307,148 +320,443 @@
+@@ -307,146 +329,643 @@ var ctrlTab = {
        this.uninit();
      }
    },
@@ -503,64 +502,33 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +   */
    _buildPreviews() {
 -    this.previewsContainer.replaceChildren();
--    this.previews = [];
--    for (let i = 0; i < this.maxTabPreviews; i++) {
--      let preview = this._makePreview();
--      this.previewsContainer.appendChild(preview);
--      this.previews.push(preview);
--    }
--    this.previews.push(this.showAllButton);
--  },
 +    this.panel.classList.add("zen-ctrlTab-panel");
 +    this.panel.replaceChildren();
- 
--  _makePreview() {
--    let preview = document.createXULElement("button");
--    preview.className = "ctrlTab-preview";
--    preview.setAttribute("pack", "center");
--    preview.addEventListener("mouseover", this);
--    preview.addEventListener("command", this);
--    preview.addEventListener("click", this);
++
 +    // Floating frosted glass card container
 +    let card = (this._card = document.createElement("div"));
 +    card.className = "ctrlTab-card zen-ardia-glass";
- 
--    let previewInner = document.createXULElement("vbox");
--    previewInner.className = "ctrlTab-preview-inner";
--    preview.appendChild(previewInner);
++
 +    // Section header: Space icon + Recent Tabs label, plus the space dots
 +    let header = document.createElement("div");
 +    header.className = "ctrlTab-header";
- 
--    let canvas = (preview._canvas = document.createXULElement("hbox"));
--    canvas.className = "ctrlTab-canvas";
--    previewInner.appendChild(canvas);
++
 +    let headerSpace = (this._headerSpace = document.createElement("div"));
 +    headerSpace.className = "ctrlTab-header-space";
 +    header.appendChild(headerSpace);
- 
--    let faviconContainer = document.createXULElement("hbox");
--    faviconContainer.className = "ctrlTab-favicon-container";
--    previewInner.appendChild(faviconContainer);
++
 +    let dots = (this._dots = document.createElement("div"));
 +    dots.className = "ctrlTab-dots";
 +    header.appendChild(dots);
- 
--    let favicon = (preview._favicon = document.createXULElement("image"));
--    favicon.className = "ctrlTab-favicon";
--    faviconContainer.appendChild(favicon);
++
 +    card.appendChild(header);
- 
--    let label = (preview._label = document.createXULElement("label"));
--    label.className = "ctrlTab-label plain";
--    label.setAttribute("crop", "end");
--    previewInner.appendChild(label);
++
 +    // List container. The pill is one travelling highlight, so changing the
 +    // selection never repaints a row.
 +    let list = (this._list = document.createElement("div"));
 +    list.className = "ctrlTab-list";
 +    card.appendChild(list);
- 
++
 +    let pill = (this._pill = document.createElement("div"));
 +    pill.className = "ctrlTab-pill";
 +    list.appendChild(pill);
@@ -575,14 +543,19 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +
 +    this.panel.appendChild(card);
 +
-+    this.previews = [];
-+    for (let i = 0; i < this.maxTabPreviews; i++) {
+     this.previews = [];
+     for (let i = 0; i < this.maxTabPreviews; i++) {
+-      let preview = this._makePreview();
+-      this.previewsContainer.appendChild(preview);
 +      let preview = this._makePreview(i);
 +      list.appendChild(preview);
-+      this.previews.push(preview);
-+    }
-+  },
-+
+       this.previews.push(preview);
+     }
+-    this.previews.push(this.showAllButton);
+   },
+ 
+-  _makePreview() {
+-    let preview = document.createXULElement("button");
 +  updateSpaceHeader({ animate = false } = {}) {
 +    if (!this._headerSpace) {
 +      return;
@@ -679,7 +652,10 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +   */
 +  _makePreview(index) {
 +    let preview = document.createElement("button");
-+    preview.className = "ctrlTab-preview";
+     preview.className = "ctrlTab-preview";
+-    preview.setAttribute("pack", "center");
+-    preview.addEventListener("mouseover", this);
+-    preview.addEventListener("command", this);
 +    preview.setAttribute("type", "button");
 +    preview.setAttribute("tabindex", "-1");
 +    preview.dataset.index = index;
@@ -719,16 +695,17 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +
 +    preview.appendChild(details);
 +
-+    preview.addEventListener("click", this);
-+
-     return preview;
-   },
+     preview.addEventListener("click", this);
  
--  updatePreviews: function ctrlTab_updatePreviews() {
--    this.previewsContainer.style.setProperty(
--      "--ctrlTab-previews-per-row",
--      this.previewColumnCount
--    );
+-    let previewInner = document.createXULElement("vbox");
+-    previewInner.className = "ctrlTab-preview-inner";
+-    preview.appendChild(previewInner);
++    return preview;
++  },
+ 
+-    let canvas = (preview._canvas = document.createXULElement("hbox"));
+-    canvas.className = "ctrlTab-canvas";
+-    previewInner.appendChild(canvas);
 +  /**
 +   * Paints the card.
 +   *
@@ -743,8 +720,10 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    let tabs = opts.list || this.tabList;
 +    let count = Math.min(this.maxTabPreviews, tabs.length);
  
-     for (let i = 0; i < this.previews.length; i++) {
--      this.updatePreview(this.previews[i], this.tabList[i]);
+-    let faviconContainer = document.createXULElement("hbox");
+-    faviconContainer.className = "ctrlTab-favicon-container";
+-    previewInner.appendChild(faviconContainer);
++    for (let i = 0; i < this.previews.length; i++) {
 +      if (i < count) {
 +        this.previews[i].hidden = false;
 +        this.updatePreview(this.previews[i], tabs[i]);
@@ -752,14 +731,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +        this.previews[i].hidden = true;
 +        this.previews[i]._tab = null;
 +      }
-     }
- 
--    document.l10n.setAttributes(
--      this.showAllButton,
--      "tabbrowser-ctrl-tab-list-all-tabs",
--      { tabCount: this.tabCount }
--    );
--    this.showAllButton.hidden = !gTabsPanel.canOpen;
++    }
++
 +    this._visibleRows = count;
 +    // The box is sized for the list being painted, once: nothing resizes under
 +    // the motion, so the card never moves mid-transition.
@@ -773,21 +746,18 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    if (opts.animate && count > 0) {
 +      this._animateSwap(opts.direction);
 +    }
-   },
- 
--  updatePreview: function ctrlTab_updatePreview(aPreview, aTab) {
--    if (aPreview == this.showAllButton) {
++  },
++
 +  /**
 +   * Keeps the empty label and the selection pill consistent with the rows that
 +   * were just painted, so a paint can never show "No recent tabs" beside rows.
 +   */
 +  _syncCardState(count) {
 +    if (!this._card) {
-       return;
-     }
++      return;
++    }
 +    this._cardState = count > 0 ? "ready" : "empty";
- 
--    let tabChanged = aPreview._tab != aTab;
++
 +    if (this._emptyLabel) {
 +      this._emptyLabel.hidden =
 +        Boolean(this._switchInFlight) || this._cardState !== "empty";
@@ -841,47 +811,25 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +   * Populates a preview row with tab metadata (title, URL, favicon).
 +   */
 +  updatePreview: function ctrlTab_updatePreview(aPreview, aTab) {
-     aPreview._tab = aTab;
- 
-     if (!aTab) {
--      aPreview._canvas.replaceChildren();
++    aPreview._tab = aTab;
++
++    if (!aTab) {
 +      // Clear the row too: a hidden leftover would keep showing the previous
 +      // space's title and URL next time the row is reused.
-       aPreview.hidden = true;
--      aPreview._label.removeAttribute("value");
--      aPreview.removeAttribute("tooltiptext");
++      aPreview.hidden = true;
 +      aPreview._title.textContent = "";
 +      aPreview._url.textContent = "";
 +      aPreview._tile.textContent = "";
-       aPreview._favicon.removeAttribute("src");
++      aPreview._favicon.removeAttribute("src");
 +      aPreview._icon.classList.remove("has-favicon");
-       return;
-     }
- 
--    if (tabChanged) {
--      // Drop the previous tab's thumbnail right away, so that the preview
--      // doesn't keep showing it if the new tab has no thumbnail to offer. The
--      // placeholder is invisible and only keeps the canvas box at full size.
--      aPreview._canvas.replaceChildren(this._makePlaceholder());
--    }
++      return;
++    }
++
 +    aPreview._title.textContent = aTab.label;
- 
--    tabPreviews
--      .get(aTab)
--      .then(img => {
--        if (aPreview._tab != aTab || !img) {
--          return;
--        }
--        img.style.width = this.canvasWidth + "px";
--        img.style.height = this.canvasHeight + "px";
--        aPreview._canvas.replaceChildren(img);
--      })
--      .catch(error => console.error(error));
++
 +    let spec = aTab.linkedBrowser?.currentURI?.spec || "";
 +    aPreview._url.textContent = this._displayUrl(spec);
- 
--    aPreview._label.setAttribute("value", aTab.label);
--    aPreview.setAttribute("tooltiptext", aTab.label);
++
 +    // Site initial for fallback tile
 +    aPreview._tile.textContent = this._hostInitial(spec);
 +
@@ -889,8 +837,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    // icon keeps the previous tab's favicon.
 +    aPreview._favicon.removeAttribute("src");
 +    aPreview._icon.classList.remove("has-favicon");
-     if (aTab.image) {
--      aPreview._favicon.setAttribute("src", aTab.image);
++    if (aTab.image) {
 +      aPreview._favicon.src = aTab.image;
 +    } else if (typeof PlacesUtils !== "undefined" && aTab.linkedBrowser?.currentURI) {
 +      try {
@@ -905,21 +852,13 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +      } catch (e) {
 +        aPreview._icon.classList.remove("has-favicon");
 +      }
-     } else {
--      aPreview._favicon.removeAttribute("src");
++    } else {
 +      aPreview._icon.classList.remove("has-favicon");
-     }
++    }
 +
-     aPreview.hidden = false;
-   },
- 
--  _makePlaceholder() {
--    let placeholder = document.createElement("img");
--    placeholder.className = "ctrlTab-placeholder";
--    placeholder.setAttribute("width", this.canvasWidth);
--    placeholder.setAttribute("height", this.canvasHeight);
--    placeholder.setAttribute("alt", "");
--    return placeholder;
++    aPreview.hidden = false;
++  },
++
 +  /**
 +   * Ardia displayUrl: cleans URL by stripping scheme, www, and trailing slash.
 +   */
@@ -935,16 +874,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    s = s.replace(/^www\./i, "");
 +    s = s.replace(/\/$/, "");
 +    return s;
-   },
- 
--  advanceFocus: function ctrlTab_advanceFocus(aForward) {
--    let selectedIndex = this.previews.indexOf(this.selected);
--    do {
--      selectedIndex += aForward ? 1 : -1;
--      if (selectedIndex < 0) {
--        selectedIndex = this.previews.length - 1;
--      } else if (selectedIndex >= this.previews.length) {
--        selectedIndex = 0;
++  },
++
 +  /**
 +   * Extracts uppercase initial letter from host for fallback tile.
 +   */
@@ -988,26 +919,18 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +        }
 +      } else {
 +        preview.removeAttribute("selected");
-       }
--    } while (this.previews[selectedIndex].hidden);
++      }
 +    }
- 
--    if (this._selectedIndex == -1) {
--      // Focus is already in the panel.
--      this.previews[selectedIndex].focus();
--    } else {
--      this._selectedIndex = selectedIndex;
++
 +    if (this._pill) {
 +      let visible = this._visibleRows > 0 && this._cardState !== "empty";
 +      this._pill.classList.toggle("is-visible", visible);
 +      if (visible) {
 +        this._pill.style.transform = `translateY(${this._selectedIndex * 40}px)`;
 +      }
-     }
++    }
 +  },
- 
--    if (this.previews[selectedIndex]._tab) {
--      gBrowser.warmupTab(this.previews[selectedIndex]._tab);
++
 +  /**
 +   * Steps selection forward or backward.
 +   */
@@ -1015,8 +938,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    let count = this.tabPreviewCount;
 +    if (count <= 0) {
 +      return;
-     }
- 
++    }
++
 +    let delta = aForward ? 1 : -1;
 +    this._selectIndex(this._selectedIndex + delta);
 +
@@ -1024,18 +947,17 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    this.pointerStale = true;
 +
 +    // If timer was waiting to open panel, cancel delay and show immediately
-     if (this._timer) {
-       clearTimeout(this._timer);
-       this._timer = null;
-@@ -456,100 +763,197 @@
-     }
-   },
- 
++    if (this._timer) {
++      clearTimeout(this._timer);
++      this._timer = null;
++      this._openPanel();
++    }
++  },
++
 +  /**
 +   * Commits the switcher to the picked preview or currently selected tab.
 +   */
-   pick: function ctrlTab_pick(aPreview) {
--    if (!this.tabCount) {
++  pick: function ctrlTab_pick(aPreview) {
 +    let preview = aPreview || this.selected;
 +    let tab = preview ? preview._tab : null;
 +    this.close(tab);
@@ -1047,16 +969,11 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  close: function ctrlTab_close(aTabToSelect) {
 +    if (!this.isOpen) {
 +      this._spaceOverride = null;
-       return;
-     }
- 
--    var select = aPreview || this.selected;
++      return;
++    }
++
 +    this._spaceOverride = null;
- 
--    if (select == this.showAllButton) {
--      this.showAllTabs("ctrltab-all-tabs-button");
--    } else {
--      this.close(select._tab);
++
 +    if (this._timer) {
 +      clearTimeout(this._timer);
 +      this._timer = null;
@@ -1070,97 +987,51 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +        );
 +      }
 +      return;
-     }
--  },
- 
--  showAllTabs: function ctrlTab_showAllTabs(aEntrypoint = "unknown") {
--    this.close();
--    gTabsPanel.showAllTabsPanel(null, aEntrypoint);
++    }
++
 +    this.tabToSelect = aTabToSelect;
 +    this.panel.hidePopup();
-   },
- 
--  remove: function ctrlTab_remove(aPreview) {
--    if (aPreview._tab) {
--      gBrowser.removeTab(aPreview._tab);
--    }
--  },
--
--  attachTab: function ctrlTab_attachTab(aTab, aPos) {
--    // If the tab is hidden, don't add it to the list unless it's selected
--    // (Normally hidden tabs would be unhidden when selected, but that doesn't
--    // happen for Firefox View).
--    if (aTab.closing || (aTab.hidden && !aTab.selected)) {
++  },
++
 +  /**
 +   * Opens the switcher session with 140ms fast-switch delay.
 +   */
 +  open: function ctrlTab_open(aBackward = false) {
 +    this._spaceOverride = null;
 +    if (this.isOpen || !this.tabCount) {
-       return;
-     }
- 
--    // If the tab is already in the list, remove it before re-inserting it.
--    this.detachTab(aTab);
++      return;
++    }
++
 +    // A fresh session owns the card: invalidate whatever the last one left.
 +    this._transitionToken++;
 +    this._switchInFlight = null;
 +    this._clearSwap();
 +    this._cardState = "ready";
- 
--    if (aPos == 0) {
--      this._recentlyUsedTabs.unshift(aTab);
--    } else if (aPos) {
--      this._recentlyUsedTabs.splice(aPos, 0, aTab);
--    } else {
--      this._recentlyUsedTabs.push(aTab);
++
 +    if (this.previews.length !== this.maxTabPreviews) {
 +      this._buildPreviews();
-     }
--  },
- 
--  detachTab: function ctrlTab_detachTab(aTab) {
--    var i = this._recentlyUsedTabs.indexOf(aTab);
--    if (i >= 0) {
--      this._recentlyUsedTabs.splice(i, 1);
--    }
--  },
++    }
++
 +    this.updatePreviews();
- 
--  open: function ctrlTab_open() {
--    if (this.isOpen) {
--      return;
--    }
++
 +    let count = this.tabPreviewCount;
 +    // Ardia: if only 1 tab, select it; otherwise initial index is backward ? count - 1 : 1
 +    this._selectedIndex = count <= 1 ? 0 : (aBackward ? count - 1 : 1);
 +    this._updateSelectedPreview();
- 
--    if (this.previews.length != this.maxTabPreviews + 1) {
--      this._buildPreviews();
++
 +    let targetTab = this.tabList[this._selectedIndex];
 +    if (targetTab) {
 +      gBrowser.warmupTab(targetTab);
-     }
--    this.canvasWidth = Math.ceil(
--      (screen.availWidth * 0.85) / this.previewsPerRow
--    );
--    this.canvasHeight = Math.round(this.canvasWidth * tabPreviews.aspectRatio);
--    this.updatePreviews();
--    this._selectedIndex = 1;
--    gBrowser.warmupTab(this.selected._tab);
- 
--    // Add a slight delay before showing the UI, so that a quick
--    // "ctrl-tab" keypress just flips back to the MRU tab.
++    }
++
 +    // Ardia SHOW_AFTER_MS: 140ms delay before presenting UI.
 +    // Releasing Ctrl before 140ms executes immediate switch with zero UI flash.
-     this._timer = setTimeout(() => {
-       this._timer = null;
-       this._openPanel();
--    }, 200);
++    this._timer = setTimeout(() => {
++      this._timer = null;
++      this._openPanel();
 +    }, this.SHOW_AFTER_MS);
-   },
- 
++  },
++
 +  /**
 +   * Positions and displays the floating card.
 +   *
@@ -1172,23 +1043,42 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +   * the card's drop shadow is not clipped by the popup bounds; the extra space
 +   * is subtracted again when the card is centered.
 +   */
-   _openPanel: function ctrlTab_openPanel() {
++  _openPanel: function ctrlTab_openPanel() {
 +    this.updateSpaceHeader();
-     tabPreviewPanelHelper.opening(this);
++    tabPreviewPanelHelper.opening(this);
  
--    let width = Math.min(
--      screen.availWidth * 0.99,
--      this.canvasWidth * 1.25 * this.previewColumnCount
+-    let favicon = (preview._favicon = document.createXULElement("image"));
+-    favicon.className = "ctrlTab-favicon";
+-    faviconContainer.appendChild(favicon);
 +    this._positionPanel();
-+
+ 
+-    let label = (preview._label = document.createXULElement("label"));
+-    label.className = "ctrlTab-label plain";
+-    label.setAttribute("crop", "end");
+-    previewInner.appendChild(label);
 +    // Ardia: Ignore resting cursor until mouse moves
 +    this.pointerStale = true;
 +    this.lastMouseX = -1;
 +    this.lastMouseY = -1;
-+
+ 
+-    return preview;
 +    this._updateSelectedPreview();
-+  },
-+
+   },
+ 
+-  updatePreviews: function ctrlTab_updatePreviews() {
+-    this.previewsContainer.style.setProperty(
+-      "--ctrlTab-previews-per-row",
+-      this.previewColumnCount
+-    );
+-
+-    for (let i = 0; i < this.previews.length; i++) {
+-      this.updatePreview(this.previews[i], this.tabList[i]);
+-    }
+-
+-    document.l10n.setAttributes(
+-      this.showAllButton,
+-      "tabbrowser-ctrl-tab-list-all-tabs",
+-      { tabCount: this.tabCount }
 +  /**
 +   * Places the card, or re-places it after a space switch changed the row count.
 +   * Constants mirror TabSwitcher; keep in sync with ctrlTab.css.
@@ -1217,28 +1107,61 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +      40,
 +      Math.round((window.outerHeight - cardHeight) / 2) - 40
      );
--    this.panel.style.width = width + "px";
--    let previewRows = Math.ceil(this.tabPreviewCount / this.previewsPerRow);
--    var estimateHeight = this.canvasHeight * 1.25 * previewRows + 75;
--    this.panel.openPopupAtScreen(
--      screen.availLeft + (screen.availWidth - width) / 2,
--      screen.availTop + (screen.availHeight - estimateHeight) / 2,
--      false
+-    this.showAllButton.hidden = !gTabsPanel.canOpen;
+-  },
+-
+-  updatePreview: function ctrlTab_updatePreview(aPreview, aTab) {
+-    if (aPreview == this.showAllButton) {
+-      return;
+-    }
+-
+-    let tabChanged = aPreview._tab != aTab;
+-    aPreview._tab = aTab;
 +    let top = window.screenY + topOffset - SHADOW_MARGIN;
-+
+ 
+-    if (!aTab) {
+-      aPreview._canvas.replaceChildren();
+-      aPreview.hidden = true;
+-      aPreview._label.removeAttribute("value");
+-      aPreview.removeAttribute("tooltiptext");
+-      aPreview._favicon.removeAttribute("src");
+-      return;
+-    }
 +    this.panel.style.width = panelWidth + "px";
-+
+ 
+-    if (tabChanged) {
+-      // Drop the previous tab's thumbnail right away, so that the preview
+-      // doesn't keep showing it if the new tab has no thumbnail to offer. The
+-      // placeholder is invisible and only keeps the canvas box at full size.
+-      aPreview._canvas.replaceChildren(this._makePlaceholder());
 +    if (this.panel.state == "open" || this.panel.state == "showing") {
 +      this.panel.moveTo(left, top);
 +    } else {
 +      this.panel.openPopupAtScreen(left, top, false);
-+    }
+     }
 +  },
-+
+ 
+-    tabPreviews
+-      .get(aTab)
+-      .then(img => {
+-        if (aPreview._tab != aTab || !img) {
+-          return;
+-        }
+-        img.style.width = this.canvasWidth + "px";
+-        img.style.height = this.canvasHeight + "px";
+-        aPreview._canvas.replaceChildren(img);
+-      })
+-      .catch(error => console.error(error));
 +  setupGUI() {
 +    this.panel.addEventListener("mousemove", this);
 +  },
-+
+ 
+-    aPreview._label.setAttribute("value", aTab.label);
+-    aPreview.setAttribute("tooltiptext", aTab.label);
+-    if (aTab.image) {
+-      aPreview._favicon.setAttribute("src", aTab.image);
+-    } else {
+-      aPreview._favicon.removeAttribute("src");
 +  suspendGUI() {
 +    this.panel.removeEventListener("mousemove", this);
 +    document.removeEventListener("keyup", this, { mozSystemGroup: true });
@@ -1251,9 +1174,17 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    this._cardState = "ready";
 +    if (this._card) {
 +      this._card.classList.remove("closing", "is-fallback");
-+    }
-+  },
-+
+     }
+-    aPreview.hidden = false;
+   },
+ 
+-  _makePlaceholder() {
+-    let placeholder = document.createElement("img");
+-    placeholder.className = "ctrlTab-placeholder";
+-    placeholder.setAttribute("width", this.canvasWidth);
+-    placeholder.setAttribute("height", this.canvasHeight);
+-    placeholder.setAttribute("alt", "");
+-    return placeholder;
 +  _isPinnedOrEssential(tab) {
 +    return Boolean(
 +      tab &&
@@ -1261,10 +1192,17 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +       tab.hasAttribute("zen-essential") ||
 +       tab.getAttribute("zen-essential") === "true" ||
 +       tab.closest("#zen-essentials, .zen-essentials-container"))
-     );
++    );
    },
  
--  close: function ctrlTab_close(aTabToSelect) {
+-  advanceFocus: function ctrlTab_advanceFocus(aForward) {
+-    let selectedIndex = this.previews.indexOf(this.selected);
+-    do {
+-      selectedIndex += aForward ? 1 : -1;
+-      if (selectedIndex < 0) {
+-        selectedIndex = this.previews.length - 1;
+-      } else if (selectedIndex >= this.previews.length) {
+-        selectedIndex = 0;
 +  _unloadTab(tab) {
 +    this._usedTabs.delete(tab);
 +    tab.toggleAttribute("pending", true);
@@ -1272,8 +1210,15 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +      let fallbackTab = this.tabList.find(t => t !== tab && !t.closing);
 +      if (fallbackTab) {
 +        gBrowser.selectedTab = fallbackTab;
-+      }
-+    }
+       }
+-    } while (this.previews[selectedIndex].hidden);
+-
+-    if (this._selectedIndex == -1) {
+-      // Focus is already in the panel.
+-      this.previews[selectedIndex].focus();
+-    } else {
+-      this._selectedIndex = selectedIndex;
+     }
 +    if (tab.hasAttribute("glance-id") && window.gZenGlanceManager?.manageTabClose) {
 +      window.gZenGlanceManager.manageTabClose(tab.glanceTab);
 +    }
@@ -1283,55 +1228,57 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +      gBrowser.discardBrowser(tab);
 +    }
 +  },
-+
+ 
+-    if (this.previews[selectedIndex]._tab) {
+-      gBrowser.warmupTab(this.previews[selectedIndex]._tab);
 +  removeSelected: function ctrlTab_removeSelected() {
-     if (!this.isOpen) {
-       return;
++    if (!this.isOpen) {
++      return;
      }
-@@ -557,137 +961,277 @@
+ 
      if (this._timer) {
-       clearTimeout(this._timer);
+@@ -454,102 +973,86 @@ var ctrlTab = {
        this._timer = null;
--      this.suspendGUI();
--      if (aTabToSelect) {
--        gBrowser.setSelectedTab(
--          aTabToSelect,
--          gBrowser.TabMetrics.userTriggeredContext(
--            gBrowser.TabMetrics.METRIC_SOURCE.CTRL_TAB
--          )
--        );
--      }
-+      this._openPanel();
-+    }
-+
+       this._openPanel();
+     }
+-  },
+ 
+-  pick: function ctrlTab_pick(aPreview) {
+-    if (!this.tabCount) {
 +    let preview = this.selected;
 +    if (!preview || !preview._tab) {
        return;
      }
  
--    this.tabToSelect = aTabToSelect;
--    this.panel.hidePopup();
+-    var select = aPreview || this.selected;
+-
+-    if (select == this.showAllButton) {
+-      this.showAllTabs("ctrltab-all-tabs-button");
+-    } else {
+-      this.close(select._tab);
+-    }
+-  },
+-
+-  showAllTabs: function ctrlTab_showAllTabs(aEntrypoint = "unknown") {
+-    this.close();
+-    gTabsPanel.showAllTabsPanel(null, aEntrypoint);
 +    this.remove(preview);
    },
  
--  setupGUI: function ctrlTab_setupGUI() {
--    this.selected.focus();
--    this._selectedIndex = -1;
--  },
--
--  suspendGUI: function ctrlTab_suspendGUI() {
--    for (let preview of this.previews) {
--      this.updatePreview(preview, null);
-+  remove: function ctrlTab_remove(aPreview) {
+   remove: function ctrlTab_remove(aPreview) {
+-    if (aPreview._tab) {
+-      gBrowser.removeTab(aPreview._tab);
 +    let tab = aPreview?._tab;
 +    if (!tab || tab.closing) {
 +      return;
      }
 -  },
  
--  onKeyDown(event) {
--    let action = ShortcutUtils.getSystemActionForEvent(event);
--    if (action != ShortcutUtils.CYCLE_TABS) {
+-  attachTab: function ctrlTab_attachTab(aTab, aPos) {
+-    // If the tab is hidden, don't add it to the list unless it's selected
+-    // (Normally hidden tabs would be unhidden when selected, but that doesn't
+-    // happen for Firefox View).
+-    if (aTab.closing || (aTab.hidden && !aTab.selected)) {
 +    let isPinnedOrEssential = this._isPinnedOrEssential(tab);
 +
 +    if (this.tabCount <= 2) {
@@ -1351,32 +1298,34 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
        return;
      }
  
--    // keyboard lock may have default prevented
--    if (
--      event.defaultPrevented ||
--      this.KeyboardLockUtils.mustWaitForKeyboardLockRequestedReply(event)
--    ) {
--      return;
+-    // If the tab is already in the list, remove it before re-inserting it.
+-    this.detachTab(aTab);
 +    let row = aPreview;
 +    row.classList.add("closing");
-+
+ 
+-    if (aPos == 0) {
+-      this._recentlyUsedTabs.unshift(aTab);
+-    } else if (aPos) {
+-      this._recentlyUsedTabs.splice(aPos, 0, aTab);
+-    } else {
+-      this._recentlyUsedTabs.push(aTab);
 +    let idx = this.previews.indexOf(row);
 +    if (idx !== -1) {
 +      this.previews.splice(idx, 1);
      }
+-  },
  
--    event.preventDefault();
--    event.stopPropagation();
+-  detachTab: function ctrlTab_detachTab(aTab) {
+-    var i = this._recentlyUsedTabs.indexOf(aTab);
+-    if (i >= 0) {
+-      this._recentlyUsedTabs.splice(i, 1);
 +    let cleanup = () => {
 +      row.removeEventListener("transitionend", cleanup);
 +      row.remove();
 +    };
 +    row.addEventListener("transitionend", cleanup);
 +    setTimeout(cleanup, 250);
- 
--    if (this.isOpen) {
--      this.advanceFocus(!event.shiftKey);
--      return;
++
 +    if (isPinnedOrEssential) {
 +      this._usedTabs.delete(tab);
 +      this.detachTab(tab);
@@ -1384,18 +1333,170 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    } else {
 +      gBrowser.removeTab(tab);
      }
+-  },
  
--    if (event.shiftKey) {
--      this.showAllTabs("shift-tab");
+-  open: function ctrlTab_open() {
+-    if (this.isOpen) {
 -      return;
 +    if (this._selectedIndex >= this.previews.length) {
 +      this._selectedIndex = Math.max(0, this.previews.length - 1);
      }
  
--    document.addEventListener("keyup", this, { mozSystemGroup: true });
+-    if (this.previews.length != this.maxTabPreviews + 1) {
+-      this._buildPreviews();
 +    for (let i = 0; i < this.previews.length; i++) {
 +      this.previews[i].dataset.index = i;
+     }
+-    this.canvasWidth = Math.ceil(
+-      (screen.availWidth * 0.85) / this.previewsPerRow
+-    );
+-    this.canvasHeight = Math.round(this.canvasWidth * tabPreviews.aspectRatio);
+-    this.updatePreviews();
+-    this._selectedIndex = 1;
+-    gBrowser.warmupTab(this.selected._tab);
+ 
+-    // Add a slight delay before showing the UI, so that a quick
+-    // "ctrl-tab" keypress just flips back to the MRU tab.
+-    this._timer = setTimeout(() => {
+-      this._timer = null;
+-      this._openPanel();
+-    }, 200);
+-  },
++    while (this.previews.length < this.tabPreviewCount) {
++      let newPreview = this._makePreview(this.previews.length);
++      this._list.appendChild(newPreview);
++      this.previews.push(newPreview);
 +    }
+ 
+-  _openPanel: function ctrlTab_openPanel() {
+-    tabPreviewPanelHelper.opening(this);
++    this.updatePreviews();
++    this._updateSelectedPreview();
+ 
+-    let width = Math.min(
+-      screen.availWidth * 0.99,
+-      this.canvasWidth * 1.25 * this.previewColumnCount
+-    );
+-    this.panel.style.width = width + "px";
+-    let previewRows = Math.ceil(this.tabPreviewCount / this.previewsPerRow);
+-    var estimateHeight = this.canvasHeight * 1.25 * previewRows + 75;
+-    this.panel.openPopupAtScreen(
+-      screen.availLeft + (screen.availWidth - width) / 2,
+-      screen.availTop + (screen.availHeight - estimateHeight) / 2,
+-      false
+-    );
++    if (this.selected?._tab) {
++      gBrowser.warmupTab(this.selected._tab);
++    }
+   },
+ 
+-  close: function ctrlTab_close(aTabToSelect) {
++  closeAll: function ctrlTab_closeAll() {
+     if (!this.isOpen) {
+       return;
+     }
+@@ -557,126 +1060,179 @@ var ctrlTab = {
+     if (this._timer) {
+       clearTimeout(this._timer);
+       this._timer = null;
+-      this.suspendGUI();
+-      if (aTabToSelect) {
+-        gBrowser.setSelectedTab(
+-          aTabToSelect,
+-          gBrowser.TabMetrics.userTriggeredContext(
+-            gBrowser.TabMetrics.METRIC_SOURCE.CTRL_TAB
+-          )
+-        );
+-      }
+-      return;
+     }
+ 
+-    this.tabToSelect = aTabToSelect;
+-    this.panel.hidePopup();
+-  },
++    let tabsToProcess = [...this.tabList];
++    if (!tabsToProcess.length) {
++      this.close();
++      return;
++    }
+ 
+-  setupGUI: function ctrlTab_setupGUI() {
+-    this.selected.focus();
+-    this._selectedIndex = -1;
+-  },
++    if (this._card) {
++      this._card.classList.add("closing");
++    }
+ 
+-  suspendGUI: function ctrlTab_suspendGUI() {
+-    for (let preview of this.previews) {
+-      this.updatePreview(preview, null);
++    let normalTabs = [];
++    let pinnedOrEssential = [];
++    for (let tab of tabsToProcess) {
++      if (this._isPinnedOrEssential(tab)) {
++        pinnedOrEssential.push(tab);
++      } else if (!tab.closing) {
++        normalTabs.push(tab);
++      }
+     }
+-  },
+ 
+-  onKeyDown(event) {
+-    let action = ShortcutUtils.getSystemActionForEvent(event);
+-    if (action != ShortcutUtils.CYCLE_TABS) {
+-      return;
++    for (let tab of pinnedOrEssential) {
++      this._usedTabs.delete(tab);
++      this.detachTab(tab);
++      this._unloadTab(tab);
+     }
+ 
+-    // keyboard lock may have default prevented
+-    if (
+-      event.defaultPrevented ||
+-      this.KeyboardLockUtils.mustWaitForKeyboardLockRequestedReply(event)
+-    ) {
+-      return;
++    if (normalTabs.length) {
++      if (typeof gBrowser.removeTabs === "function") {
++        gBrowser.removeTabs(normalTabs);
++      } else {
++        for (let tab of normalTabs) {
++          gBrowser.removeTab(tab);
++        }
++      }
+     }
+ 
+-    event.preventDefault();
+-    event.stopPropagation();
++    setTimeout(() => {
++      this.close();
++    }, 120);
++  },
+ 
+-    if (this.isOpen) {
+-      this.advanceFocus(!event.shiftKey);
++  async switchToSpaceByIndex(targetIndex) {
++    if (!window.gZenWorkspaces?.workspaceEnabled) {
+       return;
+     }
+-
+-    if (event.shiftKey) {
+-      this.showAllTabs("shift-tab");
++    let workspaces = window.gZenWorkspaces.getWorkspaces();
++    if (!workspaces || targetIndex < 0 || targetIndex >= workspaces.length) {
++      return;
++    }
++    let targetWorkspace = workspaces[targetIndex];
++    let currentId = this.currentSpaceId;
++    if (currentId === targetWorkspace.uuid) {
+       return;
+     }
+ 
+-    document.addEventListener("keyup", this, { mozSystemGroup: true });
++    let currentIndex = workspaces.findIndex(w => w.uuid === currentId);
++    let direction = targetIndex > currentIndex ? "next" : "prev";
  
 -    let tabs = gBrowser.visibleTabs;
 -    if (tabs.length > 2) {
@@ -1408,123 +1509,6 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -          gBrowser.TabMetrics.METRIC_SOURCE.CTRL_TAB
 -        )
 -      );
-+    while (this.previews.length < this.tabPreviewCount) {
-+      let newPreview = this._makePreview(this.previews.length);
-+      this._list.appendChild(newPreview);
-+      this.previews.push(newPreview);
-     }
-+
-+    this.updatePreviews();
-+    this._updateSelectedPreview();
-+
-+    if (this.selected?._tab) {
-+      gBrowser.warmupTab(this.selected._tab);
-+    }
-   },
- 
--  onKeyPress(event) {
--    if (!this.isOpen || !event.ctrlKey) {
-+  closeAll: function ctrlTab_closeAll() {
-+    if (!this.isOpen) {
-       return;
-     }
- 
--    event.preventDefault();
--    event.stopPropagation();
-+    if (this._timer) {
-+      clearTimeout(this._timer);
-+      this._timer = null;
-+    }
- 
--    if (event.keyCode == event.DOM_VK_DELETE) {
--      this.remove(this.selected);
-+    let tabsToProcess = [...this.tabList];
-+    if (!tabsToProcess.length) {
-+      this.close();
-       return;
-     }
- 
--    switch (event.charCode) {
--      case this.keys.close:
--        this.remove(this.selected);
--        break;
--      case this.keys.find:
--        this.showAllTabs("ctrltab-key-find");
--        break;
--      case this.keys.selectAll:
--        this.showAllTabs("ctrltab-key-selectAll");
--        break;
-+    if (this._card) {
-+      this._card.classList.add("closing");
-     }
--  },
- 
--  removeClosingTabFromUI: function ctrlTab_removeClosingTabFromUI(aTab) {
--    if (this.tabCount == 2) {
--      this.close();
--      return;
-+    let normalTabs = [];
-+    let pinnedOrEssential = [];
-+    for (let tab of tabsToProcess) {
-+      if (this._isPinnedOrEssential(tab)) {
-+        pinnedOrEssential.push(tab);
-+      } else if (!tab.closing) {
-+        normalTabs.push(tab);
-+      }
-     }
- 
--    this.updatePreviews();
-+    for (let tab of pinnedOrEssential) {
-+      this._usedTabs.delete(tab);
-+      this.detachTab(tab);
-+      this._unloadTab(tab);
-+    }
- 
--    if (this.selected.hidden) {
--      this.advanceFocus(false);
-+    if (normalTabs.length) {
-+      if (typeof gBrowser.removeTabs === "function") {
-+        gBrowser.removeTabs(normalTabs);
-+      } else {
-+        for (let tab of normalTabs) {
-+          gBrowser.removeTab(tab);
-+        }
-+      }
-     }
--    if (this.selected == this.showAllButton) {
--      this.advanceFocus(false);
-+
-+    setTimeout(() => {
-+      this.close();
-+    }, 120);
-+  },
-+
-+  async switchToSpaceByIndex(targetIndex) {
-+    if (!window.gZenWorkspaces?.workspaceEnabled) {
-+      return;
-     }
-+    let workspaces = window.gZenWorkspaces.getWorkspaces();
-+    if (!workspaces || targetIndex < 0 || targetIndex >= workspaces.length) {
-+      return;
-+    }
-+    let targetWorkspace = workspaces[targetIndex];
-+    let currentId = this.currentSpaceId;
-+    if (currentId === targetWorkspace.uuid) {
-+      return;
-+    }
- 
--    // If the current tab is removed, another tab can steal our focus.
--    if (aTab.selected && this.panel.state == "open") {
--      setTimeout(
--        function (selected) {
--          selected.focus();
--        },
--        0,
--        this.selected
--      );
-+    let currentIndex = workspaces.findIndex(w => w.uuid === currentId);
-+    let direction = targetIndex > currentIndex ? "next" : "prev";
-+
 +    // The target space's tabs already carry its id, so its list is known before
 +    // the switch runs: the card paints the truth at once and the empty label can
 +    // never flash while Zen animates and lazily reloads the space.
@@ -1555,17 +1539,25 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +      console.error(e);
 +      this._spaceOverride = null;
      }
-+
+-  },
+ 
+-  onKeyPress(event) {
+-    if (!this.isOpen || !event.ctrlKey) {
 +    if (token !== this._transitionToken) {
 +      // A newer switch, or the card closing, owns the DOM and the flag now.
 +      if (this._switchInFlight === token) {
 +        this._switchInFlight = null;
 +      }
-+      return;
-+    }
-+
+       return;
+     }
+ 
+-    event.preventDefault();
+-    event.stopPropagation();
 +    this.updateSpaceHeader();
-+
+ 
+-    if (event.keyCode == event.DOM_VK_DELETE) {
+-      this.remove(this.selected);
+-      return;
 +    // Zen may have reloaded, opened or dropped tabs while switching. Repaint only
 +    // when the visible rows really changed, and without motion or a move: the
 +    // swap already played, and animating the same rows twice is the flicker.
@@ -1582,18 +1574,30 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +        this._selectedIndex = 0;
 +      }
 +      this._positionPanel(rows);
-+    }
-+
+     }
+ 
+-    switch (event.charCode) {
+-      case this.keys.close:
+-        this.remove(this.selected);
+-        break;
+-      case this.keys.find:
+-        this.showAllTabs("ctrltab-key-find");
+-        break;
+-      case this.keys.selectAll:
+-        this.showAllTabs("ctrltab-key-selectAll");
+-        break;
 +    this._updateSelectedPreview();
 +    this._switchInFlight = null;
 +    this._syncCardState(settled.length);
 +
 +    if (this.selected?._tab) {
 +      gBrowser.warmupTab(this.selected._tab);
-+    }
+     }
    },
  
-+  removeClosingTabFromUI: function ctrlTab_removeClosingTabFromUI(aTab) {
+   removeClosingTabFromUI: function ctrlTab_removeClosingTabFromUI(aTab) {
+-    if (this.tabCount == 2) {
+-      this.close();
 +    if (this.tabCount < 2) {
 +      if (this._card) {
 +        this._card.classList.add("closing");
@@ -1601,9 +1605,10 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +      setTimeout(() => {
 +        this.close();
 +      }, 100);
-+      return;
-+    }
-+
+       return;
+     }
+ 
+-    this.updatePreviews();
 +    let idx = this.previews.findIndex(p => p._tab === aTab);
 +    if (idx !== -1) {
 +      let preview = this.previews[idx];
@@ -1618,15 +1623,28 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +        setTimeout(cleanup, 250);
 +      }
 +    }
-+
+ 
+-    if (this.selected.hidden) {
+-      this.advanceFocus(false);
 +    if (this._selectedIndex >= this.previews.length) {
 +      this._selectedIndex = Math.max(0, this.previews.length - 1);
-+    }
+     }
+-    if (this.selected == this.showAllButton) {
+-      this.advanceFocus(false);
 +
 +    for (let i = 0; i < this.previews.length; i++) {
 +      this.previews[i].dataset.index = i;
-+    }
-+
+     }
+ 
+-    // If the current tab is removed, another tab can steal our focus.
+-    if (aTab.selected && this.panel.state == "open") {
+-      setTimeout(
+-        function (selected) {
+-          selected.focus();
+-        },
+-        0,
+-        this.selected
+-      );
 +    while (this.previews.length < this.tabPreviewCount) {
 +      let newPreview = this._makePreview(this.previews.length);
 +      this._list.appendChild(newPreview);
@@ -1638,12 +1656,10 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +
 +    if (this.selected?._tab) {
 +      gBrowser.warmupTab(this.selected._tab);
-+    }
-+  },
-+
-   handleEvent: function ctrlTab_handleEvent(event) {
-     switch (event.type) {
-       case "SSWindowRestored":
+     }
+   },
+ 
+@@ -686,8 +1242,6 @@ var ctrlTab = {
          this._initRecentlyUsedTabs();
          break;
        case "TabAttrModified":
@@ -1652,7 +1668,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
          if (
            event.detail.changed.some(elem =>
              ["label", "busy", "image"].includes(elem)
-@@ -705,11 +1245,10 @@
+@@ -705,11 +1259,10 @@ var ctrlTab = {
          }
          break;
        case "TabSelect": {
@@ -1666,7 +1682,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
            this.detachTab(previousTab);
          }
          break;
-@@ -734,84 +1273,241 @@
+@@ -734,76 +1287,232 @@ var ctrlTab = {
          this.onKeyDown(event);
          break;
        case "keypress":
@@ -1729,10 +1745,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +          this.lastMouseX = event.screenX;
 +          this.lastMouseY = event.screenY;
 +          return;
-         }
--        break;
--      case "command":
--        this.pick(event.currentTarget);
++        }
 +        // Ardia resting pointer check: cursor must travel >= 3px before hovering selects
 +        if (
 +          Math.hypot(
@@ -1751,7 +1764,10 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +              this._selectIndex(index);
 +            }
 +          }
-+        }
+         }
+-        break;
+-      case "command":
+-        this.pick(event.currentTarget);
          break;
        case "click":
 -        if (event.button == 1) {
@@ -1790,10 +1806,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +        event.key === "Delete" ||
 +        event.key === "Backspace" ||
 +        event.keyCode === 46;
- 
--    let urls = [];
--    for (let i = 0; i < thumbnailCount; i++) {
--      urls.push(this.tabList[i].linkedBrowser.currentURI.spec);
++
 +      if (isCloseKey) {
 +        event.preventDefault();
 +        event.stopPropagation();
@@ -1851,9 +1864,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +        this.pick();
 +        return;
 +      }
-     }
- 
--    aCallback(urls);
++    }
++
 +    let action = ShortcutUtils.getSystemActionForEvent(event);
 +    if (action != ShortcutUtils.CYCLE_TABS) {
 +      return;
@@ -1865,15 +1877,19 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    ) {
 +      return;
 +    }
-+
+ 
+-    let urls = [];
+-    for (let i = 0; i < thumbnailCount; i++) {
+-      urls.push(this.tabList[i].linkedBrowser.currentURI.spec);
 +    event.preventDefault();
 +    event.stopPropagation();
 +
 +    if (this.isOpen) {
 +      this.advanceFocus(!event.shiftKey);
 +      return;
-+    }
-+
+     }
+ 
+-    aCallback(urls);
 +    document.addEventListener("keyup", this, { mozSystemGroup: true });
 +
 +    if (this.tabCount >= 1) {
@@ -1897,8 +1913,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    if (gBrowser.selectedTab) {
 +      this._usedTabs.add(gBrowser.selectedTab);
 +    }
-   },
- 
++  },
++
 +  attachTab: function ctrlTab_attachTab(aTab, aPos) {
 +    if (!this._recentlyUsedTabs) {
 +      return;
@@ -1932,11 +1948,10 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    if (i != -1) {
 +      this._recentlyUsedTabs.splice(i, 1);
 +    }
-+  },
-+
+   },
+ 
    _init: function ctrlTab__init(enable) {
-     var toggleEventListener = enable
-       ? "addEventListener"
+@@ -812,6 +1521,7 @@ var ctrlTab = {
        : "removeEventListener";
  
      window[toggleEventListener]("SSWindowRestored", this);
@@ -1944,7 +1959,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
  
      var tabContainer = gBrowser.tabContainer;
      tabContainer[toggleEventListener]("TabOpen", this);
-@@ -828,19 +1521,6 @@
+@@ -828,19 +1538,6 @@ var ctrlTab = {
      }
      document[toggleEventListener]("keypress", this);
      gBrowser.tabbox.handleCtrlTab = !enable;
@@ -1964,7 +1979,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    },
  };
  
-@@ -851,8 +1531,11 @@
+@@ -851,8 +1548,11 @@ ChromeUtils.defineESModuleGetters(ctrlTab, {
  XPCOMUtils.defineLazyPreferenceGetter(
    ctrlTab,
    "maxTabPreviews",

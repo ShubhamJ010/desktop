@@ -157,11 +157,11 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  from {
 +    opacity: 0;
 +    transform: scale(0.96) translateY(-4px);
-   }
++  }
 +  to {
 +    opacity: 1;
 +    transform: scale(1) translateY(0);
-+  }
+   }
  }
  
 -#ctrlTab-previews {
@@ -198,16 +198,6 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
  
 -.ctrlTab-preview,
 -#ctrlTab-showAll {
--  appearance: none;
--  color: inherit;
--  /* remove the :-moz-focusring outline from button.css on Windows */
--  outline: none !important;
--  margin: 0;
--  text-shadow:
--    0 0 1px hsl(0, 0%, 12%),
--    0 0 2px hsl(0, 0%, 12%);
--  border: none;
--  background-color: transparent;
 +.ctrlTab-space-icon {
 +  display: inline-flex;
 +  align-items: center;
@@ -219,10 +209,8 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  fill: currentColor;
 +  stroke: currentColor;
 +  color: var(--ctrl-tab-text-primary);
- }
- 
--.ctrlTab-preview > .button-box {
--  display: none;
++}
++
 +.ctrlTab-space-icon-mask {
 +  display: inline-block;
 +  width: 15px;
@@ -234,9 +222,8 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  -webkit-mask-size: contain;
 +  -webkit-mask-position: center;
 +  -webkit-mask-repeat: no-repeat;
- }
- 
--.ctrlTab-favicon-container {
++}
++
 +.ctrlTab-space-icon-img {
 +  width: 15px;
 +  height: 15px;
@@ -274,8 +261,7 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 + * rows back-to-back with no gap (ROW * 9 = 360px).
 + * ---------------------------------------------------------------------- */
 +.ctrlTab-list {
-   position: relative;
--  justify-content: flex-end;
++  position: relative;
 +  display: flex;
 +  flex-direction: column;
 +  /* The row count drives the box, so a row entering or leaving never resizes the
@@ -285,30 +271,13 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  overflow: hidden;
 +  transition: height 120ms cubic-bezier(0.2, 0, 0, 1),
 +              opacity 120ms cubic-bezier(0.2, 0, 0, 1);
- }
- 
--.ctrlTab-favicon[src] {
--  width: 42px;
--  height: 42px;
--  margin-top: -44px;
--  margin-bottom: 2px;
--  margin-inline-end: -6px;
--  padding: 5px;
--  background-color: var(--background-color-box);
--  border-radius: var(--border-radius-small);
--  border: 1px solid var(--border-color-deemphasized);
++}
++
 +/* Last resort: the space holds tabs, our own filters hid them all. */
 +.ctrlTab-card.is-fallback .ctrlTab-list {
 +  opacity: 0.65;
- }
- 
--.ctrlTab-canvas {
--  color-scheme: light;
--  background-color: Canvas;
--  color: CanvasText;
--  box-shadow: 1px 1px 2px hsl(0, 0%, 12%);
--  margin-bottom: 8px;
--  min-width: 0;
++}
++
 +/* The list moves as one, along the direction of the switch. Staggering the rows
 + * instead meant each row dropped to zero opacity at a different moment, which
 + * read as a flicker on a long list rather than as motion. */
@@ -322,24 +291,18 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +    transform: translateY(0);
 +  }
 +}
- 
--  @media (-moz-content-prefers-color-scheme: dark) {
--    /* Make the blank canvas match the default content background. */
--    color-scheme: dark;
++
 +@keyframes ctrlTabSwapInPrev {
 +  from {
 +    opacity: 0.45;
 +    transform: translateY(-6px);
-   }
++  }
 +  to {
 +    opacity: 1;
 +    transform: translateY(0);
 +  }
 +}
- 
--  > img,
--  > canvas {
--    min-width: 0;
++
 +.ctrlTab-list.swap-in-next {
 +  animation: ctrlTabSwapInNext 130ms cubic-bezier(0.2, 0, 0, 1);
 +}
@@ -396,14 +359,21 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 + *   paddingHorizontal space.ml (10px), gap space.ml (10px)
 + * ---------------------------------------------------------------------- */
 +.ctrlTab-preview {
-+  appearance: none;
-+  margin: 0;
+   appearance: none;
+-  color: inherit;
+-  /* remove the :-moz-focusring outline from button.css on Windows */
+-  outline: none !important;
+   margin: 0;
+-  text-shadow:
+-    0 0 1px hsl(0, 0%, 12%),
+-    0 0 2px hsl(0, 0%, 12%);
+-  border: none;
 +
 +  /* Reserve the focused ring so selecting a row never shifts its contents. */
 +  border: 0.5px solid transparent;
 +  outline: none !important;
 +
-+  background-color: transparent;
+   background-color: transparent;
 +  display: flex;
 +  flex-direction: row;
 +  align-items: center;
@@ -431,8 +401,10 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +              padding-top 120ms cubic-bezier(0.2, 0, 0, 1),
 +              padding-bottom 120ms cubic-bezier(0.2, 0, 0, 1),
 +              margin 120ms cubic-bezier(0.2, 0, 0, 1);
-+}
-+
+ }
+ 
+-.ctrlTab-preview > .button-box {
+-  display: none;
 +.ctrlTab-preview.closing {
 +  opacity: 0 !important;
 +  transform: translateX(14px) scale(0.96) !important;
@@ -444,8 +416,32 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  margin-bottom: 0 !important;
 +  border-width: 0 !important;
 +  pointer-events: none !important;
-+}
-+
+ }
+ 
+-.ctrlTab-favicon-container {
+-  position: relative;
+-  justify-content: flex-end;
+-}
+-
+-.ctrlTab-favicon[src] {
+-  width: 42px;
+-  height: 42px;
+-  margin-top: -44px;
+-  margin-bottom: 2px;
+-  margin-inline-end: -6px;
+-  padding: 5px;
+-  background-color: var(--background-color-box);
+-  border-radius: var(--border-radius-small);
+-  border: 1px solid var(--border-color-deemphasized);
+-}
+-
+-.ctrlTab-canvas {
+-  color-scheme: light;
+-  background-color: Canvas;
+-  color: CanvasText;
+-  box-shadow: 1px 1px 2px hsl(0, 0%, 12%);
+-  margin-bottom: 8px;
+-  min-width: 0;
 +/* Focused/hovered row. Ardia fills the row and adds the same 0.5px ring:
 + *   backgroundColor: focused ? switcherFocus : undefined
 + *   borderWidth: focused ? hairline.ring : 0
@@ -459,11 +455,18 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  background-color: transparent;
 +  border-color: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.14));
 +}
-+
+ 
+-  @media (-moz-content-prefers-color-scheme: dark) {
+-    /* Make the blank canvas match the default content background. */
+-    color-scheme: dark;
+-  }
 +.ctrlTab-preview[selected="true"] .ctrlTab-icon {
 +  transform: scale(1.06);
 +}
-+
+ 
+-  > img,
+-  > canvas {
+-    min-width: 0;
 +/* Space dots: the 1..9 shortcuts need somewhere to land. */
 +.ctrlTab-dots {
 +  display: flex;
@@ -490,11 +493,11 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  from {
 +    opacity: 0.4;
 +    transform: translateY(4px);
-   }
++  }
 +  to {
 +    opacity: 1;
 +    transform: translateY(0);
-+  }
+   }
  }
  
 -.ctrlTab-placeholder {
@@ -522,10 +525,8 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  border-radius: 2px;
 +  overflow: hidden;
 +  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1);
- }
- 
--.ctrlTab-preview-inner {
--  margin-top: -10px;
++}
++
 +/* FaviconFallback letter tile:
 + *   tile = round(size * 14 / 16) = 16px
 + *   borderRadius = tile * 0.32 = 5px
@@ -546,8 +547,10 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  line-height: 16px;
 +  text-transform: uppercase;
 +  color: light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.5));
-+}
-+
+ }
+ 
+-.ctrlTab-preview-inner {
+-  margin-top: -10px;
 +.ctrlTab-favicon {
 +  position: absolute;
 +  inset: 0;
@@ -576,8 +579,8 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  flex: 1;
    min-width: 0;
 +  overflow: hidden;
- }
- 
++}
++
 +/* Title: font.body (13px), height 17px. Ardia switches the weight from
 + * regular to medium while the row is focused; the colour stays textPrimary. */
 +.ctrlTab-title {
@@ -588,8 +591,8 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  overflow: hidden;
 +  text-overflow: ellipsis;
 +  white-space: nowrap;
-+}
-+
+ }
+ 
 +.ctrlTab-preview[selected="true"] .ctrlTab-title,
 +.ctrlTab-preview:focus .ctrlTab-title {
 +  font-weight: 500;
