@@ -1,13 +1,13 @@
 # RC build TODO
 
 RC builds use pure Ubuntu Linux runners, codesign with `rcodesign`, and distribute via Homebrew Cask.
-Updates are managed by Homebrew (`brew upgrade --cask zen-browser-rc`).
+Updates are managed by Homebrew (`brew upgrade --cask zen-browser-sj`).
 
 ## Architecture
 
 - **Build:** Cross-compiled on `ubuntu-24.04` (thin-LTO Gecko build).
 - **Codesign:** `rcodesign` on `ubuntu-24.04` with fork self-signed P12 identity (`ZEN_CODESIGN_P12_BASE64`).
-- **Distribution:** GitHub Releases (`zen-rc-macos-aarch64.zip`) + Homebrew Cask (`ShubhamJ010/homebrew-tap/Casks/zen-browser-rc.rb`).
+- **Distribution:** GitHub Releases (`zen-rc-macos-aarch64.zip`) + Homebrew Cask (`ShubhamJ010/homebrew-tap/Casks/zen-browser-sj.rb`).
 - **In-app Updater:** Disabled via `distribution/policies.json` inside the app bundle.
 
 ## Secrets
@@ -22,11 +22,11 @@ In repository `ShubhamJ010/desktop`:
 ```bash
 # Add tap and install
 brew tap ShubhamJ010/tap
-brew install --cask zen-browser-rc
+brew install --cask zen-browser-sj
 
 # Update
 brew update
-brew upgrade --cask zen-browser-rc
+brew upgrade --cask zen-browser-sj
 ```
 
 ## Trigger Build
