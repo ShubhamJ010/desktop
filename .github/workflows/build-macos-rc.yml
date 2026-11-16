@@ -133,13 +133,13 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Setup Git
-        run: |\
+        run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Merge upstream dev
         id: merge
-        run: |\
+        run: |
           set -euo pipefail
           git fetch --no-tags https://github.com/zen-browser/desktop.git dev
           if git merge-base --is-ancestor FETCH_HEAD HEAD; then
@@ -181,7 +181,7 @@ jobs:
 
       - name: Compute PGO cache key
         id: pgo
-        run: |\
+        run: |
           set -euo pipefail
           firefox=$(node -p "require('./surfer.json').version.version")
           echo "firefox=$firefox" >> "$GITHUB_OUTPUT"
@@ -197,7 +197,7 @@ jobs:
 
       - name: Report cache state
         id: cache
-        run: |\
+        run: |
           hit="${{ steps.pgo-cache.outputs.cache-hit }}"
           if [ "$hit" = "true" ]; then echo "hit=true" >> "$GITHUB_OUTPUT"; else echo "hit=false" >> "$GITHUB_OUTPUT"; fi
 
@@ -225,7 +225,7 @@ jobs:
           swap-storage: false
 
       - name: Add swap space
-        run: |\
+        run: |
           set -euo pipefail
           swap=/swapfile-rc
           sudo rm -f "$swap"
@@ -253,12 +253,12 @@ jobs:
         uses: actions/setup-python@v5
 
       - name: Setup Git
-        run: |\
+        run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Install dependencies
-        run: |\
+        run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential libasound2-dev libcurl4-openssl-dev libdbus-1-dev \
@@ -285,7 +285,7 @@ jobs:
 
       - name: Setup macOS cross toolchain
         if: steps.cache-mac-cross.outputs.cache-hit != 'true'
-        run: |\
+        run: |
           set -ex
           mkdir -p ~/mac-cross
           cd engine/
@@ -293,7 +293,7 @@ jobs:
           mv cctools dmg hfsplus ~/mac-cross/
 
       - name: Setup Rust
-        run: |\
+        run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
           . "$HOME/.cargo/env"
           rustup target add aarch64-apple-darwin
@@ -302,7 +302,7 @@ jobs:
         env:
           SURFER_COMPAT: aarch64
           SURFER_PLATFORM: darwin
-        run: |\
+        run: |
           set -ex
           . "$HOME/.cargo/env"
           npm run import -- --verbose
@@ -311,7 +311,7 @@ jobs:
         env:
           SURFER_COMPAT: aarch64
           SURFER_PLATFORM: darwin
-        run: |\
+        run: |
           set -ex
           . "$HOME/.cargo/env"
           npm run bootstrap
@@ -320,7 +320,7 @@ jobs:
         run: sh scripts/download-language-packs.sh
 
       - name: Prepare object directory
-        run: |\
+        run: |
           set -ex
           export PATH="$HOME/mac-cross/cctools/bin:$HOME/mac-cross/dmg:$HOME/mac-cross/hfsplus:$PATH"
           export PATH="$HOME/.mozbuild/clang/bin:$PATH"
@@ -335,7 +335,7 @@ jobs:
         env:
           SURFER_COMPAT: aarch64
           SURFER_PLATFORM: darwin
-        run: |\
+        run: |
           set -ex
           export PATH="$HOME/mac-cross/cctools/bin:$HOME/mac-cross/dmg:$HOME/mac-cross/hfsplus:$PATH"
           export PATH="$HOME/.mozbuild/clang/bin:$PATH"
@@ -348,7 +348,7 @@ jobs:
         env:
           SURFER_COMPAT: aarch64
           SURFER_PLATFORM: darwin
-        run: |\
+        run: |
           set -ex
           export PATH="$HOME/mac-cross/cctools/bin:$HOME/mac-cross/dmg:$HOME/mac-cross/hfsplus:$PATH"
           export PATH="$HOME/.mozbuild/clang/bin:$PATH"
@@ -386,7 +386,7 @@ jobs:
         uses: actions/setup-python@v5
 
       - name: Setup Git
-        run: |\
+        run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -411,13 +411,13 @@ jobs:
         run: npm run import
 
       - name: Bootstrap
-        run: |\
+        run: |
           cd engine
           export SURFER_PLATFORM=darwin
           ./mach --no-interactive bootstrap --application-choice browser --exclude macos-sdk || true
 
       - name: Extract and sign instrumented app
-        run: |\
+        run: |
           set -ex
           cd engine
           ./mach python -m mozbuild.action.unpack_dmg \
@@ -428,7 +428,7 @@ jobs:
           codesign --force --deep --sign - "$app"
 
       - name: Generate PGO profile
-        run: |\
+        run: |
           set -ex
           export LLVM_PROFDATA="$HOME/.mozbuild/clang/bin/llvm-profdata"
           export JARLOG_FILE=en-US.log
@@ -439,7 +439,7 @@ jobs:
           ./mach python ../scripts/generate_pgo_profile.py --binary "$binary" --corpus-dir ../pgo-corpus/extended
 
       - name: Save profile data
-        run: |\
+        run: |
           set -ex
           mkdir -p ~/artifact
           cp engine/merged.profdata ~/artifact/
@@ -478,7 +478,7 @@ jobs:
           swap-storage: false
 
       - name: Add swap space
-        run: |\
+        run: |
           set -euo pipefail
           swap=/swapfile-rc
           sudo rm -f "$swap"
@@ -506,12 +506,12 @@ jobs:
         uses: actions/setup-python@v5
 
       - name: Setup Git
-        run: |\
+        run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Install dependencies
-        run: |\
+        run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential libasound2-dev libcurl4-openssl-dev libdbus-1-dev \
@@ -538,7 +538,7 @@ jobs:
 
       - name: Setup macOS cross toolchain
         if: steps.cache-mac-cross.outputs.cache-hit != 'true'
-        run: |\
+        run: |
           set -ex
           mkdir -p ~/mac-cross
           cd engine/
@@ -546,7 +546,7 @@ jobs:
           mv cctools dmg hfsplus ~/mac-cross/
 
       - name: Setup Rust
-        run: |\
+        run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
           . "$HOME/.cargo/env"
           rustup target add aarch64-apple-darwin
@@ -555,7 +555,7 @@ jobs:
         env:
           SURFER_COMPAT: aarch64
           SURFER_PLATFORM: darwin
-        run: |\
+        run: |
           set -ex
           . "$HOME/.cargo/env"
           npm run import -- --verbose
@@ -564,7 +564,7 @@ jobs:
         env:
           SURFER_COMPAT: aarch64
           SURFER_PLATFORM: darwin
-        run: |\
+        run: |
           set -ex
           . "$HOME/.cargo/env"
           npm run bootstrap
@@ -581,7 +581,7 @@ jobs:
           fail-on-cache-miss: true
 
       - name: Prepare object directory
-        run: |\
+        run: |
           set -ex
           export PATH="$HOME/mac-cross/cctools/bin:$HOME/mac-cross/dmg:$HOME/mac-cross/hfsplus:$PATH"
           export PATH="$HOME/.mozbuild/clang/bin:$PATH"
@@ -604,7 +604,7 @@ jobs:
         env:
           SURFER_COMPAT: aarch64
           SURFER_PLATFORM: darwin
-        run: |\
+        run: |
           set -ex
           export PATH="$HOME/mac-cross/cctools/bin:$HOME/mac-cross/dmg:$HOME/mac-cross/hfsplus:$PATH"
           export PATH="$HOME/.mozbuild/clang/bin:$PATH"
@@ -617,7 +617,7 @@ jobs:
         env:
           SURFER_COMPAT: aarch64
           SURFER_PLATFORM: darwin
-        run: |\
+        run: |
           set -ex
           export PATH="$HOME/mac-cross/cctools/bin:$HOME/mac-cross/dmg:$HOME/mac-cross/hfsplus:$PATH"
           export PATH="$HOME/.mozbuild/clang/bin:$PATH"
@@ -625,7 +625,7 @@ jobs:
           npm run package -- --verbose
 
       - name: Stage app bundle and platform.ini
-        run: |\
+        run: |
           set -ex
           obj="engine/obj-aarch64-apple-darwin"
           app="$obj/dist/zen/Zen.app"
@@ -638,20 +638,8 @@ jobs:
           # Disable in-app updater (updates managed via Homebrew Cask)
           resources="$app/Contents/Resources"
           mkdir -p "$resources/distribution" "$resources/defaults/pref"
-          cat > "$resources/distribution/policies.json" <<'EOF'
-{
-  "policies": {
-    "DisableAppUpdate": true,
-    "ManualAppUpdateOnly": true,
-    "BackgroundAppUpdate": false,
-    "AppAutoUpdate": false
-  }
-}
-EOF
-          cat > "$resources/defaults/pref/channel-prefs.js" <<'EOF'
-pref("app.update.auto", false);
-pref("app.update.enabled", false);
-EOF
+          printf '{\n  "policies": {\n    "DisableAppUpdate": true,\n    "ManualAppUpdateOnly": true,\n    "BackgroundAppUpdate": false,\n    "AppAutoUpdate": false\n  }\n}\n' > "$resources/distribution/policies.json"
+          printf 'pref("app.update.auto", false);\npref("app.update.enabled", false);\n' > "$resources/defaults/pref/channel-prefs.js"
 
           rm -f zen-rc-unsigned-app.zip
           (cd "$(dirname "$app")" && zip -q -r -y "$GITHUB_WORKSPACE/zen-rc-unsigned-app.zip" "$(basename "$app")")
@@ -752,18 +740,7 @@ EOF
             exit 0
           fi
 
-          cat > notes.md <<EOF
-          RC build for upstream Zen $VERSION, Firefox $FIREFOX.
-
-          Commit: $COMMIT
-          macOS arm64, Homebrew cask distribution.
-
-          Install with Homebrew:
-          \`\`\`bash
-          brew tap ShubhamJ010/tap
-          brew install --cask zen-browser-rc
-          \`\`\`
-          EOF
+          printf 'RC build for upstream Zen %s, Firefox %s.\n\nCommit: %s\nmacOS arm64, Homebrew cask distribution.\n\nInstall with Homebrew:\n```bash\nbrew tap ShubhamJ010/tap\nbrew install --cask zen-browser-rc\n```\n' "$VERSION" "$FIREFOX" "$COMMIT" > notes.md
 
           gh release create "$VERSION" \
             --repo "$GITHUB_REPOSITORY" \
@@ -794,16 +771,7 @@ EOF
           cd tap
           CASK="Casks/zen-browser-rc.rb"
           if [ -f "$CASK" ]; then
-            python3 - <<PY
-          import os, re
-          from pathlib import Path
-          p = Path("$CASK")
-          content = p.read_text()
-          content = re.sub(r'version\s+"[^"]+"', f'version "{os.environ["VERSION"]}"', content, count=1)
-          content = re.sub(r'sha256\s+"[^"]+"', f'sha256 "{os.environ["SHA256"]}"', content, count=1)
-          content = re.sub(r'sha256\s+:no_check', f'sha256 "{os.environ["SHA256"]}"', content, count=1)
-          p.write_text(content)
-          PY
+            python3 -c "import os, re; from pathlib import Path; p = Path('$CASK'); c = p.read_text(); c = re.sub(r'version\s+\"[^\"]+\"', f'version \"{os.environ[\"VERSION\"]}\"', c, count=1); c = re.sub(r'sha256\s+\"[^\"]+\"', f'sha256 \"{os.environ[\"SHA256\"]}\"', c, count=1); c = re.sub(r'sha256\s+:no_check', f'sha256 \"{os.environ[\"SHA256\"]}\"', c, count=1); p.write_text(c)"
             git add "$CASK"
             if ! git diff --cached --quiet; then
               git commit -m "chore(cask): bump zen-browser-rc to $VERSION"
