@@ -970,6 +970,7 @@ jobs:
   package:
     name: Codesign and MAR
     needs: [detect, sync, build]
+    if: ${{ !failure() && !cancelled() && needs.detect.outputs.build == 'true' && needs.build.result == 'success' }}
     runs-on: macos-26
     timeout-minutes: 240
 
@@ -1152,7 +1153,7 @@ jobs:
   publish:
     name: Sign MAR and publish
     needs: [detect, sync, build, package]
-    if: ${{ needs.detect.outputs.build == 'true' }}
+    if: ${{ !failure() && !cancelled() && needs.detect.outputs.build == 'true' && needs.package.result == 'success' }}
     # arm64 on purpose: the MAR is signed with the cross-built signmar, which
     # only runs on the matching architecture. Nothing here is macOS-specific
     # otherwise, and signing itself is architecture independent.
