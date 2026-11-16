@@ -403,9 +403,19 @@ jobs:
 
           if [ -n "$P12_BASE64" ]; then
             echo "$P12_BASE64" | base64 --decode > cert.p12
-            rcodesign sign --p12-file cert.p12 --p12-password "$P12_PASSWORD" --code-signature-flags runtime "$app"
+            # OpenSSL 3 on Linux produces modern PBES2/PBKDF2 encrypted PKCS#12 by default,
+            # which rust-native apple-codesign (rcodesign) rejects with 'incorrect password'.
+            # Unpack via OpenSSL and re-export as legacy PKCS#12 compatible with rcodesign,
+            # or pass PEM files directly to --pem-file.
+            if openssl pkcs12 -in cert.p12 -passin pass:"$P12_PASSWORD" -nodes -out cert_bundle.pem 2>/dev/null; then
+              echo "Decrypted P12 with OpenSSL, signing with PEM bundle..."
+              rcodesign sign --pem-file cert_bundle.pem --code-signature-flags runtime "$app"
+              rm -f cert_bundle.pem
+            else
+              echo "OpenSSL decrypt failed; falling back to direct P12..."
+              rcodesign sign --p12-file cert.p12 --p12-password "$P12_PASSWORD" --code-signature-flags runtime "$app"
+            fi
             rm -f cert.p12
-            rcodesign verify "$app"
           else
             echo "No codesigning cert configured, ad-hoc signing"
             rcodesign sign "$app"
