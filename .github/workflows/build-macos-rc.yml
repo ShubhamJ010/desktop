@@ -71,6 +71,7 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       build_id: ${{ steps.meta.outputs.build_id }}
       build: ${{ steps.meta.outputs.build }}
+      pgo: ${{ steps.meta.outputs.pgo }}
       publish: ${{ steps.meta.outputs.publish }}
 
     steps:
@@ -91,6 +92,7 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_FORCE: ${{ inputs.force }}
           INPUT_PUBLISH: ${{ inputs.publish_update }}
+          INPUT_DISABLE_PGO: ${{ inputs.disable_pgo }}
           UPDATE_HOST_SSH_KEY: ${{ secrets.UPDATE_HOST_SSH_KEY }}
         run: |
           set -euo pipefail
@@ -112,6 +114,15 @@ jobs:
             fi
           fi
 
+          # The instrumented build kills the hosted runner every time it has
+          # been tried (no build output, agent gone, "hosted runner lost
+          # communication"). Keep scheduled runs on the build path that works
+          # and require an explicit dispatch to opt into PGO.
+          pgo=true
+          if [ "$INPUT_DISABLE_PGO" = "true" ] || [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            pgo=false
+          fi
+
           publish="$INPUT_PUBLISH"
           if [ -z "$publish" ]; then publish=true; fi
           if [ "$publish" = "true" ]; then
@@ -128,8 +139,9 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "build_id=$(date +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "pgo=$pgo" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          echo "Target: $version, build=$build, publish=$publish"
+          echo "Target: $version, build=$build, pgo=$pgo, publish=$publish"
 
   sync:
     name: Sync upstream dev
@@ -236,7 +248,7 @@ jobs:
   pgo-stage1:
     name: PGO stage 1 (instrumented)
     needs: [detect, sync]
-    if: ${{ needs.detect.outputs.build == 'true' && needs.sync.outputs.pgo_hit != 'true' && !inputs.disable_pgo }}
+    if: ${{ needs.detect.outputs.build == 'true' && needs.sync.outputs.pgo_hit != 'true' && needs.detect.outputs.pgo == 'true' }}
     runs-on: ubuntu-24.04
     # Cold instrumented cross build on 4 vCPUs; the PGO cache is empty on the
     # first run, so the stage has to fit the whole build in one job.
@@ -460,7 +472,7 @@ jobs:
   pgo-profile:
     name: PGO profile data (macOS)
     needs: [detect, sync, pgo-stage1]
-    if: ${{ needs.detect.outputs.build == 'true' && needs.sync.outputs.pgo_hit != 'true' && !inputs.disable_pgo }}
+    if: ${{ needs.detect.outputs.build == 'true' && needs.sync.outputs.pgo_hit != 'true' && needs.detect.outputs.pgo == 'true' }}
     runs-on: macos-26
     timeout-minutes: 300
 
@@ -601,7 +613,7 @@ jobs:
     needs: [detect, sync, pgo-stage1, pgo-profile]
     # always(): a cached profile skips both PGO jobs, and defaults would skip
     # this job with them.
-    if: ${{ always() && needs.detect.outputs.build == 'true' && (inputs.disable_pgo || needs.sync.outputs.pgo_hit == 'true' || needs.pgo-profile.result == 'success') }}
+    if: ${{ always() && needs.detect.outputs.build == 'true' && (needs.detect.outputs.pgo != 'true' || needs.sync.outputs.pgo_hit == 'true' || needs.pgo-profile.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
@@ -772,7 +784,7 @@ jobs:
         run: sh scripts/download-language-packs.sh
 
       - name: Restore profile data (cache)
-        if: ${{ !inputs.disable_pgo && needs.sync.outputs.pgo_hit == 'true' }}
+        if: ${{ needs.detect.outputs.pgo == 'true' && needs.sync.outputs.pgo_hit == 'true' }}
         uses: actions/cache/restore@v4
         with:
           key: ${{ needs.sync.outputs.pgo_key }}
@@ -780,14 +792,14 @@ jobs:
           fail-on-cache-miss: true
 
       - name: Download profile data (artifact)
-        if: ${{ !inputs.disable_pgo && needs.sync.outputs.pgo_hit != 'true' }}
+        if: ${{ needs.detect.outputs.pgo == 'true' && needs.sync.outputs.pgo_hit != 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: rc-profdata-aarch64
           path: ~/artifact
 
       - name: Show profile data
-        if: ${{ !inputs.disable_pgo }}
+        if: ${{ needs.detect.outputs.pgo == 'true' }}
         run: |
           set -ex
           ls ~/artifact
@@ -801,9 +813,9 @@ jobs:
           ZEN_CROSS_COMPILING: "1"
           ZEN_RELEASE_BRANCH: release
           MOZ_BUILD_DATE: ${{ needs.detect.outputs.build_id }}
-          # Empty when PGO is on; configs/macos/mozconfig only reads this for
-          # presence, and an empty value leaves --enable-profile-use in place.
-          ZEN_GA_DISABLE_PGO: ${{ inputs.disable_pgo && '1' || '' }}
+          # configs/macos/mozconfig only tests this for presence, so an empty
+          # value keeps --enable-profile-use in place.
+          ZEN_GA_DISABLE_PGO: ${{ needs.detect.outputs.pgo != 'true' && '1' || '' }}
         run: |
           set -xo pipefail
           bash .github/workflows/src/release-build.sh 2>&1 \
@@ -826,12 +838,35 @@ jobs:
           name: rc-pgo-stage3-build-log
           path: build-pgo-stage3.log
 
+      - name: Package app bundle
+        env:
+          SURFER_COMPAT: aarch64
+          SURFER_PLATFORM: darwin
+          ZEN_CROSS_COMPILING: "1"
+          ZEN_RELEASE_BRANCH: release
+          ZEN_RELEASE: "1"
+          # configs/macos/mozconfig only tests this for presence, so an empty
+          # value keeps --enable-profile-use in place.
+          ZEN_GA_DISABLE_PGO: ${{ needs.detect.outputs.pgo != 'true' && '1' || '' }}
+          MOZ_BUILD_DATE: ${{ needs.detect.outputs.build_id }}
+        run: |
+          set -ex
+          # mach build only leaves loose files in dist/. The .app bundle, the
+          # dmg and the bundled language packs all come from packaging.
+          npm run package -- --verbose
+
       - name: Stage app bundle and platform.ini
         run: |
           set -ex
           obj="engine/obj-aarch64-apple-darwin"
+          # surfer packages into <obj>/dist/<binaryName>/<brand>.app; fall back
+          # to whatever bundle packaging produced.
           app="$obj/dist/zen/Zen.app"
+          if [ ! -d "$app" ]; then
+            app=$(find "$obj/dist" -maxdepth 2 -name "*.app" -type d ! -path "*/dist/bin/*" | head -1)
+          fi
           test -d "$app"
+          echo "App bundle: $app"
           rm -f zen-rc-unsigned-app.zip
           (cd "$(dirname "$app")" && zip -q -r -y "$GITHUB_WORKSPACE/zen-rc-unsigned-app.zip" "$(basename "$app")")
           cp "$obj/dist/bin/platform.ini" ./platform.ini
@@ -845,17 +880,45 @@ jobs:
           grep -E "^(SourceStamp|URL|Version)=" "$ini"
           grep -q "^URL=https://${UPDATE_HOST}/updates/browser/" "$ini"
 
-      # signmar links the NSS libraries from its own directory, so ship the
-      # whole host bin rather than the binary alone.
+      # The cross build only produces a Mach-O signmar, which the Linux publish
+      # job cannot run, so build a native one here. A throwaway object
+      # directory keeps it out of the cross build's objdir, and the whole bin
+      # directory is shipped because signmar loads libnss3/libnspr4 from it at
+      # runtime.
       - name: Collect signmar
         run: |
           set -ex
-          signmar=$(find engine -type f -name signmar | head -1)
-          if [ -z "$signmar" ]; then
-            echo "::error::signmar not found in the build tree; MAR signing cannot run"
-            exit 1
+          if [ -f "$HOME/.cargo/env" ]; then
+            . "$HOME/.cargo/env"
           fi
-          tar -czf signmar-tools.tar.gz -C "$(dirname "$signmar")" .
+          if [ -d "$HOME/.mozbuild/clang/bin" ]; then
+            export CC="$HOME/.mozbuild/clang/bin/clang"
+            export CXX="$HOME/.mozbuild/clang/bin/clang++"
+          fi
+
+          cd engine
+          cat > signmar-mozconfig <<'EOF'
+          ac_add_options --enable-application=browser
+          ac_add_options --disable-debug
+          ac_add_options --disable-tests
+          ac_add_options --enable-optimize
+          mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-signmar
+          EOF
+
+          export MOZCONFIG=$PWD/signmar-mozconfig
+          # NSS comes first so the signmar link step always finds its libraries.
+          ./mach build security/nss
+          ./mach build modules/libmar/tool
+
+          test -x obj-signmar/dist/bin/signmar
+          # Fail here, not in the publish job, if a library is missing.
+          LD_LIBRARY_PATH="$PWD/obj-signmar/dist/bin" \
+            ldd obj-signmar/dist/bin/signmar | tee /tmp/signmar-ldd.txt
+          ! grep -q "not found" /tmp/signmar-ldd.txt
+
+          cd ..
+          tar -czf signmar-tools.tar.gz -C engine/obj-signmar/dist/bin .
+          rm -rf engine/obj-signmar engine/signmar-mozconfig
           tar -tzf signmar-tools.tar.gz | head -20
 
       - name: Upload app bundle
