@@ -880,46 +880,82 @@ jobs:
           grep -E "^(SourceStamp|URL|Version)=" "$ini"
           grep -q "^URL=https://${UPDATE_HOST}/updates/browser/" "$ini"
 
-      # The cross build only produces a Mach-O signmar, which the Linux publish
-      # job cannot run, so build a native one here. A throwaway object
-      # directory keeps it out of the cross build's objdir, and the whole bin
-      # directory is shipped because signmar loads libnss3/libnspr4 from it at
-      # runtime.
+      # The cross build already links signmar for the target ("mar" alone is
+      # just the unsigning host tool). Publish runs on an arm64 macOS runner,
+      # so shipping this binary plus the dylibs it loads beats building NSS
+      # and libmar a second time for Linux.
       - name: Collect signmar
         run: |
           set -ex
-          if [ -f "$HOME/.cargo/env" ]; then
-            . "$HOME/.cargo/env"
+          export PATH="$HOME/mac-cross/cctools/bin:$HOME/.mozbuild/clang/bin:$PATH"
+          objdir="engine/obj-aarch64-apple-darwin"
+          out="$GITHUB_WORKSPACE/signmar-tools"
+          signmar=$(find "$objdir" -name signmar -type f -perm -0100 | head -1)
+          test -n "$signmar"
+          echo "signmar: $signmar"
+          rm -rf "$out"
+          mkdir -p "$out"
+          cp "$signmar" "$out/signmar"
+
+          # Locate a dependency by file name, preferring the installed dist.
+          resolve() {
+            for dir in "$objdir/dist/bin" "$objdir/dist" "$objdir"; do
+              found=$(find "$dir" -maxdepth 6 -name "$1" -type f -print -quit 2>/dev/null || true)
+              if [ -n "$found" ]; then
+                printf '%s\n' "$found"
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          OTOOL=""
+          for cand in otool aarch64-apple-darwin-otool llvm-otool; do
+            if command -v "$cand" >/dev/null 2>&1; then
+              OTOOL="$cand"
+              break
+            fi
+          done
+
+          # Copy the non-system libraries signmar links against. Two passes so
+          # dependencies of those libraries are picked up too.
+          copy_deps() {
+            [ -n "$OTOOL" ] || return 0
+            for f in "$@"; do
+              [ -f "$f" ] || continue
+              "$OTOOL" -L "$f" 2>/dev/null | tail -n +2 | awk '{print $1}' | while read -r dep; do
+                base=$(basename "$dep")
+                if [ -f "$out/$base" ]; then
+                  continue
+                fi
+                if src=$(resolve "$base"); then
+                  cp "$src" "$out/$base"
+                  echo "bundled $base from $src"
+                fi
+              done
+            done
+          }
+          copy_deps "$out/signmar"
+          copy_deps "$out"/*.dylib
+
+          # NSS dlopen()s softoken and the FreeBL backends, so otool cannot
+          # show them; without these signmar cannot open an NSS database.
+          for lib in libnss3.dylib libnspr4.dylib libplc4.dylib libplds4.dylib \
+                     libnssutil3.dylib libsmime3.dylib libssl3.dylib libsoftokn3.dylib \
+                     libfreeblpriv3.dylib libfreebl3.dylib libnssckbi.dylib libmozglue.dylib; do
+            if [ ! -f "$out/$lib" ] && src=$(resolve "$lib"); then
+              cp "$src" "$out/$lib"
+              echo "bundled $lib from $src"
+            fi
+          done
+          copy_deps "$out"/*.dylib
+
+          file "$out/signmar"
+          if [ -n "$OTOOL" ]; then
+            "$OTOOL" -L "$out/signmar" || true
           fi
-          if [ -d "$HOME/.mozbuild/clang/bin" ]; then
-            export CC="$HOME/.mozbuild/clang/bin/clang"
-            export CXX="$HOME/.mozbuild/clang/bin/clang++"
-          fi
-
-          cd engine
-          cat > signmar-mozconfig <<'EOF'
-          ac_add_options --enable-application=browser
-          ac_add_options --disable-debug
-          ac_add_options --disable-tests
-          ac_add_options --enable-optimize
-          mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-signmar
-          EOF
-
-          export MOZCONFIG=$PWD/signmar-mozconfig
-          # NSS comes first so the signmar link step always finds its libraries.
-          ./mach build security/nss
-          ./mach build modules/libmar/tool
-
-          test -x obj-signmar/dist/bin/signmar
-          # Fail here, not in the publish job, if a library is missing.
-          LD_LIBRARY_PATH="$PWD/obj-signmar/dist/bin" \
-            ldd obj-signmar/dist/bin/signmar | tee /tmp/signmar-ldd.txt
-          ! grep -q "not found" /tmp/signmar-ldd.txt
-
-          cd ..
-          tar -czf signmar-tools.tar.gz -C engine/obj-signmar/dist/bin .
-          rm -rf engine/obj-signmar engine/signmar-mozconfig
-          tar -tzf signmar-tools.tar.gz | head -20
+          ls -l "$out"
+          tar -czf signmar-tools.tar.gz -C "$out" .
 
       - name: Upload app bundle
         uses: actions/upload-artifact@v4
@@ -1117,7 +1153,10 @@ jobs:
     name: Sign MAR and publish
     needs: [detect, sync, build, package]
     if: ${{ needs.detect.outputs.build == 'true' }}
-    runs-on: ubuntu-24.04
+    # arm64 on purpose: the MAR is signed with the cross-built signmar, which
+    # only runs on the matching architecture. Nothing here is macOS-specific
+    # otherwise, and signing itself is architecture independent.
+    runs-on: macos-26
     timeout-minutes: 60
     permissions:
       contents: write
@@ -1157,8 +1196,14 @@ jobs:
       - name: Install NSS tools
         run: |
           set -euo pipefail
-          sudo apt-get -o Acquire::Retries=3 update
-          sudo apt-get -o Acquire::Retries=3 install -y --fix-missing libnss3-tools openssl
+          # certutil and pk12util come from the nss keg; brew keeps them off
+          # PATH. signmar itself ships with the artifact and links its own NSS.
+          brew install nss
+          nss_bin="$(brew --prefix nss)/bin"
+          test -x "$nss_bin/certutil"
+          test -x "$nss_bin/pk12util"
+          echo "$nss_bin" >> "$GITHUB_PATH"
+          "$nss_bin/certutil" -H 2>&1 | head -2 || true
 
       - name: Sign MAR
         env:
@@ -1171,8 +1216,24 @@ jobs:
           mkdir -p macos.mar nss_db signmar-tools
           cp ~/mar-artifact/macos.mar macos.mar/macos.mar
           tar -xzf ~/app-artifact/signmar-tools.tar.gz -C signmar-tools
+
+          # arm64 kernels refuse to exec unsigned binaries, so ad-hoc sign what
+          # the cross build produced (the linker cannot do that off macOS).
+          test "$(uname -m)" = "arm64"
+          test "$(lipo -archs signmar-tools/signmar)" = "arm64"
+
+          # Add @executable_path to rpath so signmar can find the bundled dylibs in its directory
+          install_name_tool -add_rpath "@executable_path" signmar-tools/signmar 2>/dev/null || true
+
+          find signmar-tools -type f \( -name signmar -o -name "*.dylib" \) \
+            | while read -r bin; do
+                codesign --force --sign - "$bin"
+              done
+          codesign --verify --verbose signmar-tools/signmar
+
           chmod +x signmar-tools/signmar
-          export LD_LIBRARY_PATH="$PWD/signmar-tools${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          file signmar-tools/signmar
+          otool -L signmar-tools/signmar
           signmar="$PWD/signmar-tools/signmar"
 
           echo "$ZEN_MAR_SIGNING_PASSWORD" > nss_db/password.txt
@@ -1193,8 +1254,18 @@ jobs:
           pk12util -i private_key.p12 -d nss_db \
             -W "$ZEN_MAR_SIGNING_PASSWORD" -K "$ZEN_MAR_SIGNING_PASSWORD"
 
-          "$signmar" -d nss_db -n mar_sig -s macos.mar/macos.mar macos.mar/macos.mar.signed
-          "$signmar" -d nss_db -n mar_sig -v macos.mar/macos.mar.signed
+          # Only signmar gets the bundled libraries: exporting this earlier
+          # would make brew's certutil/pk12util load the wrong libnss3.
+          run_signmar() {
+            DYLD_LIBRARY_PATH="$PWD/signmar-tools${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
+              DYLD_FALLBACK_LIBRARY_PATH="$PWD/signmar-tools${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}" \
+              "$signmar" "$@"
+          }
+          run_signmar -d nss_db -n mar_sig -s macos.mar/macos.mar macos.mar/macos.mar.signed
+          if ! run_signmar -d nss_db -n mar_sig -v macos.mar/macos.mar.signed; then
+            echo "Retrying verification with DER certificate (-D build/signing/public_key.der)..."
+            run_signmar -D build/signing/public_key.der -v macos.mar/macos.mar.signed
+          fi
           mv macos.mar/macos.mar.signed macos.mar/macos.mar
           rm -f cert.pem cert.der private_key.pem private_key.p12
 
