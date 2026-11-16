@@ -1,12 +1,8 @@
 name: RC macOS build
 
 # Release-channel macOS build for this fork.
-# Cross-compiles on Linux (Ubuntu 24.04), codesigns with rcodesign,
-# and publishes release zip to GitHub + updates Homebrew tap.
-#
-# No macOS runners needed for packaging or publishing.
-# No MAR signing or GitHub Pages manifests.
-# Updates are managed cleanly via Homebrew Cask.
+# 100% Linux runners (Ubuntu 24.04). No macOS runners needed.
+# Codesigns with rcodesign and publishes to GitHub Releases + Homebrew Tap.
 
 on:
   schedule:
@@ -24,11 +20,6 @@ on:
         default: "zen-enh-main"
       force:
         description: "Rebuild even if a release with this tag already exists"
-        required: false
-        type: boolean
-        default: false
-      disable_pgo:
-        description: "Build without PGO (skips profile generation and uses no profile)"
         required: false
         type: boolean
         default: false
@@ -52,7 +43,6 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       build_id: ${{ steps.meta.outputs.build_id }}
       build: ${{ steps.meta.outputs.build }}
-      pgo: ${{ steps.meta.outputs.pgo }}
 
     steps:
       - name: Checkout
@@ -71,7 +61,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_FORCE: ${{ inputs.force }}
-          INPUT_DISABLE_PGO: ${{ inputs.disable_pgo }}
         run: |
           set -euo pipefail
 
@@ -92,17 +81,10 @@ jobs:
             fi
           fi
 
-          # Skipping PGO on schedules or explicit opt-out to conserve resources
-          pgo=true
-          if [ "$INPUT_DISABLE_PGO" = "true" ] || [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
-            pgo=false
-          fi
-
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "build_id=$(date +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
-          echo "pgo=$pgo" >> "$GITHUB_OUTPUT"
-          echo "Target: $version, build=$build, pgo=$pgo"
+          echo "Target: $version, build=$build"
 
   sync:
     name: Sync upstream dev
@@ -114,9 +96,7 @@ jobs:
       contents: write
     outputs:
       sha: ${{ steps.merge.outputs.sha }}
-      firefox: ${{ steps.pgo.outputs.firefox }}
-      pgo_key: ${{ steps.pgo.outputs.pgo_key }}
-      pgo_hit: ${{ steps.cache.outputs.hit }}
+      firefox: ${{ steps.firefox.outputs.version }}
 
     steps:
       - name: Checkout build branch
@@ -179,285 +159,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${BRANCH}"
 
-      - name: Compute PGO cache key
-        id: pgo
+      - name: Get Firefox version
+        id: firefox
         run: |
-          set -euo pipefail
           firefox=$(node -p "require('./surfer.json').version.version")
-          echo "firefox=$firefox" >> "$GITHUB_OUTPUT"
-          echo "pgo_key=rc-profdata-ff${firefox}-${{ hashFiles('src/zen/common/sys/ZenPGOTraining.sys.mjs', 'src/build/pgo/profileserver-py.patch', 'src/testing/profiles/profileserver/user-js.patch') }}-aarch64" >> "$GITHUB_OUTPUT"
-
-      - name: Look up cached PGO profile
-        id: pgo-cache
-        uses: actions/cache/restore@v4
-        with:
-          key: ${{ steps.pgo.outputs.pgo_key }}
-          path: ~/artifact
-          lookup-only: true
-
-      - name: Report cache state
-        id: cache
-        run: |
-          hit="${{ steps.pgo-cache.outputs.cache-hit }}"
-          if [ "$hit" = "true" ]; then echo "hit=true" >> "$GITHUB_OUTPUT"; else echo "hit=false" >> "$GITHUB_OUTPUT"; fi
-
-  pgo-stage1:
-    name: PGO stage 1 (instrumented)
-    needs: [detect, sync]
-    if: ${{ needs.detect.outputs.build == 'true' && needs.sync.outputs.pgo_hit != 'true' && needs.detect.outputs.pgo == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 350
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      CARGO_TERM_COLOR: always
-      CARGO_INCREMENTAL: 0
-
-    steps:
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@cf1e78c50ca91e757bab3edc229027eebfc07871
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: false
-
-      - name: Add swap space
-        run: |
-          set -euo pipefail
-          swap=/swapfile-rc
-          sudo rm -f "$swap"
-          sudo fallocate -l 16G "$swap" \
-            || sudo dd if=/dev/zero of="$swap" bs=1M count=16384 status=none
-          sudo chmod 600 "$swap"
-          sudo mkswap "$swap"
-          sudo swapon "$swap"
-          free -h
-          df -h /
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          ref: ${{ needs.sync.outputs.sha }}
-          submodules: recursive
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-
-      - name: Setup Git
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential libasound2-dev libcurl4-openssl-dev libdbus-1-dev \
-            libdbus-glib-1-dev libdrm-dev libgtk-3-dev libpulse-dev libx11-xcb-dev \
-            libxt-dev nasm xvfb libx11-dev yasm libegl1-mesa-dev libgl1-mesa-dev \
-            libgles2-mesa-dev libpci-dev clang llvm libclang-dev clang-format \
-            libxcb-shm0-dev libxinerama-dev libxrandr-dev libxcursor-dev
-
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Load surfer CI setup
-        run: npm run surfer -- ci --brand release --display-version "${{ needs.detect.outputs.version }}"
-
-      - name: Download Firefox engine
-        run: npm run download
-
-      - name: Restore macOS cross toolchain
-        id: cache-mac-cross
-        uses: actions/cache@v4
-        with:
-          path: ~/mac-cross
-          key: mac-cross-linux64
-
-      - name: Setup macOS cross toolchain
-        if: steps.cache-mac-cross.outputs.cache-hit != 'true'
-        run: |
-          set -ex
-          mkdir -p ~/mac-cross
-          cd engine/
-          ./mach artifact toolchain --from-build linux64-cctools-port linux64-libdmg linux64-hfsplus
-          mv cctools dmg hfsplus ~/mac-cross/
-
-      - name: Setup Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
-          . "$HOME/.cargo/env"
-          rustup target add aarch64-apple-darwin
-
-      - name: Import patches
-        env:
-          SURFER_COMPAT: aarch64
-          SURFER_PLATFORM: darwin
-        run: |
-          set -ex
-          . "$HOME/.cargo/env"
-          npm run import -- --verbose
-
-      - name: Bootstrap
-        env:
-          SURFER_COMPAT: aarch64
-          SURFER_PLATFORM: darwin
-        run: |
-          set -ex
-          . "$HOME/.cargo/env"
-          npm run bootstrap
-
-      - name: Build language packs
-        run: sh scripts/download-language-packs.sh
-
-      - name: Prepare object directory
-        run: |
-          set -ex
-          export PATH="$HOME/mac-cross/cctools/bin:$HOME/mac-cross/dmg:$HOME/mac-cross/hfsplus:$PATH"
-          export PATH="$HOME/.mozbuild/clang/bin:$PATH"
-          . "$HOME/.cargo/env"
-          mkdir -p engine/obj-aarch64-apple-darwin
-          npm run moz-build-dir -- configs/common/mozconfig.pgo-stage-1 engine/obj-aarch64-apple-darwin
-
-      - name: Run sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Build instrumented binaries
-        env:
-          SURFER_COMPAT: aarch64
-          SURFER_PLATFORM: darwin
-        run: |
-          set -ex
-          export PATH="$HOME/mac-cross/cctools/bin:$HOME/mac-cross/dmg:$HOME/mac-cross/hfsplus:$PATH"
-          export PATH="$HOME/.mozbuild/clang/bin:$PATH"
-          export CCTOOLS_PATH="$HOME/mac-cross/cctools/bin"
-          . "$HOME/.cargo/env"
-          cd engine
-          ./mach build -v
-
-      - name: Package instrumented DMG
-        env:
-          SURFER_COMPAT: aarch64
-          SURFER_PLATFORM: darwin
-        run: |
-          set -ex
-          export PATH="$HOME/mac-cross/cctools/bin:$HOME/mac-cross/dmg:$HOME/mac-cross/hfsplus:$PATH"
-          export PATH="$HOME/.mozbuild/clang/bin:$PATH"
-          . "$HOME/.cargo/env"
-          npm run package -- --verbose
-          mv dist/zen.dmg ../zen-rc-pgo-stage1-aarch64.dmg
-
-      - name: Upload instrumented build
-        uses: actions/upload-artifact@v4
-        with:
-          retention-days: 2
-          name: rc-pgo-stage1-aarch64
-          path: ./zen-rc-pgo-stage1-aarch64.dmg
-
-  pgo-profile:
-    name: PGO profile data (macOS)
-    needs: [detect, sync, pgo-stage1]
-    if: ${{ needs.detect.outputs.build == 'true' && needs.sync.outputs.pgo_hit != 'true' && needs.detect.outputs.pgo == 'true' }}
-    runs-on: macos-15
-    timeout-minutes: 300
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          ref: ${{ needs.sync.outputs.sha }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-
-      - name: Setup Git
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Load surfer CI setup
-        run: npm run surfer -- ci --brand release --display-version "${{ needs.detect.outputs.version }}"
-
-      - name: Download instrumented app
-        uses: actions/download-artifact@v4
-        with:
-          path: ~/instrumented
-          name: rc-pgo-stage1-aarch64
-
-      - name: Download Firefox engine
-        run: npm run download
-
-      - name: Import patches
-        env:
-          SURFER_NO_BRANDING_PATCH: "true"
-        run: npm run import
-
-      - name: Bootstrap
-        run: |
-          cd engine
-          export SURFER_PLATFORM=darwin
-          ./mach --no-interactive bootstrap --application-choice browser --exclude macos-sdk || true
-
-      - name: Extract and sign instrumented app
-        run: |
-          set -ex
-          cd engine
-          ./mach python -m mozbuild.action.unpack_dmg \
-            "$HOME/instrumented/zen-rc-pgo-stage1-aarch64.dmg" \
-            "$HOME/instrumented/app"
-          app=$(find "$HOME/instrumented/app" -maxdepth 1 -name "*.app" -type d | head -1)
-          test -n "$app"
-          codesign --force --deep --sign - "$app"
-
-      - name: Generate PGO profile
-        run: |
-          set -ex
-          export LLVM_PROFDATA="$HOME/.mozbuild/clang/bin/llvm-profdata"
-          export JARLOG_FILE=en-US.log
-          binary=$(find "$HOME/instrumented" -type f -path "*/Contents/MacOS/zen" | head -1)
-          test -n "$binary"
-          cd engine
-          ./mach python ../scripts/download_pgo_extended_corpus.py
-          ./mach python ../scripts/generate_pgo_profile.py --binary "$binary" --corpus-dir ../pgo-corpus/extended
-
-      - name: Save profile data
-        run: |
-          set -ex
-          mkdir -p ~/artifact
-          cp engine/merged.profdata ~/artifact/
-          if [ -f engine/en-US.log ]; then
-            cp engine/en-US.log ~/artifact/
-          fi
-          ls -la ~/artifact
-
-      - name: Cache profile data
-        uses: actions/cache/save@v4
-        with:
-          key: ${{ needs.sync.outputs.pgo_key }}
-          path: ~/artifact
+          echo "version=$firefox" >> "$GITHUB_OUTPUT"
 
   build:
-    name: ${{ needs.detect.outputs.pgo == 'true' && 'PGO stage 3 (release build)' || 'Release build (no PGO)' }}
-    needs: [detect, sync, pgo-profile]
-    if: ${{ !failure() && !cancelled() && needs.detect.outputs.build == 'true' && (needs.detect.outputs.pgo == 'false' || needs.sync.outputs.pgo_hit == 'true' || needs.pgo-profile.result == 'success') }}
+    name: Release build (macOS arm64)
+    needs: [detect, sync]
+    if: ${{ !failure() && !cancelled() && needs.detect.outputs.build == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     env:
@@ -572,14 +283,6 @@ jobs:
       - name: Build language packs
         run: sh scripts/download-language-packs.sh
 
-      - name: Restore profile data (cache)
-        if: ${{ needs.detect.outputs.pgo == 'true' && needs.sync.outputs.pgo_hit == 'true' }}
-        uses: actions/cache/restore@v4
-        with:
-          key: ${{ needs.sync.outputs.pgo_key }}
-          path: ~/artifact
-          fail-on-cache-miss: true
-
       - name: Prepare object directory
         run: |
           set -ex
@@ -587,15 +290,7 @@ jobs:
           export PATH="$HOME/.mozbuild/clang/bin:$PATH"
           . "$HOME/.cargo/env"
           mkdir -p engine/obj-aarch64-apple-darwin
-          if [ "${{ needs.detect.outputs.pgo }}" = "true" ]; then
-            cp ~/artifact/merged.profdata engine/obj-aarch64-apple-darwin/merged.profdata
-            if [ -f ~/artifact/en-US.log ]; then
-              cp ~/artifact/en-US.log engine/en-US.log
-            fi
-            npm run moz-build-dir -- configs/common/mozconfig.pgo-stage-2 engine/obj-aarch64-apple-darwin
-          else
-            npm run moz-build-dir -- configs/macos/mozconfig.release engine/obj-aarch64-apple-darwin
-          fi
+          npm run moz-build-dir -- configs/macos/mozconfig.release engine/obj-aarch64-apple-darwin
 
       - name: Run sccache
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -638,8 +333,8 @@ jobs:
           # Disable in-app updater (updates managed via Homebrew Cask)
           resources="$app/Contents/Resources"
           mkdir -p "$resources/distribution" "$resources/defaults/pref"
-          printf '{\n  "policies": {\n    "DisableAppUpdate": true,\n    "ManualAppUpdateOnly": true,\n    "BackgroundAppUpdate": false,\n    "AppAutoUpdate": false\n  }\n}\n' > "$resources/distribution/policies.json"
-          printf 'pref("app.update.auto", false);\npref("app.update.enabled", false);\n' > "$resources/defaults/pref/channel-prefs.js"
+          printf '{\\n  "policies": {\\n    "DisableAppUpdate": true,\\n    "ManualAppUpdateOnly": true,\\n    "BackgroundAppUpdate": false,\\n    "AppAutoUpdate": false\\n  }\\n}\\n' > "$resources/distribution/policies.json"
+          printf 'pref("app.update.auto", false);\\npref("app.update.enabled", false);\\n' > "$resources/defaults/pref/channel-prefs.js"
 
           rm -f zen-rc-unsigned-app.zip
           (cd "$(dirname "$app")" && zip -q -r -y "$GITHUB_WORKSPACE/zen-rc-unsigned-app.zip" "$(basename "$app")")
@@ -740,7 +435,7 @@ jobs:
             exit 0
           fi
 
-          printf 'RC build for upstream Zen %s, Firefox %s.\n\nCommit: %s\nmacOS arm64, Homebrew cask distribution.\n\nInstall with Homebrew:\n```bash\nbrew tap ShubhamJ010/tap\nbrew install --cask zen-browser-sj\n```\n' "$VERSION" "$FIREFOX" "$COMMIT" > notes.md
+          printf 'RC build for upstream Zen %s, Firefox %s.\\n\\nCommit: %s\\nmacOS arm64, Homebrew cask distribution.\\n\\nInstall with Homebrew:\\n```bash\\nbrew tap ShubhamJ010/tap\\nbrew install --cask zen-browser-sj\\n```\\n' "$VERSION" "$FIREFOX" "$COMMIT" > notes.md
 
           gh release create "$VERSION" \
             --repo "$GITHUB_REPOSITORY" \
@@ -771,7 +466,7 @@ jobs:
           cd tap
           CASK="Casks/zen-browser-sj.rb"
           if [ -f "$CASK" ]; then
-            python3 -c "import os, re; from pathlib import Path; p = Path('$CASK'); c = p.read_text(); c = re.sub(r'version\s+\"[^\"]+\"', f'version \"{os.environ[\"VERSION\"]}\"', c, count=1); c = re.sub(r'sha256\s+\"[^\"]+\"', f'sha256 \"{os.environ[\"SHA256\"]}\"', c, count=1); c = re.sub(r'sha256\s+:no_check', f'sha256 \"{os.environ[\"SHA256\"]}\"', c, count=1); p.write_text(c)"
+            python3 -c "import os, re; from pathlib import Path; p = Path('$CASK'); c = p.read_text(); c = re.sub(r'version\\s+\\\"[^\\\"]+\\\"', f'version \\\"{os.environ[\\\"VERSION\\\"]}\\\"', c, count=1); c = re.sub(r'sha256\\s+\\\"[^\\\"]+\\\"', f'sha256 \\\"{os.environ[\\\"SHA256\\\"]}\\\"', c, count=1); c = re.sub(r'sha256\\s+:no_check', f'sha256 \\\"{os.environ[\\\"SHA256\\\"]}\\\"', c, count=1); p.write_text(c)"
             git add "$CASK"
             if ! git diff --cached --quiet; then
               git commit -m "chore(cask): bump zen-browser-sj to $VERSION"
