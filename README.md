@@ -41,6 +41,27 @@ This fork adds native macOS gestures, tab switching, and workspace isolation on 
 - Per-workspace extension isolation: disable extensions per workspace, hide their toolbar icons, block background tab access and shortcut keys, and prevent content script injection. Includes a 3-card stack indicator in the site data panel to manage disabled extensions.
 - Vertical tab switcher: replaces the default Ctrl+Tab grid with a centered frosted glass list filtered to the current workspace, instant switching on release, space switching with number keys 1 to 9, and single-key actions to close or unload tabs.
 
+### Installation (macOS arm64)
+
+Install this fork via Homebrew Cask:
+
+```bash
+# Add tap
+brew tap ShubhamJ010/tap
+
+# Trust tap (if Homebrew tap trust is enforced)
+brew trust ShubhamJ010/tap
+
+# Install Zen Browser
+brew install --cask zen-browser-sj
+```
+
+To update to future releases:
+
+```bash
+brew upgrade --cask zen-browser-sj
+```
+
 ### Contributing
 
 If you'd like to report a bug, please do so on our [GitHub Issues page](https://github.com/zen-browser/desktop/issues/) and for feature requests, you can use [GitHub Discussions](https://github.com/zen-browser/desktop/discussions).
