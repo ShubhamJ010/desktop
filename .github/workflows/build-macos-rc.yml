@@ -29,6 +29,11 @@ on:
         required: false
         type: boolean
         default: false
+      disable_pgo:
+        description: "Build without PGO (skips profile generation and uses no profile)"
+        required: false
+        type: boolean
+        default: false
       publish_update:
         description: "Push update.xml to the update host"
         required: false
@@ -231,7 +236,7 @@ jobs:
   pgo-stage1:
     name: PGO stage 1 (instrumented)
     needs: [detect, sync]
-    if: ${{ needs.detect.outputs.build == 'true' && needs.sync.outputs.pgo_hit != 'true' }}
+    if: ${{ needs.detect.outputs.build == 'true' && needs.sync.outputs.pgo_hit != 'true' && !inputs.disable_pgo }}
     runs-on: ubuntu-24.04
     # Cold instrumented cross build on 4 vCPUs; the PGO cache is empty on the
     # first run, so the stage has to fit the whole build in one job.
@@ -455,7 +460,7 @@ jobs:
   pgo-profile:
     name: PGO profile data (macOS)
     needs: [detect, sync, pgo-stage1]
-    if: ${{ needs.detect.outputs.build == 'true' && needs.sync.outputs.pgo_hit != 'true' }}
+    if: ${{ needs.detect.outputs.build == 'true' && needs.sync.outputs.pgo_hit != 'true' && !inputs.disable_pgo }}
     runs-on: macos-26
     timeout-minutes: 300
 
@@ -596,7 +601,7 @@ jobs:
     needs: [detect, sync, pgo-stage1, pgo-profile]
     # always(): a cached profile skips both PGO jobs, and defaults would skip
     # this job with them.
-    if: ${{ always() && needs.detect.outputs.build == 'true' && (needs.sync.outputs.pgo_hit == 'true' || needs.pgo-profile.result == 'success') }}
+    if: ${{ always() && needs.detect.outputs.build == 'true' && (inputs.disable_pgo || needs.sync.outputs.pgo_hit == 'true' || needs.pgo-profile.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
@@ -767,7 +772,7 @@ jobs:
         run: sh scripts/download-language-packs.sh
 
       - name: Restore profile data (cache)
-        if: ${{ needs.sync.outputs.pgo_hit == 'true' }}
+        if: ${{ !inputs.disable_pgo && needs.sync.outputs.pgo_hit == 'true' }}
         uses: actions/cache/restore@v4
         with:
           key: ${{ needs.sync.outputs.pgo_key }}
@@ -775,13 +780,14 @@ jobs:
           fail-on-cache-miss: true
 
       - name: Download profile data (artifact)
-        if: ${{ needs.sync.outputs.pgo_hit != 'true' }}
+        if: ${{ !inputs.disable_pgo && needs.sync.outputs.pgo_hit != 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: rc-profdata-aarch64
           path: ~/artifact
 
       - name: Show profile data
+        if: ${{ !inputs.disable_pgo }}
         run: |
           set -ex
           ls ~/artifact
@@ -795,6 +801,9 @@ jobs:
           ZEN_CROSS_COMPILING: "1"
           ZEN_RELEASE_BRANCH: release
           MOZ_BUILD_DATE: ${{ needs.detect.outputs.build_id }}
+          # Empty when PGO is on; configs/macos/mozconfig only reads this for
+          # presence, and an empty value leaves --enable-profile-use in place.
+          ZEN_GA_DISABLE_PGO: ${{ inputs.disable_pgo && '1' || '' }}
         run: |
           set -xo pipefail
           bash .github/workflows/src/release-build.sh 2>&1 \
