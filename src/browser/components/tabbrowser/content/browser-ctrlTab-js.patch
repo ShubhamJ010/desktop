@@ -204,7 +204,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      }
  
      if (host.tabToSelect) {
-@@ -192,82 +77,204 @@
+@@ -192,80 +77,213 @@
        );
        host.tabToSelect = null;
      }
@@ -489,7 +489,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
        !Services.prefs.getBoolPref(
          "browser.ctrlTab.disallowForScreenReaders",
          false
-@@ -307,148 +320,442 @@
+@@ -307,148 +320,443 @@
        this.uninit();
      }
    },
@@ -1288,7 +1288,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      if (!this.isOpen) {
        return;
      }
-@@ -557,137 +961,273 @@
+@@ -557,137 +961,277 @@
      if (this._timer) {
        clearTimeout(this._timer);
        this._timer = null;
@@ -1666,7 +1666,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
            this.detachTab(previousTab);
          }
          break;
-@@ -734,84 +1273,238 @@
+@@ -734,84 +1273,241 @@
          this.onKeyDown(event);
          break;
        case "keypress":
