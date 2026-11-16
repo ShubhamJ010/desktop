@@ -22,10 +22,6 @@ on:
         required: true
         type: string
         default: "1.25t"
-  push:
-    branches:
-      - zen-enh-main
-      - main
 
 concurrency:
   group: macos-twilight-${{ github.ref }}-${{ inputs.arch || 'aarch64' }}
@@ -305,7 +301,7 @@ jobs:
 
       # A dead update URL alone does not stop an update: the in-app updater and
       # its scheduler still run, so the bundle has to say updates are off. This
-      # mirrors the local updater.py safety guard.
+      # mirrors the local ci_build.py safety guard.
       #
       # Applied to dist/zen/<brand>.app, the tree surfer stages for the archive.
       # Writing into the macbuild template instead only reaches

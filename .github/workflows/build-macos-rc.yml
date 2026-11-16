@@ -1,14 +1,12 @@
 name: RC macOS build
 
-# Release-channel macOS build for this fork. Same shape as upstream
-# build.yml with release branch, narrowed to macOS arm64:
-# PGO stage 1 -> profile on a macOS runner -> PGO stage 3 -> codesign ->
-# MAR + update.xml -> release -> update manifest pushed to the update host.
+# Release-channel macOS build for this fork.
+# Cross-compiles on Linux (Ubuntu 24.04), codesigns with rcodesign,
+# and publishes release zip to GitHub + updates Homebrew tap.
 #
-# Fork-specific values are patched into the CI checkout only, never committed:
-# surfer.json github repo + update hostname, and the matching host line in
-# src/build/moz-build.patch. The MAR signing key is the fork's own, so only
-# builds from this repo can install these updates.
+# No macOS runners needed for packaging or publishing.
+# No MAR signing or GitHub Pages manifests.
+# Updates are managed cleanly via Homebrew Cask.
 
 on:
   schedule:
@@ -34,21 +32,6 @@ on:
         required: false
         type: boolean
         default: false
-      publish_update:
-        description: "Push update.xml to the update host"
-        required: false
-        type: boolean
-        default: true
-      update_host:
-        description: "Host the app checks for update.xml"
-        required: false
-        type: string
-        default: "shubhamj010.github.io"
-      update_repo:
-        description: "owner/repo that serves update.xml at its site root"
-        required: false
-        type: string
-        default: "ShubhamJ010/ShubhamJ010.github.io"
 
 concurrency:
   group: rc-macos-${{ github.ref }}
@@ -60,8 +43,6 @@ permissions:
 
 env:
   ARCH: aarch64
-  UPDATE_HOST: ${{ inputs.update_host || 'shubhamj010.github.io' }}
-  UPDATE_REPO: ${{ inputs.update_repo || 'ShubhamJ010/ShubhamJ010.github.io' }}
 
 jobs:
   detect:
@@ -72,7 +53,6 @@ jobs:
       build_id: ${{ steps.meta.outputs.build_id }}
       build: ${{ steps.meta.outputs.build }}
       pgo: ${{ steps.meta.outputs.pgo }}
-      publish: ${{ steps.meta.outputs.publish }}
 
     steps:
       - name: Checkout
@@ -91,9 +71,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_FORCE: ${{ inputs.force }}
-          INPUT_PUBLISH: ${{ inputs.publish_update }}
           INPUT_DISABLE_PGO: ${{ inputs.disable_pgo }}
-          UPDATE_HOST_SSH_KEY: ${{ secrets.UPDATE_HOST_SSH_KEY }}
         run: |
           set -euo pipefail
 
@@ -114,34 +92,17 @@ jobs:
             fi
           fi
 
-          # The instrumented build kills the hosted runner every time it has
-          # been tried (no build output, agent gone, "hosted runner lost
-          # communication"). Keep scheduled runs on the build path that works
-          # and require an explicit dispatch to opt into PGO.
+          # Skipping PGO on schedules or explicit opt-out to conserve resources
           pgo=true
           if [ "$INPUT_DISABLE_PGO" = "true" ] || [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
             pgo=false
-          fi
-
-          publish="$INPUT_PUBLISH"
-          if [ -z "$publish" ]; then publish=true; fi
-          if [ "$publish" = "true" ]; then
-            if [ -z "$UPDATE_HOST_SSH_KEY" ]; then
-              echo "::error::UPDATE_HOST_SSH_KEY secret is missing; it must push update.xml to $UPDATE_REPO"
-              exit 1
-            fi
-            if ! gh api "repos/$UPDATE_REPO" >/dev/null 2>&1; then
-              echo "::error::Update host repo $UPDATE_REPO not found. Create it, enable Pages, or pass update_repo."
-              exit 1
-            fi
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "build_id=$(date +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
           echo "pgo=$pgo" >> "$GITHUB_OUTPUT"
-          echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          echo "Target: $version, build=$build, pgo=$pgo, publish=$publish"
+          echo "Target: $version, build=$build, pgo=$pgo"
 
   sync:
     name: Sync upstream dev
@@ -172,15 +133,13 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Setup Git
-        run: |
+        run: |\
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      # Merge, never rebase: fork commits stay intact and a conflict aborts the
-      # run before any build time is spent.
       - name: Merge upstream dev
         id: merge
-        run: |
+        run: |\
           set -euo pipefail
           git fetch --no-tags https://github.com/zen-browser/desktop.git dev
           if git merge-base --is-ancestor FETCH_HEAD HEAD; then
@@ -209,8 +168,6 @@ jobs:
         if: ${{ steps.merge.outputs.changed == 'true' }}
         run: npm run import
 
-      # The import check may rewrite generated files. Push the merge commit,
-      # not whatever the check touched in the working tree.
       - name: Drop validation changes
         if: ${{ steps.merge.outputs.changed == 'true' }}
         run: git reset --hard HEAD
@@ -224,7 +181,7 @@ jobs:
 
       - name: Compute PGO cache key
         id: pgo
-        run: |
+        run: |\
           set -euo pipefail
           firefox=$(node -p "require('./surfer.json').version.version")
           echo "firefox=$firefox" >> "$GITHUB_OUTPUT"
@@ -240,18 +197,15 @@ jobs:
 
       - name: Report cache state
         id: cache
-        run: |
+        run: |\
           hit="${{ steps.pgo-cache.outputs.cache-hit }}"
           if [ "$hit" = "true" ]; then echo "hit=true" >> "$GITHUB_OUTPUT"; else echo "hit=false" >> "$GITHUB_OUTPUT"; fi
-
 
   pgo-stage1:
     name: PGO stage 1 (instrumented)
     needs: [detect, sync]
     if: ${{ needs.detect.outputs.build == 'true' && needs.sync.outputs.pgo_hit != 'true' && needs.detect.outputs.pgo == 'true' }}
     runs-on: ubuntu-24.04
-    # Cold instrumented cross build on 4 vCPUs; the PGO cache is empty on the
-    # first run, so the stage has to fit the whole build in one job.
     timeout-minutes: 350
     env:
       SCCACHE_GHA_ENABLED: "true"
@@ -270,14 +224,9 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      # An instrumented, thin-LTO Gecko build peaks well above the 16 GiB a
-      # hosted runner has. Without swap the OOM killer takes the runner itself
-      # and GitHub reports "the hosted runner lost communication with the
-      # server", which hides the real cause. Swap turns that into a slow build.
       - name: Add swap space
-        run: |
+        run: |\
           set -euo pipefail
-          # Own file, next to whatever swap the image already enabled.
           swap=/swapfile-rc
           sudo rm -f "$swap"
           sudo fallocate -l 16G "$swap" \
@@ -300,78 +249,29 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+
       - name: Setup Git
-        run: |
+        run: |\
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Run sccache
-        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
-        with:
-          disable_annotations: true
-
-      - name: Expose actions cache variables
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env['ACTIONS_CACHE_URL'])
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env['ACTIONS_RUNTIME_TOKEN'])
-
-      - name: Install system dependencies
-        run: |
-          set -euo pipefail
-          sudo apt-get -o Acquire::Retries=3 update
-          sudo apt-get -o Acquire::Retries=3 install -y --fix-missing \
-            python3 python3-pip python3-launchpadlib zstd yasm nasm build-essential \
-            libgtk-3-dev libpython3-dev m4 uuid libasound2-dev libcurl4-openssl-dev \
-            libdbus-1-dev libdrm-dev libdbus-glib-1-dev libpulse-dev \
-            libx11-xcb-dev libxt-dev xvfb libvips-dev pkg-config
+      - name: Install dependencies
+        run: |\
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libasound2-dev libcurl4-openssl-dev libdbus-1-dev \
+            libdbus-glib-1-dev libdrm-dev libgtk-3-dev libpulse-dev libx11-xcb-dev \
+            libxt-dev nasm xvfb libx11-dev yasm libegl1-mesa-dev libgl1-mesa-dev \
+            libgles2-mesa-dev libpci-dev clang llvm libclang-dev clang-format \
+            libxcb-shm0-dev libxinerama-dev libxrandr-dev libxcursor-dev
 
       - name: Install npm dependencies
         run: npm ci
 
       - name: Load surfer CI setup
         run: npm run surfer -- ci --brand release --display-version "${{ needs.detect.outputs.version }}"
-
-      # Fork values exist in the CI checkout only. The same step is repeated in
-      # the profile, stage 3 and package jobs so every one of them sees them.
-      - name: Apply fork release overrides
-        env:
-          RC_VERSION: ${{ needs.detect.outputs.version }}
-          RC_REPO: ${{ github.repository }}
-          RC_HOST: ${{ inputs.update_host || 'shubhamj010.github.io' }}
-        run: |
-          python3 - <<'PY'
-          import json, os, sys
-          from pathlib import Path
-
-          version = os.environ["RC_VERSION"]
-          repo = os.environ["RC_REPO"]
-          host = os.environ["RC_HOST"]
-
-          path = Path("surfer.json")
-          surfer = json.loads(path.read_text())
-          release = surfer["brands"]["release"]["release"]
-
-          if release["github"]["repo"] != "zen-browser/desktop":
-              sys.exit("release repo changed upstream; review fork override")
-          if surfer["updateHostname"] != "updates.zen-browser.app":
-              sys.exit("update hostname changed upstream; review fork override")
-          if release["displayVersion"] != version:
-              sys.exit(f"displayVersion {release['displayVersion']} != target {version}")
-
-          release["github"]["repo"] = repo
-          surfer["updateHostname"] = host
-          path.write_text(json.dumps(surfer, indent=2) + "\n")
-
-          patch_path = Path("src/build/moz-build.patch")
-          patch = patch_path.read_text()
-          old = '+    appini_defines["MOZ_APPUPDATE_HOST"] = "updates.zen-browser.app"'
-          new = f'+    appini_defines["MOZ_APPUPDATE_HOST"] = "{host}"'
-          if patch.count(old) != 1:
-              sys.exit("moz-build.patch update-host line changed; review fork override")
-          patch_path.write_text(patch.replace(old, new, 1))
-          PY
 
       - name: Download Firefox engine
         run: npm run download
@@ -385,7 +285,7 @@ jobs:
 
       - name: Setup macOS cross toolchain
         if: steps.cache-mac-cross.outputs.cache-hit != 'true'
-        run: |
+        run: |\
           set -ex
           mkdir -p ~/mac-cross
           cd engine/
@@ -393,7 +293,7 @@ jobs:
           mv cctools dmg hfsplus ~/mac-cross/
 
       - name: Setup Rust
-        run: |
+        run: |\
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
           . "$HOME/.cargo/env"
           rustup target add aarch64-apple-darwin
@@ -402,7 +302,7 @@ jobs:
         env:
           SURFER_COMPAT: aarch64
           SURFER_PLATFORM: darwin
-        run: |
+        run: |\
           set -ex
           . "$HOME/.cargo/env"
           npm run import -- --verbose
@@ -411,7 +311,7 @@ jobs:
         env:
           SURFER_COMPAT: aarch64
           SURFER_PLATFORM: darwin
-        run: |
+        run: |\
           set -ex
           . "$HOME/.cargo/env"
           npm run bootstrap
@@ -419,50 +319,44 @@ jobs:
       - name: Build language packs
         run: sh scripts/download-language-packs.sh
 
-      - name: Build instrumented app
-        env:
-          SURFER_COMPAT: aarch64
-          SURFER_PLATFORM: darwin
-          ZEN_CROSS_COMPILING: "1"
-          ZEN_RELEASE_BRANCH: release
-          ZEN_GA_GENERATE_PROFILE: "1"
-          MOZ_BUILD_DATE: ${{ needs.detect.outputs.build_id }}
-        run: |
-          set -xo pipefail
-          # Keep a copy so a runner death still leaves something to inspect.
-          bash .github/workflows/src/release-build.sh 2>&1 \
-            | tee "$GITHUB_WORKSPACE/build-pgo-stage1.log"
-
-      - name: Report build log and resource state
-        if: always()
-        run: |
-          set -x
-          free -h || true
-          df -h / || true
-          tail -n 200 "$GITHUB_WORKSPACE/build-pgo-stage1.log" 2>/dev/null || true
-
-      - name: Upload build log
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          retention-days: 7
-          if-no-files-found: ignore
-          name: rc-pgo-stage1-build-log
-          path: build-pgo-stage1.log
-
-      - name: Package instrumented app
-        env:
-          SURFER_COMPAT: aarch64
-          SURFER_PLATFORM: darwin
-          ZEN_CROSS_COMPILING: "1"
-          ZEN_GA_GENERATE_PROFILE: "1"
-        run: |
+      - name: Prepare object directory
+        run: |\
           set -ex
-          cd engine
-          ./mach package
-          mv obj-aarch64-apple-darwin/dist/*.dmg "$GITHUB_WORKSPACE/zen-rc-pgo-stage1-aarch64.dmg"
+          export PATH="$HOME/mac-cross/cctools/bin:$HOME/mac-cross/dmg:$HOME/mac-cross/hfsplus:$PATH"
+          export PATH="$HOME/.mozbuild/clang/bin:$PATH"
+          . "$HOME/.cargo/env"
+          mkdir -p engine/obj-aarch64-apple-darwin
+          npm run moz-build-dir -- configs/common/mozconfig.pgo-stage-1 engine/obj-aarch64-apple-darwin
 
-      - name: Upload instrumented app
+      - name: Run sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Build instrumented binaries
+        env:
+          SURFER_COMPAT: aarch64
+          SURFER_PLATFORM: darwin
+        run: |\
+          set -ex
+          export PATH="$HOME/mac-cross/cctools/bin:$HOME/mac-cross/dmg:$HOME/mac-cross/hfsplus:$PATH"
+          export PATH="$HOME/.mozbuild/clang/bin:$PATH"
+          export CCTOOLS_PATH="$HOME/mac-cross/cctools/bin"
+          . "$HOME/.cargo/env"
+          cd engine
+          ./mach build -v
+
+      - name: Package instrumented DMG
+        env:
+          SURFER_COMPAT: aarch64
+          SURFER_PLATFORM: darwin
+        run: |\
+          set -ex
+          export PATH="$HOME/mac-cross/cctools/bin:$HOME/mac-cross/dmg:$HOME/mac-cross/hfsplus:$PATH"
+          export PATH="$HOME/.mozbuild/clang/bin:$PATH"
+          . "$HOME/.cargo/env"
+          npm run package -- --verbose
+          mv dist/zen.dmg ../zen-rc-pgo-stage1-aarch64.dmg
+
+      - name: Upload instrumented build
         uses: actions/upload-artifact@v4
         with:
           retention-days: 2
@@ -473,7 +367,7 @@ jobs:
     name: PGO profile data (macOS)
     needs: [detect, sync, pgo-stage1]
     if: ${{ needs.detect.outputs.build == 'true' && needs.sync.outputs.pgo_hit != 'true' && needs.detect.outputs.pgo == 'true' }}
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 300
 
     steps:
@@ -492,7 +386,7 @@ jobs:
         uses: actions/setup-python@v5
 
       - name: Setup Git
-        run: |
+        run: |\
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -501,47 +395,6 @@ jobs:
 
       - name: Load surfer CI setup
         run: npm run surfer -- ci --brand release --display-version "${{ needs.detect.outputs.version }}"
-
-      # Fork values exist in the CI checkout only. The same step is repeated in
-      # the profile, stage 3 and package jobs so every one of them sees them.
-      - name: Apply fork release overrides
-        env:
-          RC_VERSION: ${{ needs.detect.outputs.version }}
-          RC_REPO: ${{ github.repository }}
-          RC_HOST: ${{ inputs.update_host || 'shubhamj010.github.io' }}
-        run: |
-          python3 - <<'PY'
-          import json, os, sys
-          from pathlib import Path
-
-          version = os.environ["RC_VERSION"]
-          repo = os.environ["RC_REPO"]
-          host = os.environ["RC_HOST"]
-
-          path = Path("surfer.json")
-          surfer = json.loads(path.read_text())
-          release = surfer["brands"]["release"]["release"]
-
-          if release["github"]["repo"] != "zen-browser/desktop":
-              sys.exit("release repo changed upstream; review fork override")
-          if surfer["updateHostname"] != "updates.zen-browser.app":
-              sys.exit("update hostname changed upstream; review fork override")
-          if release["displayVersion"] != version:
-              sys.exit(f"displayVersion {release['displayVersion']} != target {version}")
-
-          release["github"]["repo"] = repo
-          surfer["updateHostname"] = host
-          path.write_text(json.dumps(surfer, indent=2) + "\n")
-
-          patch_path = Path("src/build/moz-build.patch")
-          patch = patch_path.read_text()
-          old = '+    appini_defines["MOZ_APPUPDATE_HOST"] = "updates.zen-browser.app"'
-          new = f'+    appini_defines["MOZ_APPUPDATE_HOST"] = "{host}"'
-          if patch.count(old) != 1:
-              sys.exit("moz-build.patch update-host line changed; review fork override")
-          patch_path.write_text(patch.replace(old, new, 1))
-          PY
-
 
       - name: Download instrumented app
         uses: actions/download-artifact@v4
@@ -558,13 +411,13 @@ jobs:
         run: npm run import
 
       - name: Bootstrap
-        run: |
+        run: |\
           cd engine
           export SURFER_PLATFORM=darwin
           ./mach --no-interactive bootstrap --application-choice browser --exclude macos-sdk || true
 
       - name: Extract and sign instrumented app
-        run: |
+        run: |\
           set -ex
           cd engine
           ./mach python -m mozbuild.action.unpack_dmg \
@@ -575,7 +428,7 @@ jobs:
           codesign --force --deep --sign - "$app"
 
       - name: Generate PGO profile
-        run: |
+        run: |\
           set -ex
           export LLVM_PROFDATA="$HOME/.mozbuild/clang/bin/llvm-profdata"
           export JARLOG_FILE=en-US.log
@@ -583,15 +436,17 @@ jobs:
           test -n "$binary"
           cd engine
           ./mach python ../scripts/download_pgo_extended_corpus.py
-          ./mach python build/pgo/profileserver.py --binary "$binary" --extended-corpus ./pgo-extended-corpus
+          ./mach python ../scripts/generate_pgo_profile.py --binary "$binary" --corpus-dir ../pgo-corpus/extended
 
-      - name: Collect profile data
-        run: |
+      - name: Save profile data
+        run: |\
           set -ex
-          mv engine/merged.profdata merged.profdata
-          mv engine/en-US.log en-US.log
           mkdir -p ~/artifact
-          cp merged.profdata en-US.log ~/artifact/
+          cp engine/merged.profdata ~/artifact/
+          if [ -f engine/en-US.log ]; then
+            cp engine/en-US.log ~/artifact/
+          fi
+          ls -la ~/artifact
 
       - name: Cache profile data
         uses: actions/cache/save@v4
@@ -599,23 +454,12 @@ jobs:
           key: ${{ needs.sync.outputs.pgo_key }}
           path: ~/artifact
 
-      - name: Upload profile data
-        uses: actions/upload-artifact@v4
-        with:
-          retention-days: 2
-          name: rc-profdata-aarch64
-          path: |
-            merged.profdata
-            en-US.log
-
   build:
-    name: PGO stage 3 (release build)
-    needs: [detect, sync, pgo-stage1, pgo-profile]
-    # always(): a cached profile skips both PGO jobs, and defaults would skip
-    # this job with them.
-    if: ${{ always() && needs.detect.outputs.build == 'true' && (needs.detect.outputs.pgo != 'true' || needs.sync.outputs.pgo_hit == 'true' || needs.pgo-profile.result == 'success') }}
+    name: ${{ needs.detect.outputs.pgo == 'true' && 'PGO stage 3 (release build)' || 'Release build (no PGO)' }}
+    needs: [detect, sync, pgo-profile]
+    if: ${{ !failure() && !cancelled() && needs.detect.outputs.build == 'true' && (needs.detect.outputs.pgo == 'false' || needs.sync.outputs.pgo_hit == 'true' || needs.pgo-profile.result == 'success') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 350
     env:
       SCCACHE_GHA_ENABLED: "true"
       CARGO_TERM_COLOR: always
@@ -633,14 +477,9 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      # An instrumented, thin-LTO Gecko build peaks well above the 16 GiB a
-      # hosted runner has. Without swap the OOM killer takes the runner itself
-      # and GitHub reports "the hosted runner lost communication with the
-      # server", which hides the real cause. Swap turns that into a slow build.
       - name: Add swap space
-        run: |
+        run: |\
           set -euo pipefail
-          # Own file, next to whatever swap the image already enabled.
           swap=/swapfile-rc
           sudo rm -f "$swap"
           sudo fallocate -l 16G "$swap" \
@@ -663,79 +502,29 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+
       - name: Setup Git
-        run: |
+        run: |\
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Run sccache
-        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
-        with:
-          disable_annotations: true
-
-      - name: Expose actions cache variables
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env['ACTIONS_CACHE_URL'])
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env['ACTIONS_RUNTIME_TOKEN'])
-
-      - name: Install system dependencies
-        run: |
-          set -euo pipefail
-          sudo apt-get -o Acquire::Retries=3 update
-          sudo apt-get -o Acquire::Retries=3 install -y --fix-missing \
-            python3 python3-pip python3-launchpadlib zstd yasm nasm build-essential \
-            libgtk-3-dev libpython3-dev m4 uuid libasound2-dev libcurl4-openssl-dev \
-            libdbus-1-dev libdrm-dev libdbus-glib-1-dev libpulse-dev \
-            libx11-xcb-dev libxt-dev xvfb libvips-dev pkg-config
+      - name: Install dependencies
+        run: |\
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libasound2-dev libcurl4-openssl-dev libdbus-1-dev \
+            libdbus-glib-1-dev libdrm-dev libgtk-3-dev libpulse-dev libx11-xcb-dev \
+            libxt-dev nasm xvfb libx11-dev yasm libegl1-mesa-dev libgl1-mesa-dev \
+            libgles2-mesa-dev libpci-dev clang llvm libclang-dev clang-format \
+            libxcb-shm0-dev libxinerama-dev libxrandr-dev libxcursor-dev
 
       - name: Install npm dependencies
         run: npm ci
 
       - name: Load surfer CI setup
         run: npm run surfer -- ci --brand release --display-version "${{ needs.detect.outputs.version }}"
-
-      # Fork values exist in the CI checkout only. The same step is repeated in
-      # the profile, stage 3 and package jobs so every one of them sees them.
-      - name: Apply fork release overrides
-        env:
-          RC_VERSION: ${{ needs.detect.outputs.version }}
-          RC_REPO: ${{ github.repository }}
-          RC_HOST: ${{ inputs.update_host || 'shubhamj010.github.io' }}
-        run: |
-          python3 - <<'PY'
-          import json, os, sys
-          from pathlib import Path
-
-          version = os.environ["RC_VERSION"]
-          repo = os.environ["RC_REPO"]
-          host = os.environ["RC_HOST"]
-
-          path = Path("surfer.json")
-          surfer = json.loads(path.read_text())
-          release = surfer["brands"]["release"]["release"]
-
-          if release["github"]["repo"] != "zen-browser/desktop":
-              sys.exit("release repo changed upstream; review fork override")
-          if surfer["updateHostname"] != "updates.zen-browser.app":
-              sys.exit("update hostname changed upstream; review fork override")
-          if release["displayVersion"] != version:
-              sys.exit(f"displayVersion {release['displayVersion']} != target {version}")
-
-          release["github"]["repo"] = repo
-          surfer["updateHostname"] = host
-          path.write_text(json.dumps(surfer, indent=2) + "\n")
-
-          patch_path = Path("src/build/moz-build.patch")
-          patch = patch_path.read_text()
-          old = '+    appini_defines["MOZ_APPUPDATE_HOST"] = "updates.zen-browser.app"'
-          new = f'+    appini_defines["MOZ_APPUPDATE_HOST"] = "{host}"'
-          if patch.count(old) != 1:
-              sys.exit("moz-build.patch update-host line changed; review fork override")
-          patch_path.write_text(patch.replace(old, new, 1))
-          PY
-
 
       - name: Download Firefox engine
         run: npm run download
@@ -749,7 +538,7 @@ jobs:
 
       - name: Setup macOS cross toolchain
         if: steps.cache-mac-cross.outputs.cache-hit != 'true'
-        run: |
+        run: |\
           set -ex
           mkdir -p ~/mac-cross
           cd engine/
@@ -757,7 +546,7 @@ jobs:
           mv cctools dmg hfsplus ~/mac-cross/
 
       - name: Setup Rust
-        run: |
+        run: |\
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
           . "$HOME/.cargo/env"
           rustup target add aarch64-apple-darwin
@@ -766,7 +555,7 @@ jobs:
         env:
           SURFER_COMPAT: aarch64
           SURFER_PLATFORM: darwin
-        run: |
+        run: |\
           set -ex
           . "$HOME/.cargo/env"
           npm run import -- --verbose
@@ -775,7 +564,7 @@ jobs:
         env:
           SURFER_COMPAT: aarch64
           SURFER_PLATFORM: darwin
-        run: |
+        run: |\
           set -ex
           . "$HOME/.cargo/env"
           npm run bootstrap
@@ -791,171 +580,83 @@ jobs:
           path: ~/artifact
           fail-on-cache-miss: true
 
-      - name: Download profile data (artifact)
-        if: ${{ needs.detect.outputs.pgo == 'true' && needs.sync.outputs.pgo_hit != 'true' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: rc-profdata-aarch64
-          path: ~/artifact
-
-      - name: Show profile data
-        if: ${{ needs.detect.outputs.pgo == 'true' }}
-        run: |
+      - name: Prepare object directory
+        run: |\
           set -ex
-          ls ~/artifact
-          test -s ~/artifact/merged.profdata
-          test -s ~/artifact/en-US.log
+          export PATH="$HOME/mac-cross/cctools/bin:$HOME/mac-cross/dmg:$HOME/mac-cross/hfsplus:$PATH"
+          export PATH="$HOME/.mozbuild/clang/bin:$PATH"
+          . "$HOME/.cargo/env"
+          mkdir -p engine/obj-aarch64-apple-darwin
+          if [ "${{ needs.detect.outputs.pgo }}" = "true" ]; then
+            cp ~/artifact/merged.profdata engine/obj-aarch64-apple-darwin/merged.profdata
+            if [ -f ~/artifact/en-US.log ]; then
+              cp ~/artifact/en-US.log engine/en-US.log
+            fi
+            npm run moz-build-dir -- configs/common/mozconfig.pgo-stage-2 engine/obj-aarch64-apple-darwin
+          else
+            npm run moz-build-dir -- configs/macos/mozconfig.release engine/obj-aarch64-apple-darwin
+          fi
 
-      - name: Build with PGO profile
+      - name: Run sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Build release binaries
         env:
           SURFER_COMPAT: aarch64
           SURFER_PLATFORM: darwin
-          ZEN_CROSS_COMPILING: "1"
-          ZEN_RELEASE_BRANCH: release
-          MOZ_BUILD_DATE: ${{ needs.detect.outputs.build_id }}
-          # configs/macos/mozconfig only tests this for presence, so an empty
-          # value keeps --enable-profile-use in place.
-          ZEN_GA_DISABLE_PGO: ${{ needs.detect.outputs.pgo != 'true' && '1' || '' }}
-        run: |
-          set -xo pipefail
-          bash .github/workflows/src/release-build.sh 2>&1 \
-            | tee "$GITHUB_WORKSPACE/build-pgo-stage3.log"
-
-      - name: Report build log and resource state
-        if: always()
-        run: |
-          set -x
-          free -h || true
-          df -h / || true
-          tail -n 200 "$GITHUB_WORKSPACE/build-pgo-stage3.log" 2>/dev/null || true
-
-      - name: Upload build log
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          retention-days: 7
-          if-no-files-found: ignore
-          name: rc-pgo-stage3-build-log
-          path: build-pgo-stage3.log
+        run: |\
+          set -ex
+          export PATH="$HOME/mac-cross/cctools/bin:$HOME/mac-cross/dmg:$HOME/mac-cross/hfsplus:$PATH"
+          export PATH="$HOME/.mozbuild/clang/bin:$PATH"
+          export CCTOOLS_PATH="$HOME/mac-cross/cctools/bin"
+          . "$HOME/.cargo/env"
+          cd engine
+          ./mach build -v
 
       - name: Package app bundle
         env:
           SURFER_COMPAT: aarch64
           SURFER_PLATFORM: darwin
-          ZEN_CROSS_COMPILING: "1"
-          ZEN_RELEASE_BRANCH: release
-          ZEN_RELEASE: "1"
-          # configs/macos/mozconfig only tests this for presence, so an empty
-          # value keeps --enable-profile-use in place.
-          ZEN_GA_DISABLE_PGO: ${{ needs.detect.outputs.pgo != 'true' && '1' || '' }}
-          MOZ_BUILD_DATE: ${{ needs.detect.outputs.build_id }}
-        run: |
+        run: |\
           set -ex
-          # mach build only leaves loose files in dist/. The .app bundle, the
-          # dmg and the bundled language packs all come from packaging.
+          export PATH="$HOME/mac-cross/cctools/bin:$HOME/mac-cross/dmg:$HOME/mac-cross/hfsplus:$PATH"
+          export PATH="$HOME/.mozbuild/clang/bin:$PATH"
+          . "$HOME/.cargo/env"
           npm run package -- --verbose
 
       - name: Stage app bundle and platform.ini
-        run: |
+        run: |\
           set -ex
           obj="engine/obj-aarch64-apple-darwin"
-          # surfer packages into <obj>/dist/<binaryName>/<brand>.app; fall back
-          # to whatever bundle packaging produced.
           app="$obj/dist/zen/Zen.app"
           if [ ! -d "$app" ]; then
             app=$(find "$obj/dist" -maxdepth 2 -name "*.app" -type d ! -path "*/dist/bin/*" | head -1)
           fi
           test -d "$app"
           echo "App bundle: $app"
+
+          # Disable in-app updater (updates managed via Homebrew Cask)
+          resources="$app/Contents/Resources"
+          mkdir -p "$resources/distribution" "$resources/defaults/pref"
+          cat > "$resources/distribution/policies.json" <<'EOF'
+{
+  "policies": {
+    "DisableAppUpdate": true,
+    "ManualAppUpdateOnly": true,
+    "BackgroundAppUpdate": false,
+    "AppAutoUpdate": false
+  }
+}
+EOF
+          cat > "$resources/defaults/pref/channel-prefs.js" <<'EOF'
+pref("app.update.auto", false);
+pref("app.update.enabled", false);
+EOF
+
           rm -f zen-rc-unsigned-app.zip
           (cd "$(dirname "$app")" && zip -q -r -y "$GITHUB_WORKSPACE/zen-rc-unsigned-app.zip" "$(basename "$app")")
           cp "$obj/dist/bin/platform.ini" ./platform.ini
           echo "App: $(du -h zen-rc-unsigned-app.zip | cut -f1)"
-
-      - name: Verify bundle update URL
-        run: |
-          set -ex
-          ini="engine/obj-aarch64-apple-darwin/dist/zen/Zen.app/Contents/Resources/application.ini"
-          test -f "$ini"
-          grep -E "^(SourceStamp|URL|Version)=" "$ini"
-          grep -q "^URL=https://${UPDATE_HOST}/updates/browser/" "$ini"
-
-      # The cross build already links signmar for the target ("mar" alone is
-      # just the unsigning host tool). Publish runs on an arm64 macOS runner,
-      # so shipping this binary plus the dylibs it loads beats building NSS
-      # and libmar a second time for Linux.
-      - name: Collect signmar
-        run: |
-          set -ex
-          export PATH="$HOME/mac-cross/cctools/bin:$HOME/.mozbuild/clang/bin:$PATH"
-          objdir="engine/obj-aarch64-apple-darwin"
-          out="$GITHUB_WORKSPACE/signmar-tools"
-          signmar=$(find "$objdir" -name signmar -type f -perm -0100 | head -1)
-          test -n "$signmar"
-          echo "signmar: $signmar"
-          rm -rf "$out"
-          mkdir -p "$out"
-          cp "$signmar" "$out/signmar"
-
-          # Locate a dependency by file name, preferring the installed dist.
-          resolve() {
-            for dir in "$objdir/dist/bin" "$objdir/dist" "$objdir"; do
-              found=$(find "$dir" -maxdepth 6 -name "$1" -type f -print -quit 2>/dev/null || true)
-              if [ -n "$found" ]; then
-                printf '%s\n' "$found"
-                return 0
-              fi
-            done
-            return 1
-          }
-
-          OTOOL=""
-          for cand in otool aarch64-apple-darwin-otool llvm-otool; do
-            if command -v "$cand" >/dev/null 2>&1; then
-              OTOOL="$cand"
-              break
-            fi
-          done
-
-          # Copy the non-system libraries signmar links against. Two passes so
-          # dependencies of those libraries are picked up too.
-          copy_deps() {
-            [ -n "$OTOOL" ] || return 0
-            for f in "$@"; do
-              [ -f "$f" ] || continue
-              "$OTOOL" -L "$f" 2>/dev/null | tail -n +2 | awk '{print $1}' | while read -r dep; do
-                base=$(basename "$dep")
-                if [ -f "$out/$base" ]; then
-                  continue
-                fi
-                if src=$(resolve "$base"); then
-                  cp "$src" "$out/$base"
-                  echo "bundled $base from $src"
-                fi
-              done
-            done
-          }
-          copy_deps "$out/signmar"
-          copy_deps "$out"/*.dylib
-
-          # NSS dlopen()s softoken and the FreeBL backends, so otool cannot
-          # show them; without these signmar cannot open an NSS database.
-          for lib in libnss3.dylib libnspr4.dylib libplc4.dylib libplds4.dylib \
-                     libnssutil3.dylib libsmime3.dylib libssl3.dylib libsoftokn3.dylib \
-                     libfreeblpriv3.dylib libfreebl3.dylib libnssckbi.dylib libmozglue.dylib; do
-            if [ ! -f "$out/$lib" ] && src=$(resolve "$lib"); then
-              cp "$src" "$out/$lib"
-              echo "bundled $lib from $src"
-            fi
-          done
-          copy_deps "$out"/*.dylib
-
-          file "$out/signmar"
-          if [ -n "$OTOOL" ]; then
-            "$OTOOL" -L "$out/signmar" || true
-          fi
-          ls -l "$out"
-          tar -czf signmar-tools.tar.gz -C "$out" .
 
       - name: Upload app bundle
         uses: actions/upload-artifact@v4
@@ -965,183 +666,49 @@ jobs:
           path: |
             zen-rc-unsigned-app.zip
             platform.ini
-            signmar-tools.tar.gz
 
   package:
-    name: Codesign and MAR
+    name: Codesign app
     needs: [detect, sync, build]
     if: ${{ !failure() && !cancelled() && needs.detect.outputs.build == 'true' && needs.build.result == 'success' }}
-    runs-on: macos-26
-    timeout-minutes: 240
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          ref: ${{ needs.sync.outputs.sha }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-
-      - name: Setup Git
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Load surfer CI setup
-        run: npm run surfer -- ci --brand release --display-version "${{ needs.detect.outputs.version }}"
-
-      # Fork values exist in the CI checkout only. The same step is repeated in
-      # the profile, stage 3 and package jobs so every one of them sees them.
-      - name: Apply fork release overrides
-        env:
-          RC_VERSION: ${{ needs.detect.outputs.version }}
-          RC_REPO: ${{ github.repository }}
-          RC_HOST: ${{ inputs.update_host || 'shubhamj010.github.io' }}
-        run: |
-          python3 - <<'PY'
-          import json, os, sys
-          from pathlib import Path
-
-          version = os.environ["RC_VERSION"]
-          repo = os.environ["RC_REPO"]
-          host = os.environ["RC_HOST"]
-
-          path = Path("surfer.json")
-          surfer = json.loads(path.read_text())
-          release = surfer["brands"]["release"]["release"]
-
-          if release["github"]["repo"] != "zen-browser/desktop":
-              sys.exit("release repo changed upstream; review fork override")
-          if surfer["updateHostname"] != "updates.zen-browser.app":
-              sys.exit("update hostname changed upstream; review fork override")
-          if release["displayVersion"] != version:
-              sys.exit(f"displayVersion {release['displayVersion']} != target {version}")
-
-          release["github"]["repo"] = repo
-          surfer["updateHostname"] = host
-          path.write_text(json.dumps(surfer, indent=2) + "\n")
-
-          patch_path = Path("src/build/moz-build.patch")
-          patch = patch_path.read_text()
-          old = '+    appini_defines["MOZ_APPUPDATE_HOST"] = "updates.zen-browser.app"'
-          new = f'+    appini_defines["MOZ_APPUPDATE_HOST"] = "{host}"'
-          if patch.count(old) != 1:
-              sys.exit("moz-build.patch update-host line changed; review fork override")
-          patch_path.write_text(patch.replace(old, new, 1))
-          PY
-
-
-      - name: Download Firefox engine
-        run: npm run download
-
-      - name: Import patches
-        env:
-          SURFER_NO_BRANDING_PATCH: "true"
-        run: npm run import
-
-      - name: Bootstrap
-        run: |
-          cd engine
-          export SURFER_PLATFORM=darwin
-          ./mach --no-interactive bootstrap --application-choice browser --exclude macos-sdk || true
-
       - name: Download built app
         uses: actions/download-artifact@v4
         with:
           name: rc-app-aarch64
           path: ~/app-artifact
 
-      - name: Stage app in object dir
+      - name: Install rcodesign
         run: |
-          set -ex
-          obj="engine/obj-aarch64-apple-darwin"
-          mkdir -p "$obj/dist/bin"
-          unzip -q -o "$HOME/app-artifact/zen-rc-unsigned-app.zip" -d "$obj/dist"
-          test -d "$obj/dist/Zen.app"
-          cp "$HOME/app-artifact/platform.ini" "$obj/dist/bin/platform.ini"
+          set -euo pipefail
+          curl -sSL "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign/0.29.0/apple-codesign-0.29.0-x86_64-unknown-linux-musl.tar.gz" | tar -xz
+          sudo mv apple-codesign-0.29.0-x86_64-unknown-linux-musl/rcodesign /usr/local/bin/
+          rcodesign --version
 
-      # Self-signed identity: keeps the designated requirement stable across
-      # builds so TCC grants survive updates.
-      - name: Import code signing identity
+      - name: Extract and codesign app
         env:
           P12_BASE64: ${{ secrets.ZEN_CODESIGN_P12_BASE64 }}
           P12_PASSWORD: ${{ secrets.ZEN_CODESIGN_P12_PASSWORD }}
         run: |
-          # No xtrace here: it would print the p12 and its password to public logs.
-          set -e
-          keychain_password=$(openssl rand -hex 16)
-          security create-keychain -p "$keychain_password" build.keychain
-          security set-keychain-settings -lut 21600 build.keychain
-          security unlock-keychain -p "$keychain_password" build.keychain
-          echo "$P12_BASE64" | base64 --decode > cert.p12
-          security import cert.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" build.keychain
-          security list-keychains -d user -s build.keychain login.keychain-db
-          rm -f cert.p12
-
-      - name: Codesign app
-        run: |
           set -ex
-          app="engine/obj-aarch64-apple-darwin/dist/Zen.app"
-          codesign --force --deep -s "Zen Fork Signing" "$app"
-          codesign --verify --deep --strict --verbose=2 "$app"
-          codesign -dv --verbose=4 "$app" 2>&1 | grep -E "Identifier|Authority|TeamIdentifier" || true
+          unzip -q -o "$HOME/app-artifact/zen-rc-unsigned-app.zip" -d app-root
+          app=$(find app-root -maxdepth 2 -name "*.app" -type d | head -1)
+          test -d "$app"
 
-      - name: Build host mar tool
-        run: |
-          set -ex
-          cd engine
-          echo "ac_add_options --enable-project=tools/update-packaging" > mar-mozconfig
-          echo "mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-mar-tools" >> mar-mozconfig
-          MOZCONFIG=$PWD/mar-mozconfig ./mach build -v
-          cp obj-mar-tools/dist/host/bin/mar ../zen-mac-host-mar
-          chmod +x ../zen-mac-host-mar
-          rm -rf obj-mar-tools mar-mozconfig
+          if [ -n "$P12_BASE64" ]; then
+            echo "$P12_BASE64" | base64 --decode > cert.p12
+            rcodesign sign --p12-file cert.p12 --p12-password "$P12_PASSWORD" --code-signature-flags runtime "$app"
+            rm -f cert.p12
+            rcodesign verify "$app"
+          else
+            echo "No codesigning cert configured, ad-hoc signing"
+            rcodesign sign "$app"
+          fi
 
-      - name: Package MAR and update manifest
-        env:
-          JUST_MAR: "true"
-          ZEN_RELEASE: "1"
-          SURFER_COMPAT: aarch64
-          SURFER_PLATFORM: darwin
-          MAR: ${{ github.workspace }}/zen-mac-host-mar
-        run: |
-          set -ex
-          npm run package -- --verbose
-          test -s dist/output.mar
-          find dist/update -name update.xml -print
-
-      - name: Prepare artifacts
-        run: |
-          set -ex
-          mv dist/output.mar macos.mar
-          app="engine/obj-aarch64-apple-darwin/dist/Zen.app"
-          rm -f zen-rc-macos-aarch64.zip
           (cd "$(dirname "$app")" && zip -q -r -y "$GITHUB_WORKSPACE/zen-rc-macos-aarch64.zip" "$(basename "$app")")
-
-      - name: Upload MAR
-        uses: actions/upload-artifact@v4
-        with:
-          retention-days: 2
-          name: rc-macos-mar
-          path: ./macos.mar
-
-      - name: Upload update manifest
-        uses: actions/upload-artifact@v4
-        with:
-          retention-days: 2
-          name: rc-update-manifest
-          path: ./dist/update
 
       - name: Upload signed app bundle
         uses: actions/upload-artifact@v4
@@ -1151,164 +718,20 @@ jobs:
           path: ./zen-rc-macos-aarch64.zip
 
   publish:
-    name: Sign MAR and publish
+    name: Publish release and update tap
     needs: [detect, sync, build, package]
     if: ${{ !failure() && !cancelled() && needs.detect.outputs.build == 'true' && needs.package.result == 'success' }}
-    # arm64 on purpose: the MAR is signed with the cross-built signmar, which
-    # only runs on the matching architecture. Nothing here is macOS-specific
-    # otherwise, and signing itself is architecture independent.
-    runs-on: macos-26
-    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: write
-      actions: read
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          ref: ${{ needs.sync.outputs.sha }}
-
-      - name: Download signmar
-        uses: actions/download-artifact@v4
-        with:
-          name: rc-app-aarch64
-          path: ~/app-artifact
-
-      - name: Download MAR
-        uses: actions/download-artifact@v4
-        with:
-          name: rc-macos-mar
-          path: ~/mar-artifact
-
-      - name: Download update manifest
-        uses: actions/download-artifact@v4
-        with:
-          name: rc-update-manifest
-          path: ~/update-artifact
-
       - name: Download signed app
         uses: actions/download-artifact@v4
         with:
           name: rc-macos-app
           path: ~/signed-app
-
-      - name: Install NSS tools
-        run: |
-          set -euo pipefail
-          # certutil and pk12util come from the nss keg; brew keeps them off
-          # PATH. signmar itself ships with the artifact and links its own NSS.
-          brew install nss
-          nss_bin="$(brew --prefix nss)/bin"
-          test -x "$nss_bin/certutil"
-          test -x "$nss_bin/pk12util"
-          echo "$nss_bin" >> "$GITHUB_PATH"
-          "$nss_bin/certutil" -H 2>&1 | head -2 || true
-
-      - name: Sign MAR
-        env:
-          ZEN_MAR_SIGNING_PASSWORD: ${{ secrets.ZEN_MAR_SIGNING_PASSWORD }}
-          ZEN_SIGNING_CERT_PEM_BASE64: ${{ secrets.ZEN_SIGNING_CERT_PEM_BASE64 }}
-          ZEN_SIGNING_PRIVATE_KEY_PEM_BASE64: ${{ secrets.ZEN_SIGNING_PRIVATE_KEY_PEM_BASE64 }}
-        run: |
-          set -euo pipefail
-
-          mkdir -p macos.mar nss_db signmar-tools
-          cp ~/mar-artifact/macos.mar macos.mar/macos.mar
-          tar -xzf ~/app-artifact/signmar-tools.tar.gz -C signmar-tools
-
-          # arm64 kernels refuse to exec unsigned binaries, so ad-hoc sign what
-          # the cross build produced (the linker cannot do that off macOS).
-          test "$(uname -m)" = "arm64"
-          test "$(lipo -archs signmar-tools/signmar)" = "arm64"
-
-          # Add @executable_path to rpath so signmar can find the bundled dylibs in its directory
-          install_name_tool -add_rpath "@executable_path" signmar-tools/signmar 2>/dev/null || true
-
-          find signmar-tools -type f \( -name signmar -o -name "*.dylib" \) \
-            | while read -r bin; do
-                codesign --force --sign - "$bin"
-              done
-          codesign --verify --verbose signmar-tools/signmar
-
-          chmod +x signmar-tools/signmar
-          file signmar-tools/signmar
-          otool -L signmar-tools/signmar
-          signmar="$PWD/signmar-tools/signmar"
-
-          echo "$ZEN_MAR_SIGNING_PASSWORD" > nss_db/password.txt
-          echo "$ZEN_SIGNING_CERT_PEM_BASE64" | base64 -d > cert.pem
-          echo "$ZEN_SIGNING_PRIVATE_KEY_PEM_BASE64" | base64 -d > private_key.pem
-
-          # The app trusts the DER committed in the tree. Refuse to sign a MAR
-          # with any other key.
-          openssl x509 -in cert.pem -outform DER -out cert.der
-          cmp cert.der build/signing/public_key.der || {
-            echo "::error::MAR signing cert does not match build/signing/public_key.der"
-            exit 1
-          }
-
-          certutil -N -d nss_db -f nss_db/password.txt
-          openssl pkcs12 -export -inkey private_key.pem -in cert.pem \
-            -name mar_sig -passout pass:"$ZEN_MAR_SIGNING_PASSWORD" -out private_key.p12
-          pk12util -i private_key.p12 -d nss_db \
-            -W "$ZEN_MAR_SIGNING_PASSWORD" -K "$ZEN_MAR_SIGNING_PASSWORD"
-
-          # Only signmar gets the bundled libraries: exporting this earlier
-          # would make brew's certutil/pk12util load the wrong libnss3.
-          run_signmar() {
-            DYLD_LIBRARY_PATH="$PWD/signmar-tools${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
-              DYLD_FALLBACK_LIBRARY_PATH="$PWD/signmar-tools${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}" \
-              "$signmar" "$@"
-          }
-          run_signmar -d nss_db -n mar_sig -s macos.mar/macos.mar macos.mar/macos.mar.signed
-          if ! run_signmar -d nss_db -n mar_sig -v macos.mar/macos.mar.signed; then
-            echo "Retrying verification with DER certificate (-D build/signing/public_key.der)..."
-            run_signmar -D build/signing/public_key.der -v macos.mar/macos.mar.signed
-          fi
-          mv macos.mar/macos.mar.signed macos.mar/macos.mar
-          rm -f cert.pem cert.der private_key.pem private_key.p12
-
-      - name: Update and verify update.xml
-        env:
-          VERSION: ${{ needs.detect.outputs.version }}
-          RC_REPO: ${{ github.repository }}
-        run: |
-          python3 - <<'PY'
-          import hashlib, os, re, sys
-          from pathlib import Path
-
-          version = os.environ["VERSION"]
-          repo = os.environ["RC_REPO"]
-          mar = Path("macos.mar/macos.mar")
-          digest = hashlib.sha512(mar.read_bytes()).hexdigest()
-          size = str(mar.stat().st_size)
-
-          root = Path("update_manifest")
-          root.mkdir(exist_ok=True)
-          for item in Path.home().joinpath("update-artifact").rglob("*"):
-              if item.is_file():
-                  target = root / item.relative_to(Path.home().joinpath("update-artifact"))
-                  target.parent.mkdir(parents=True, exist_ok=True)
-                  target.write_bytes(item.read_bytes())
-
-          xmls = list(root.rglob("update.xml"))
-          if not xmls:
-              sys.exit("no update.xml generated")
-
-          expected = f"https://github.com/{repo}/releases/download/{version}/macos.mar"
-          for xml in xmls:
-              text = xml.read_text()
-              text = re.sub(r'hashValue="[^"]+"', f'hashValue="{digest}"', text)
-              text = re.sub(r'\bsize="[^"]+"', f'size="{size}"', text)
-              if expected not in text:
-                  sys.exit(f"{xml}: MAR URL is not {expected}")
-              if f'displayVersion="{version}"' not in text:
-                  sys.exit(f"{xml}: displayVersion is not {version}")
-              xml.write_text(text)
-              print(f"Updated {xml}")
-          PY
 
       - name: Create release
         env:
@@ -1318,55 +741,75 @@ jobs:
           COMMIT: ${{ needs.sync.outputs.sha }}
         run: |
           set -euo pipefail
+          app_zip="$HOME/signed-app/zen-rc-macos-aarch64.zip"
+          test -f "$app_zip"
+
           if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            # A forced rebuild must replace the old assets, or update.xml would
-            # describe a MAR that is not the one being served.
             gh release upload "$VERSION" \
               --repo "$GITHUB_REPOSITORY" \
               --clobber \
-              ./macos.mar/macos.mar \
-              ~/signed-app/zen-rc-macos-aarch64.zip
+              "$app_zip"
             exit 0
           fi
+
           cat > notes.md <<EOF
           RC build for upstream Zen $VERSION, Firefox $FIREFOX.
 
           Commit: $COMMIT
-          macOS arm64, PGO, self-signed.
+          macOS arm64, Homebrew cask distribution.
+
+          Install with Homebrew:
+          \`\`\`bash
+          brew tap ShubhamJ010/tap
+          brew install --cask zen-browser-rc
+          \`\`\`
           EOF
+
           gh release create "$VERSION" \
             --repo "$GITHUB_REPOSITORY" \
             --title "RC build $VERSION" \
             --notes-file notes.md \
             --prerelease \
-            ./macos.mar/macos.mar \
-            ~/signed-app/zen-rc-macos-aarch64.zip
+            "$app_zip"
 
-      - name: Publish update.xml
-        if: ${{ needs.detect.outputs.publish == 'true' }}
+      - name: Update Homebrew tap
         env:
-          UPDATE_REPO: ${{ inputs.update_repo || 'ShubhamJ010/ShubhamJ010.github.io' }}
-          UPDATE_HOST_SSH_KEY: ${{ secrets.UPDATE_HOST_SSH_KEY }}
+          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
-          xml="update_manifest/browser/Darwin_aarch64-gcc3/release/update.xml"
-          test -s "$xml"
-
-          if [ -z "$UPDATE_HOST_SSH_KEY" ]; then
-            echo "::error::UPDATE_HOST_SSH_KEY is not set; cannot push update.xml"
-            exit 1
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "TAP_GITHUB_TOKEN secret not set; skipping automatic Homebrew tap bump."
+            exit 0
           fi
 
-          mkdir -p ~/.ssh
-          printf '%s\n' "$UPDATE_HOST_SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
-          git clone --depth 1 "git@github.com:${UPDATE_REPO}.git" update-host
-          mkdir -p update-host/updates/browser/Darwin_aarch64-gcc3/release
-          cp "$xml" update-host/updates/browser/Darwin_aarch64-gcc3/release/update.xml
-          cd update-host
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add updates/browser/Darwin_aarch64-gcc3/release/update.xml
-          git commit -m "chore: update manifest ${{ needs.detect.outputs.version }}"
-          git push
+          app_zip="$HOME/signed-app/zen-rc-macos-aarch64.zip"
+          SHA256=$(sha256sum "$app_zip" | awk '{print $1}')
+          echo "Bumping tap to $VERSION ($SHA256)..."
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/ShubhamJ010/homebrew-tap.git" tap
+          cd tap
+          CASK="Casks/zen-browser-rc.rb"
+          if [ -f "$CASK" ]; then
+            python3 - <<PY
+          import os, re
+          from pathlib import Path
+          p = Path("$CASK")
+          content = p.read_text()
+          content = re.sub(r'version\s+"[^"]+"', f'version "{os.environ["VERSION"]}"', content, count=1)
+          content = re.sub(r'sha256\s+"[^"]+"', f'sha256 "{os.environ["SHA256"]}"', content, count=1)
+          content = re.sub(r'sha256\s+:no_check', f'sha256 "{os.environ["SHA256"]}"', content, count=1)
+          p.write_text(content)
+          PY
+            git add "$CASK"
+            if ! git diff --cached --quiet; then
+              git commit -m "chore(cask): bump zen-browser-rc to $VERSION"
+              git push origin main
+              echo "Homebrew tap updated!"
+            else
+              echo "Cask already up to date."
+            fi
+          fi
