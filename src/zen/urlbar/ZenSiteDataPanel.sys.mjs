@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* eslint-disable */
-
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 const ADDONS_BUTTONS_HIDDEN = Services.prefs.getBoolPref(
@@ -36,6 +34,7 @@ export class ZenSpaceExtensionsManager {
 
   /**
    * Get all disabled extension IDs for a given workspace.
+   *
    * @param {string} spaceId
    * @returns {string[]}
    */
@@ -57,6 +56,7 @@ export class ZenSpaceExtensionsManager {
 
   /**
    * Check if an extension is disabled in a given workspace.
+   *
    * @param {string} spaceId
    * @param {string} extId
    * @returns {boolean}
@@ -70,6 +70,7 @@ export class ZenSpaceExtensionsManager {
 
   /**
    * Set disabled extension IDs for a workspace.
+   *
    * @param {string} spaceId
    * @param {string[]} list
    */
@@ -83,7 +84,7 @@ export class ZenSpaceExtensionsManager {
         "{}"
       );
       const map = JSON.parse(raw);
-      if (list && list.length > 0) {
+      if (list && list.length) {
         map[spaceId] = Array.from(new Set(list));
       } else {
         delete map[spaceId];
@@ -94,7 +95,10 @@ export class ZenSpaceExtensionsManager {
       );
       this.#notifyChange(spaceId);
     } catch (e) {
-      console.error("ZenSpaceExtensionsManager: failed to save disabled extensions", e);
+      console.error(
+        "ZenSpaceExtensionsManager: failed to save disabled extensions",
+        e
+      );
     }
   }
 
@@ -102,6 +106,7 @@ export class ZenSpaceExtensionsManager {
 
   /**
    * Get the entire disabled mapping object { [spaceId]: string[] }.
+   *
    * @returns {Record<string, string[]>}
    */
   static getAllDisabled() {
@@ -118,14 +123,23 @@ export class ZenSpaceExtensionsManager {
 
   /**
    * Resolve an extension ID from a DOM element (toolbarbutton, item, etc.).
+   *
    * @param {Element} el
    * @returns {string|null}
    */
   static getExtIdFromElement(el) {
-    if (!el) return null;
-    if (el.getAttribute("data-extensionid")) return el.getAttribute("data-extensionid");
-    if (el.getAttribute("extension-id")) return el.getAttribute("extension-id");
-    if (el.dataset?.extensionid) return el.dataset.extensionid;
+    if (!el) {
+      return null;
+    }
+    if (el.getAttribute("data-extensionid")) {
+      return el.getAttribute("data-extensionid");
+    }
+    if (el.getAttribute("extension-id")) {
+      return el.getAttribute("extension-id");
+    }
+    if (el.dataset?.extensionid) {
+      return el.dataset.extensionid;
+    }
     const id = el.id || "";
     if (id) {
       const policy = globalThis.WebExtensionPolicy?.getByWidgetId?.(id);
@@ -135,7 +149,8 @@ export class ZenSpaceExtensionsManager {
     }
     if (id.endsWith("-browser-action")) {
       const prefix = id.replace(/-browser-action$/, "").toLowerCase();
-      const policies = globalThis.WebExtensionPolicy?.getActiveExtensions?.() || [];
+      const policies =
+        globalThis.WebExtensionPolicy?.getActiveExtensions?.() || [];
       for (const policy of policies) {
         const sanitized = policy.id.toLowerCase().replace(/[^a-z0-9_-]/g, "_");
         if (sanitized === prefix) {
@@ -146,7 +161,9 @@ export class ZenSpaceExtensionsManager {
       for (const list of Object.values(allDisabled)) {
         for (const extId of list) {
           const sanitized = extId.toLowerCase().replace(/[^a-z0-9_-]/g, "_");
-          if (sanitized === prefix) return extId;
+          if (sanitized === prefix) {
+            return extId;
+          }
         }
       }
     }
@@ -156,19 +173,28 @@ export class ZenSpaceExtensionsManager {
   /**
    * Update visibility of toolbar buttons and unified extension items in a window
    * according to the active workspace's disabled extensions list.
+   *
    * @param {DOMWindow} win
    */
   static updateToolbarVisibility(win) {
-    if (!win || win.closed) return;
+    if (!win || win.closed) {
+      return;
+    }
     try {
       const activeSpace = win.gZenWorkspaces?.activeWorkspace;
-      if (!activeSpace) return;
+      if (!activeSpace) {
+        return;
+      }
       const disabled = this.getDisabled(activeSpace);
 
       const navBar = win.document.getElementById("nav-bar");
       if (navBar) {
-        for (const btn of navBar.querySelectorAll("toolbarbutton, toolbaritem")) {
-          if (btn.closest("#zen-unified-site-data-panel, #zen-site-data-addons")) {
+        for (const btn of navBar.querySelectorAll(
+          "toolbarbutton, toolbaritem"
+        )) {
+          if (
+            btn.closest("#zen-unified-site-data-panel, #zen-site-data-addons")
+          ) {
             continue;
           }
           const extId = this.getExtIdFromElement(btn);
@@ -190,7 +216,10 @@ export class ZenSpaceExtensionsManager {
         }
       }
     } catch (e) {
-      console.error("[ZenSpaceExtensionsManager] updateToolbarVisibility error:", e);
+      console.error(
+        "[ZenSpaceExtensionsManager] updateToolbarVisibility error:",
+        e
+      );
     }
   }
 
@@ -204,10 +233,14 @@ export class ZenSpaceExtensionsManager {
       const browserMap = {};
 
       for (const win of Services.wm.getEnumerator("navigator:browser")) {
-        if (!win.gBrowser?.tabs) continue;
+        if (!win.gBrowser?.tabs) {
+          continue;
+        }
         for (const tab of win.gBrowser.tabs) {
           const browser = tab.linkedBrowser;
-          if (!browser?.browserId) continue;
+          if (!browser?.browserId) {
+            continue;
+          }
           const spaceId =
             tab.getAttribute("zen-workspace-id") ||
             win.gZenWorkspaces?.activeWorkspace;
@@ -238,6 +271,7 @@ export class ZenSpaceExtensionsManager {
 
   /**
    * Disable an extension in a workspace.
+   *
    * @param {string} spaceId
    * @param {string} extId
    */
@@ -254,6 +288,7 @@ export class ZenSpaceExtensionsManager {
 
   /**
    * Enable an extension in a workspace.
+   *
    * @param {string} spaceId
    * @param {string} extId
    */
@@ -270,6 +305,7 @@ export class ZenSpaceExtensionsManager {
 
   /**
    * Subscribe to changes in disabled extensions.
+   *
    * @param {Function} callback (spaceId: string) => void
    * @returns {Function} unsubscribe function
    */
@@ -304,12 +340,25 @@ export class ZenSpaceExtensionsManager {
  * - Updates DOM attributes, images, tooltips, and accessibility attributes.
  */
 export class ZenDisabledStackRenderer {
-  static PLACEHOLDER_ICON = "chrome://mozapps/skin/extensions/extensionGeneric.svg";
+  static PLACEHOLDER_ICON =
+    "chrome://mozapps/skin/extensions/extensionGeneric.svg";
 
   static SLOTS = [
-    { role: "left", mode: "triple-left", selector: ".zen-disabled-stack-card-left" },
-    { role: "center", mode: "triple-center", selector: ".zen-disabled-stack-card-center" },
-    { role: "right", mode: "triple-right", selector: ".zen-disabled-stack-card-right" },
+    {
+      role: "left",
+      mode: "triple-left",
+      selector: ".zen-disabled-stack-card-left",
+    },
+    {
+      role: "center",
+      mode: "triple-center",
+      selector: ".zen-disabled-stack-card-center",
+    },
+    {
+      role: "right",
+      mode: "triple-right",
+      selector: ".zen-disabled-stack-card-right",
+    },
   ];
 
   /**
@@ -329,24 +378,48 @@ export class ZenDisabledStackRenderer {
     if (count === 1) {
       return [
         { ...this.SLOTS[0], icon: this.PLACEHOLDER_ICON, isPlaceholder: true },
-        { ...this.SLOTS[1], icon: disabledIcons[0] || this.PLACEHOLDER_ICON, isPlaceholder: false },
+        {
+          ...this.SLOTS[1],
+          icon: disabledIcons[0] || this.PLACEHOLDER_ICON,
+          isPlaceholder: false,
+        },
         { ...this.SLOTS[2], icon: this.PLACEHOLDER_ICON, isPlaceholder: true },
       ];
     }
 
     if (count === 2) {
       return [
-        { ...this.SLOTS[0], icon: disabledIcons[0] || this.PLACEHOLDER_ICON, isPlaceholder: false },
-        { ...this.SLOTS[1], icon: disabledIcons[1] || disabledIcons[0] || this.PLACEHOLDER_ICON, isPlaceholder: false },
+        {
+          ...this.SLOTS[0],
+          icon: disabledIcons[0] || this.PLACEHOLDER_ICON,
+          isPlaceholder: false,
+        },
+        {
+          ...this.SLOTS[1],
+          icon: disabledIcons[1] || disabledIcons[0] || this.PLACEHOLDER_ICON,
+          isPlaceholder: false,
+        },
         { ...this.SLOTS[2], icon: this.PLACEHOLDER_ICON, isPlaceholder: true },
       ];
     }
 
     // 3 or more: left card = icon 0, right card = icon 1, center elevated = icon 2
     return [
-      { ...this.SLOTS[0], icon: disabledIcons[0] || this.PLACEHOLDER_ICON, isPlaceholder: false },
-      { ...this.SLOTS[1], icon: disabledIcons[2] || disabledIcons[0] || this.PLACEHOLDER_ICON, isPlaceholder: false },
-      { ...this.SLOTS[2], icon: disabledIcons[1] || disabledIcons[0] || this.PLACEHOLDER_ICON, isPlaceholder: false },
+      {
+        ...this.SLOTS[0],
+        icon: disabledIcons[0] || this.PLACEHOLDER_ICON,
+        isPlaceholder: false,
+      },
+      {
+        ...this.SLOTS[1],
+        icon: disabledIcons[2] || disabledIcons[0] || this.PLACEHOLDER_ICON,
+        isPlaceholder: false,
+      },
+      {
+        ...this.SLOTS[2],
+        icon: disabledIcons[1] || disabledIcons[0] || this.PLACEHOLDER_ICON,
+        isPlaceholder: false,
+      },
     ];
   }
 
@@ -500,13 +573,22 @@ export class nsZenSiteDataPanel {
     };
 
     this.window.addEventListener("ZenWorkspacesUIUpdate", onWorkspacesUpdate);
-    this.window.gBrowser.tabContainer?.addEventListener("TabSelect", onTabSelect);
+    this.window.gBrowser.tabContainer?.addEventListener(
+      "TabSelect",
+      onTabSelect
+    );
 
     this.window.addEventListener(
       "unload",
       () => {
-        this.window.removeEventListener("ZenWorkspacesUIUpdate", onWorkspacesUpdate);
-        this.window.gBrowser.tabContainer?.removeEventListener("TabSelect", onTabSelect);
+        this.window.removeEventListener(
+          "ZenWorkspacesUIUpdate",
+          onWorkspacesUpdate
+        );
+        this.window.gBrowser.tabContainer?.removeEventListener(
+          "TabSelect",
+          onTabSelect
+        );
         this._unsubscribeExtensions?.();
         Services.obs.removeObserver(this, "zen-boosts-update");
       },
@@ -599,7 +681,9 @@ export class nsZenSiteDataPanel {
       this.document.getElementById(id).addEventListener("command", handler);
     }
 
-    const menu = this.document.getElementById("unified-extensions-context-menu");
+    const menu = this.document.getElementById(
+      "unified-extensions-context-menu"
+    );
     if (menu) {
       menu.addEventListener("popupshowing", event => {
         if (event.target === menu) {
@@ -1173,11 +1257,11 @@ export class nsZenSiteDataPanel {
         break;
       }
       case "zen-site-data-header-share": {
-        /* eslint-disable mozilla/valid-services */
+        // eslint-disable-next-line mozilla/valid-services
         if (Services.zen.canShare()) {
           const buttonRect = event.target.getBoundingClientRect();
           const currentUrl = this.window.gBrowser.currentURI;
-          /* eslint-disable mozilla/valid-services */
+          // eslint-disable-next-line mozilla/valid-services
           Services.zen.share(
             currentUrl,
             "",
@@ -1434,12 +1518,16 @@ export class nsZenSiteDataPanel {
   }
 
   #isFolderOpen() {
-    const section = this.document.getElementById("zen-site-data-section-addons");
+    const section = this.document.getElementById(
+      "zen-site-data-section-addons"
+    );
     return section?.getAttribute("disabled-folder") === "true";
   }
 
   #toggleDisabledFolder(open) {
-    const section = this.document.getElementById("zen-site-data-section-addons");
+    const section = this.document.getElementById(
+      "zen-site-data-section-addons"
+    );
     if (!section) {
       return;
     }
@@ -1532,7 +1620,9 @@ export class nsZenSiteDataPanel {
 
   #ensureDisabledExtensionsDOMElements() {
     // 1. Header elements
-    const section = this.document.getElementById("zen-site-data-section-addons");
+    const section = this.document.getElementById(
+      "zen-site-data-section-addons"
+    );
     if (section) {
       let headerTitleBox = this.document.getElementById(
         "zen-site-data-addons-header-title-box"
@@ -1602,7 +1692,9 @@ export class nsZenSiteDataPanel {
       if (newAddonBtnContainer) {
         newAddonBtnContainer.before(stackFrag);
       } else {
-        this.document.getElementById("zen-site-data-addons")?.appendChild(stackFrag);
+        this.document
+          .getElementById("zen-site-data-addons")
+          ?.appendChild(stackFrag);
       }
     }
 
@@ -1651,7 +1743,9 @@ export class nsZenSiteDataPanel {
     }
 
     // Quick-toggle to re-enable when clicking any disabled extension tile in folder
-    const addonsContainer = this.document.getElementById("zen-site-data-addons");
+    const addonsContainer = this.document.getElementById(
+      "zen-site-data-addons"
+    );
     if (addonsContainer && !addonsContainer._zenQuickToggleAttached) {
       addonsContainer._zenQuickToggleAttached = true;
       const handleFolderItemAction = e => {
@@ -1659,14 +1753,20 @@ export class nsZenSiteDataPanel {
           return;
         }
         const target = e.target;
-        const newAddonBtn = this.document.getElementById("zen-site-data-new-addon-button");
-        if (target === newAddonBtn || newAddonBtn?.contains(target)) {
+        const newAddonButton = this.document.getElementById(
+          "zen-site-data-new-addon-button"
+        );
+        if (target === newAddonButton || newAddonButton?.contains(target)) {
           return; // Allow the red close button to close the folder
         }
         const item = target.closest(
           "unified-extensions-item, .unified-extensions-item, toolbaritem, toolbarbutton"
         );
-        if (!item || item.id === "zen-site-data-disabled-stack-button" || item.closest("#zen-site-data-disabled-stack-container")) {
+        if (
+          !item ||
+          item.id === "zen-site-data-disabled-stack-button" ||
+          item.closest("#zen-site-data-disabled-stack-container")
+        ) {
           return;
         }
 
@@ -1684,8 +1784,12 @@ export class nsZenSiteDataPanel {
     }
 
     // 3. Context Menu Items (only "Disable on this Space" in active grid)
-    const menu = this.document.getElementById("unified-extensions-context-menu");
-    const existingEnable = this.document.getElementById("zen-context-enable-in-space");
+    const menu = this.document.getElementById(
+      "unified-extensions-context-menu"
+    );
+    const existingEnable = this.document.getElementById(
+      "zen-context-enable-in-space"
+    );
     if (existingEnable) {
       existingEnable.remove();
     }
@@ -1727,7 +1831,9 @@ export class nsZenSiteDataPanel {
       item.dataset?.extensionid ||
       item.getAttribute?.("data-extensionid") ||
       item.querySelector?.("[data-extensionid]")?.dataset?.extensionid ||
-      item.querySelector?.("[data-extensionid]")?.getAttribute("data-extensionid");
+      item
+        .querySelector?.("[data-extensionid]")
+        ?.getAttribute("data-extensionid");
     if (!id && item.id) {
       const policy = globalThis.WebExtensionPolicy?.getByWidgetId?.(item.id);
       if (policy) {
@@ -1794,11 +1900,15 @@ export class nsZenSiteDataPanel {
     const pinItem = menu.querySelector(
       ".unified-extensions-context-menu-pin-to-toolbar"
     );
-    const existingEnable = this.document.getElementById("zen-context-enable-in-space");
+    const existingEnable = this.document.getElementById(
+      "zen-context-enable-in-space"
+    );
     if (existingEnable) {
       existingEnable.remove();
     }
-    const disableItem = this.document.getElementById("zen-context-disable-in-space");
+    const disableItem = this.document.getElementById(
+      "zen-context-disable-in-space"
+    );
     if (!disableItem) {
       return;
     }
@@ -1807,7 +1917,8 @@ export class nsZenSiteDataPanel {
     if (!extId) {
       const trigger = menu.triggerNode?.closest?.("[data-extensionid]");
       extId =
-        trigger?.dataset?.extensionid || trigger?.getAttribute("data-extensionid");
+        trigger?.dataset?.extensionid ||
+        trigger?.getAttribute("data-extensionid");
     }
     if (!extId) {
       const widget = menu.triggerNode?.closest?.(
@@ -1838,14 +1949,18 @@ export class nsZenSiteDataPanel {
     const spaceId = this.window.gZenWorkspaces?.activeWorkspace;
     const disabledList = ZenSpaceExtensionsManager.getDisabled(spaceId);
 
-    const addonsContainer = this.document.getElementById("zen-site-data-addons");
+    const addonsContainer = this.document.getElementById(
+      "zen-site-data-addons"
+    );
     const stackContainer = this.document.getElementById(
       "zen-site-data-disabled-stack-container"
     );
     const stackBtn = this.document.getElementById(
       "zen-site-data-disabled-stack-button"
     );
-    const section = this.document.getElementById("zen-site-data-section-addons");
+    const section = this.document.getElementById(
+      "zen-site-data-section-addons"
+    );
     const isFolder = section?.getAttribute("disabled-folder") === "true";
 
     // When no extensions are disabled on this space:
@@ -1885,14 +2000,19 @@ export class nsZenSiteDataPanel {
 
       for (const item of items) {
         item.removeAttribute("data-zen-space-hidden");
-        const actionBtn = item.querySelector?.(".unified-extensions-item-action-button");
+        const actionBtn = item.querySelector?.(
+          ".unified-extensions-item-action-button"
+        );
         if (actionBtn) {
           actionBtn.removeAttribute("data-zen-space-hidden");
         }
 
         const extId = this.#getItemExtensionId(item);
         const isDisabled = Boolean(extId && disabledList.includes(extId));
-        item.setAttribute("data-zen-space-disabled", isDisabled ? "true" : "false");
+        item.setAttribute(
+          "data-zen-space-disabled",
+          isDisabled ? "true" : "false"
+        );
 
         const shouldHide = isFolder ? !isDisabled : isDisabled;
         item.hidden = shouldHide;
@@ -1900,9 +2020,11 @@ export class nsZenSiteDataPanel {
 
         if (isFolder && isDisabled) {
           item.setAttribute("tooltiptext", "Click to enable in this Space");
-          const actionBtn = item.querySelector?.(".unified-extensions-item-action-button");
           if (actionBtn) {
-            actionBtn.setAttribute("tooltiptext", "Click to enable in this Space");
+            actionBtn.setAttribute(
+              "tooltiptext",
+              "Click to enable in this Space"
+            );
           }
         } else {
           item.removeAttribute("tooltiptext");
@@ -1918,7 +2040,10 @@ export class nsZenSiteDataPanel {
 
       // Add icons for any disabled extensions not present in the DOM
       for (const extId of disabledList) {
-        if (disabledIcons.length < 3 && disabledIcons.length < disabledList.length) {
+        if (
+          disabledIcons.length < 3 &&
+          disabledIcons.length < disabledList.length
+        ) {
           const fallback = this.#getExtensionIcon(null, extId);
           if (fallback && !disabledIcons.includes(fallback)) {
             disabledIcons.push(fallback);
@@ -1949,4 +2074,3 @@ export class nsZenSiteDataPanel {
     this.#setAddonsOverflow();
   }
 }
-
