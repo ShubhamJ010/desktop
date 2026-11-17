@@ -1,8 +1,8 @@
 diff --git a/toolkit/components/pictureinpicture/content/player.js b/toolkit/components/pictureinpicture/content/player.js
-index dfa666a..ef6046e 100644
+index dfa666a..797745b 100644
 --- a/toolkit/components/pictureinpicture/content/player.js
 +++ b/toolkit/components/pictureinpicture/content/player.js
-@@ -112,6 +112,53 @@ function setIsMutedState(isMuted) {
+@@ -112,6 +112,63 @@ function setIsMutedState(isMuted) {
    Player.isMuted = isMuted;
  }
  
@@ -49,6 +49,16 @@ index dfa666a..ef6046e 100644
 +  button.replaceChildren(createMeetSvg(pathData));
 +}
 +
++function setIsGoogleMeetState(isMeet) {
++  if (isMeet) {
++    Player.isGoogleMeet = true;
++    if (document.body) {
++      document.body.classList.add("is-google-meet");
++    }
++    Player.setupMeetControls();
++  }
++}
++
 +function setMeetState(data) {
 +  Player.setMeetState(data);
 +}
@@ -56,7 +66,7 @@ index dfa666a..ef6046e 100644
  /**
   * Function to resize and reposition the PiP window
   *
-@@ -422,16 +469,251 @@ let Player = {
+@@ -422,16 +479,251 @@ let Player = {
        document.documentElement.classList.add("seethrough-mode");
      }
  
@@ -254,7 +264,7 @@ index dfa666a..ef6046e 100644
 +    meetControls.id = "meet-controls";
 +
 +    // `control-item` is what gives these the same show/hide behaviour as the
-+    // window's own buttons (close, unpip): upstream paints every
++    // window's own buttons (close, minimize, unpip): upstream paints every
 +    // .control-item at opacity 0 and only raises it while `#controls` is
 +    // [showing]/[keying] or the pointer is over the button.
 +    let micBtn = document.createElement("button");
@@ -308,7 +318,7 @@ index dfa666a..ef6046e 100644
    setupTooltip(elId, l10nId, shortcutId) {
      const el = document.getElementById(elId);
      const shortcut = document.getElementById(shortcutId);
-@@ -910,7 +1192,9 @@ let Player = {
+@@ -910,7 +1193,9 @@ let Player = {
    },
  
    onClick(event) {
@@ -319,10 +329,15 @@ index dfa666a..ef6046e 100644
        case "audio": {
          this.toggleMute();
          break;
-@@ -921,6 +1205,28 @@ let Player = {
+@@ -921,6 +1206,33 @@ let Player = {
          break;
        }
  
++      case "minimize": {
++        this.closePipWindow({ reason: "CloseButton" });
++        break;
++      }
++
 +      case "meet-mic-btn": {
 +        let btn = document.getElementById("meet-mic-btn");
 +        let nextMuted = btn ? !btn.classList.contains("is-muted") : true;
@@ -348,7 +363,7 @@ index dfa666a..ef6046e 100644
        case "playpause": {
          if (!this.isPlaying) {
            this.actor.sendAsyncMessage("PictureInPicture:Play");
-@@ -1432,8 +1738,18 @@ let Player = {
+@@ -1432,8 +1744,18 @@ let Player = {
     *  Event context data object
     */
    onResize() {

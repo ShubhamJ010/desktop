@@ -1,8 +1,19 @@
 diff --git a/toolkit/components/pictureinpicture/PictureInPicture.sys.mjs b/toolkit/components/pictureinpicture/PictureInPicture.sys.mjs
-index 08c6951..6c9881e 100644
+index 08c6951..34cfb5e 100644
 --- a/toolkit/components/pictureinpicture/PictureInPicture.sys.mjs
 +++ b/toolkit/components/pictureinpicture/PictureInPicture.sys.mjs
-@@ -242,6 +242,13 @@ export class PictureInPictureParent extends JSWindowActorParent {
+@@ -161,6 +161,10 @@ export class PictureInPictureToggleParent extends JSWindowActorParent {
+           break;
+         }
+ 
++        if (browser.audioMuted) {
++          break;
++        }
++
+         // Suppress auto-toggle if the user deliberately closed this PiP window
+         if (
+           PictureInPicture.weakAutoPipBrowserClosedDeliberately.has(browser)
+@@ -242,6 +246,13 @@ export class PictureInPictureParent extends JSWindowActorParent {
          }
          break;
        }
@@ -16,7 +27,7 @@ index 08c6951..6c9881e 100644
        case "PictureInPicture:SetTimestampAndScrubberPosition": {
          let { timestamp, scrubberPosition } = aMessage.data;
          let player = PictureInPicture.getWeakPipPlayer(this);
-@@ -636,6 +643,8 @@ export var PictureInPicture = {
+@@ -636,6 +647,8 @@ export var PictureInPicture = {
      // focus the tab's window
      tab.documentGlobal.focus();
  
