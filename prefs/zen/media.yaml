@@ -5,8 +5,6 @@
 - name: media.eme.enabled
   value: true
 
-- name: media.videocontrols.picture-in-picture.enable-when-switching-tabs.enabled
-  value: true
-
-- name: media.videocontrols.picture-in-picture.respect-disablePictureInPicture
-  value: false
+# Picture-in-Picture prefs stay at the upstream defaults from
+# prefs/firefox/pip.yaml. Declaring them here too silently changed the values,
+# because the generated defaults keep whichever definition is written last.

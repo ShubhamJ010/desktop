@@ -27,12 +27,12 @@ index 08c6951..34cfb5e 100644
        case "PictureInPicture:SetTimestampAndScrubberPosition": {
          let { timestamp, scrubberPosition } = aMessage.data;
          let player = PictureInPicture.getWeakPipPlayer(this);
-@@ -636,7 +647,7 @@ export var PictureInPicture = {
+@@ -636,6 +647,8 @@ export var PictureInPicture = {
      // focus the tab's window
      tab.documentGlobal.focus();
  
--    gBrowser.selectedTab = tab;
-+    browser?.documentGlobal?.gZenWorkspaces.switchIfNeeded(browser);
++    // The tab can live in another workspace, so switch to it first.
++    await browser?.documentGlobal?.gZenWorkspaces?.switchIfNeeded(browser);
+     gBrowser.selectedTab = tab;
      await this.closeSinglePipWindow({ reason: "Unpip", actorRef: pipActor });
    },
- 
