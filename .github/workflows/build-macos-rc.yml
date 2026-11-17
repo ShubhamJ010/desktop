@@ -567,9 +567,8 @@ jobs:
 
           gh release create "$VERSION" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "RC build $VERSION" \
+            --title "Zen SJ $VERSION" \
             --notes-file notes.md \
-            --prerelease \
             "$app_zip"
 
       - name: Update Homebrew tap
