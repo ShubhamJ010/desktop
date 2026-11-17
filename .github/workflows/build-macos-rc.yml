@@ -25,7 +25,7 @@ on:
         default: false
 
 concurrency:
-  group: rc-macos-${{ github.ref }}
+  group: rc-macos
   cancel-in-progress: false
 
 permissions:
@@ -34,6 +34,7 @@ permissions:
 
 env:
   ARCH: aarch64
+  FORK_REPO_URL: "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
 
 jobs:
   detect:
@@ -41,6 +42,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.meta.outputs.version }}
+      upstream_tag: ${{ steps.meta.outputs.upstream_tag }}
       build_id: ${{ steps.meta.outputs.build_id }}
       build: ${{ steps.meta.outputs.build }}
 
@@ -73,22 +75,72 @@ jobs:
             exit 1
           fi
 
+          # Resolve the upstream base tag: the version itself when it already
+          # is an upstream tag, otherwise strip trailing numeric dot-segments
+          # from fork-local versions ("1.24.3b.1", "1.24.3b.1.2" -> "1.24.3b").
+          # Notes/changelog come from the base tag.
+          tag_exists() {
+            gh api "repos/zen-browser/desktop/git/ref/tags/$1" --jq .ref >/dev/null 2>&1
+          }
+          upstream_tag="$version"
+          until tag_exists "$upstream_tag"; do
+            last="${upstream_tag##*.}"
+            if [[ "$last" =~ ^[0-9]+$ && "$upstream_tag" == *.* ]]; then
+              upstream_tag="${upstream_tag%.*}"
+            else
+              echo "::error::Upstream tag $upstream_tag does not exist (version: $version)"
+              exit 1
+            fi
+          done
+
+          existing=$(gh release list --repo "$GITHUB_REPOSITORY" --json tagName --jq '.[].tagName' 2>/dev/null || true)
           build=true
-          if gh release view "$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if printf '%s\n' "$existing" | grep -Fxq "$version"; then
             if [ "$INPUT_FORCE" != "true" ]; then
               echo "Release $version already exists in $GITHUB_REPOSITORY; nothing to do"
+              build=false
+            fi
+          elif [ -z "$INPUT_VERSION" ] && [ -n "$existing" ] && printf '%s\n' "$existing" | grep -Eq "^${upstream_tag//./\\.}(\.[0-9]+)?$"; then
+            # Cron only: upstream shipped this base tag but we already released
+            # it (plain or as a fork-local suffix like 1.24.3b.1) — skip so the
+            # cron never overwrites a suffixed release with the plain one.
+            if [ "$INPUT_FORCE" != "true" ]; then
+              echo "A release for upstream $upstream_tag already exists on $GITHUB_REPOSITORY; nothing to do"
               build=false
             fi
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "upstream_tag=$upstream_tag" >> "$GITHUB_OUTPUT"
           echo "build_id=$(date +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
-          echo "Target: $version, build=$build"
+          echo "Target: $version (upstream tag: $upstream_tag), build=$build"
+
+  mirror:
+    name: Mirror upstream dev to fork dev
+    # Always runs, even when no build is needed, so fork/dev stays a 1:1
+    # copy of upstream dev between releases.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Push upstream dev to fork dev
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          rm -rf devmirror && mkdir devmirror && cd devmirror
+          git init -q .
+          git fetch --no-tags https://github.com/zen-browser/desktop.git dev
+          old=$(git ls-remote "$FORK_REPO_URL" refs/heads/dev | cut -f1)
+          git push "$FORK_REPO_URL" "FETCH_HEAD:refs/heads/dev" --force
+          echo "fork/dev: ${old:-none} -> $(git rev-parse FETCH_HEAD)"
 
   sync:
-    name: Sync upstream dev
-    needs: [detect]
+    name: Merge fork dev into build branch
+    needs: [detect, mirror]
     if: ${{ needs.detect.outputs.build == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -117,17 +169,19 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Merge upstream dev
+      - name: Merge fork dev
         id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git fetch --no-tags https://github.com/zen-browser/desktop.git dev
+          git fetch --no-tags "$FORK_REPO_URL" dev
           if git merge-base --is-ancestor FETCH_HEAD HEAD; then
-            echo "Already contains upstream dev"
+            echo "Build branch already contains fork dev"
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             if ! git merge --no-edit FETCH_HEAD; then
-              echo "::error::Upstream merge conflicts. Resolve locally, then rerun:"
+              echo "::error::fork dev merge conflicts. Resolve locally, then rerun:"
               git diff --name-only --diff-filter=U
               git merge --abort
               exit 1
@@ -401,6 +455,31 @@ jobs:
           app=$(find app-root -maxdepth 2 -name "*.app" -type d | head -1)
           test -d "$app"
 
+          # Hardened runtime without these entitlements makes TCC silently refuse
+          # the microphone/camera prompt (and Gecko loses JIT on SIP-on machines).
+          # Mirrors mozilla-central security/mac/hardenedruntime/v2/production/browser.entitlements.
+          cat > browser.entitlements <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>com.apple.security.cs.allow-jit</key>
+            <true/>
+            <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+            <true/>
+            <key>com.apple.security.cs.disable-library-validation</key>
+            <true/>
+            <key>com.apple.security.device.audio-input</key>
+            <true/>
+            <key>com.apple.security.device.camera</key>
+            <true/>
+            <key>com.apple.security.automation.apple-events</key>
+            <true/>
+          </dict>
+          </plist>
+          EOF
+          SIGN_FLAGS="--code-signature-flags runtime --entitlements-xml-file browser.entitlements"
+
           if [ -n "$P12_BASE64" ]; then
             echo "$P12_BASE64" | base64 --decode > cert.p12
             # OpenSSL 3 on Linux produces modern PBES2/PBKDF2 encrypted PKCS#12 by default,
@@ -409,16 +488,16 @@ jobs:
             # or pass PEM files directly to --pem-file.
             if openssl pkcs12 -in cert.p12 -passin pass:"$P12_PASSWORD" -nodes -out cert_bundle.pem 2>/dev/null; then
               echo "Decrypted P12 with OpenSSL, signing with PEM bundle..."
-              rcodesign sign --pem-file cert_bundle.pem --code-signature-flags runtime "$app"
+              rcodesign sign --pem-file cert_bundle.pem $SIGN_FLAGS "$app"
               rm -f cert_bundle.pem
             else
               echo "OpenSSL decrypt failed; falling back to direct P12..."
-              rcodesign sign --p12-file cert.p12 --p12-password "$P12_PASSWORD" --code-signature-flags runtime "$app"
+              rcodesign sign --p12-file cert.p12 --p12-password "$P12_PASSWORD" $SIGN_FLAGS "$app"
             fi
             rm -f cert.p12
           else
             echo "No codesigning cert configured, ad-hoc signing"
-            rcodesign sign "$app"
+            rcodesign sign --entitlements-xml-file browser.entitlements "$app"
           fi
 
           (cd "$(dirname "$app")" && zip -q -r -y "$GITHUB_WORKSPACE/zen-rc-macos-aarch64.zip" "$(basename "$app")")
@@ -450,6 +529,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.detect.outputs.version }}
+          UPSTREAM_TAG: ${{ needs.detect.outputs.upstream_tag }}
           FIREFOX: ${{ needs.sync.outputs.firefox }}
           COMMIT: ${{ needs.sync.outputs.sha }}
         run: |
@@ -457,15 +537,33 @@ jobs:
           app_zip="$HOME/signed-app/zen-rc-macos-aarch64.zip"
           test -f "$app_zip"
 
+          # Reuse the upstream release notes/changelog verbatim, then append
+          # fork install instructions below it.
+          if ! upstream_body=$(gh api "repos/zen-browser/desktop/releases/tags/$UPSTREAM_TAG" --jq .body); then
+            echo "::error::Could not fetch upstream release notes for tag $UPSTREAM_TAG"
+            exit 1
+          fi
+          {
+            if [ -n "$upstream_body" ]; then
+              printf '%s\n' "$upstream_body"
+            else
+              printf 'RC build for upstream Zen %s, Firefox %s.\n' "$VERSION" "$FIREFOX"
+            fi
+            printf '\n---\n\n'
+            printf 'Fork build: macOS arm64, Firefox %s. Commit: %s\n\n' "$FIREFOX" "$COMMIT"
+            printf 'Install with Homebrew:\n```bash\nbrew tap ShubhamJ010/tap\nbrew install --cask zen-browser-sj\n```\n'
+          } > notes.md
+
           if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --notes-file notes.md
             gh release upload "$VERSION" \
               --repo "$GITHUB_REPOSITORY" \
               --clobber \
               "$app_zip"
             exit 0
           fi
-
-          printf 'RC build for upstream Zen %s, Firefox %s.\\n\\nCommit: %s\\nmacOS arm64, Homebrew cask distribution.\\n\\nInstall with Homebrew:\\n```bash\\nbrew tap ShubhamJ010/tap\\nbrew install --cask zen-browser-sj\\n```\\n' "$VERSION" "$FIREFOX" "$COMMIT" > notes.md
 
           gh release create "$VERSION" \
             --repo "$GITHUB_REPOSITORY" \
