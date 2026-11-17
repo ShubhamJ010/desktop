@@ -578,8 +578,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${TAP_TOKEN:-}" ]; then
-            echo "TAP_GITHUB_TOKEN secret not set; skipping automatic Homebrew tap bump."
-            exit 0
+            echo "::error::TAP_GITHUB_TOKEN secret not set; cannot bump the Homebrew cask. Cask will point at a stale sha256 and brew installs will fail. Add the secret (PAT with write access to ShubhamJ010/homebrew-tap), fix the cask manually, then re-run publish."
+            exit 1
           fi
 
           app_zip="$HOME/signed-app/zen-rc-macos-aarch64.zip"
