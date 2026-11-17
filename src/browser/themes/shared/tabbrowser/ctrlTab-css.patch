@@ -1,20 +1,16 @@
 diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/shared/tabbrowser/ctrlTab.css
 --- a/browser/themes/shared/tabbrowser/ctrlTab.css
 +++ b/browser/themes/shared/tabbrowser/ctrlTab.css
-@@ -2,118 +2,574 @@
+@@ -2,118 +2,508 @@
   * License, v. 2.0. If a copy of the MPL was not distributed with this
   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
  
 -/* Ctrl-Tab */
 +/*
-+ * Zen / Ardia "Recent Tabs" switcher
++ * Zen "Recent Tabs" switcher for Ctrl+Tab. Port of Ardia's TabSwitcher,
++ * SectionLabel and Favicon components.
 + *
-+ * 1:1 port of Ardia's floating tab switcher:
-+ *   apps/browser/src/components/sidebar/TabSwitcher.tsx
-+ *   apps/browser/src/components/sidebar/SectionLabel.tsx
-+ *   apps/browser/src/components/favicon/Favicon.tsx
-+ *
-+ * Layout constants (kept in sync with browser-ctrlTab.js):
++ * Layout constants, shared with browser-ctrlTab.js:
 + *   WIDTH           400  (TabSwitcher WIDTH)
 + *   ROW              40  (TabSwitcher ROW)
 + *   SWITCHER_RADIUS  16  (radius.sheet)
@@ -22,24 +18,13 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 + *   ROW_RADIUS        8  (concentric(SWITCHER_RADIUS, SWITCHER_PAD))
 + *   MAX_ROWS          9  (TabSwitcher MAX_ROWS)
 + *
-+ * Colours are taken from Ardia's design tokens; the panel fill is densified
-+ * because a chrome popup cannot sample the page behind it:
-+ *   panel          dark rgba(40,41,45,0.97) / light rgba(248,248,252,0.97)
-+ *   panelBorder    rgba(255,255,255,0.1) dark / rgba(0,0,0,0.1) light
-+ *   textPrimary    #FFFFFF dark / #000000 light
-+ *   textSecondary  rgba(255,255,255,0.5) dark / rgba(0,0,0,0.5) light
-+ *   switcherFocus  rgba(255,255,255,0.18) dark / rgba(0,0,0,0.10) light
-+ *   switcherOutline rgba(255,255,255,0.15) dark / rgba(0,0,0,0.1) light
++ * Colours follow Ardia's tokens. The panel fill is denser: a popup window has no
++ * page behind it.
 + */
  
-+/* -------------------------------------------------------------------------
-+ * Popup panel reset
-+ *
-+ * #ctrlTab-panel is a native <panel>. Strip its arrow/menupopup chrome so the
-+ * only thing visible is our card. The extra padding is the room reserved for
-+ * the card's drop shadow, since a popup window clips anything outside its own
-+ * bounds (browser-ctrlTab.js subtracts this margin when positioning).
-+ * ---------------------------------------------------------------------- */
++/* Popup reset. #ctrlTab-panel is a native <panel>: strip its chrome so only the
++ * card shows. The padding leaves room for the card shadow, which a popup window
++ * would otherwise clip (browser-ctrlTab.js subtracts this margin). */
  #ctrlTab-panel {
 +  --ctrl-tab-shadow-margin: 24px;
 +
@@ -70,45 +55,34 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  box-shadow: none !important;
 +  padding: 0 !important;
 +
-+  /* popup.css gives ::part(content) `overflow: clip`, a positive
-+   * --panel-box-shadow-margin and a max-width clamp. Those exist to keep menu
-+   * content inside the native rounded background, but here they clip the
-+   * card's right edge (killing its rounded corner and drop shadow). The card
-+   * owns all of that, so let the layout box be a plain, unclipped container. */
++  /* popup.css clips ::part(content) and clamps its width to keep menu content
++   * inside the native rounded background. That cuts the card's corner and
++   * shadow, which the card paints itself, so keep this box unclipped. */
 +  margin: 0 !important;
 +  overflow: visible !important;
 +  max-width: none !important;
 +  max-height: none !important;
 +}
 +
-+/* -------------------------------------------------------------------------
-+ * Floating card
-+ *
-+ * Ardia renders this through <Panel> with the system popover material. Zen's
-+ * shared Ardia glass recipe (zen-ardia-glass.css) is the same material used by
-+ * the swipe capsule and PiP controls, so the switcher reads as part of the
-+ * browser instead of as a bolted-on overlay.
-+ * ---------------------------------------------------------------------- */
++/* Card. The shared Ardia glass recipe (zen-ardia-glass.css) is the same
++ * material as the swipe capsule and PiP controls. */
 +.ctrlTab-card {
 +  display: flex;
 +  flex-direction: column;
 +  box-sizing: border-box;
 +  flex: none;
 +
-+  /* TabSwitcher WIDTH */
++  /* WIDTH */
 +  width: 400px;
 +
-+  /* SWITCHER_PAD = space.m */
++  /* SWITCHER_PAD, space.m */
 +  padding: 8px;
 +
-+  /* radius.sheet */
++  /* SWITCHER_RADIUS, radius.sheet */
 +  border-radius: 16px;
 +
-+  /* Ardia's panel reads almost solid behind the list. The shared glass fill is
-+   * tuned for surfaces that can blur the page through the window; a chrome
-+   * popup is its own window, so none of that backdrop is available and the
-+   * regular 86% tint lets page content show through crisply. Densify it for
-+   * this surface only (the swipe capsule and PiP keep the shared recipe). */
++  /* Denser than the shared glass fill: a popup window has no page behind it to
++   * sample. */
 +  --zen-ardia-glass-fill: light-dark(
 +    rgba(248, 248, 252, 0.97),
 +    rgba(40, 41, 45, 0.97)
@@ -116,7 +90,6 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +
 +  --ctrl-tab-text-primary: light-dark(#111111, #ffffff);
 +
-+  /* React Native defaults to the platform UI font; mirror it in chrome. */
 +  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
 +    sans-serif;
 +  -moz-osx-font-smoothing: grayscale;
@@ -133,8 +106,6 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  pointer-events: none !important;
 +}
 +
-+/* Ardia <Panel fill={theme.panel} border={panelBorder} shadow={tabSwitcher}>
-+ * tabSwitcher = dialog shadow with radius 28 and a 12px drop. */
 +#ctrlTab-panel .ctrlTab-card.zen-ardia-glass {
 +  background-color: var(--zen-ardia-glass-fill, light-dark(#ffffff, #2a2a2a));
 +  backdrop-filter: var(
@@ -146,7 +117,6 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +    blur(42px) saturate(180%)
 +  ) !important;
 +
-+  /* hairline.panel (0.5px) */
 +  border: 0.5px solid
 +    light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
 +  box-shadow: 0 12px 28px
@@ -170,10 +140,6 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 -  /* Add 10px to offset the negative margin-top on .ctrlTab-preview-inner so
 -     wrapped rows keep a full row of spacing instead of nearly touching. */
 -  row-gap: calc(var(--space-medium) + 10px);
-+/* -------------------------------------------------------------------------
-+ * Section header — Ardia <SectionLabel title="Recent Tabs">
-+ *   Clean, un-slopped header with breathing room and bold text.
-+ * ---------------------------------------------------------------------- */
 +.ctrlTab-header {
 +  flex: none;
 +  padding: 10px 12px 10px;
@@ -256,16 +222,13 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  opacity: 0.96;
 +}
 +
-+/* -------------------------------------------------------------------------
-+ * Vertical list. Ardia caps the visible rows at MAX_ROWS (9) and renders the
-+ * rows back-to-back with no gap (ROW * 9 = 360px).
-+ * ---------------------------------------------------------------------- */
++/* List. Rows are back to back with no gap, MAX_ROWS * ROW = 360px. */
 +.ctrlTab-list {
 +  position: relative;
 +  display: flex;
 +  flex-direction: column;
-+  /* The row count drives the box, so a row entering or leaving never resizes the
-+   * card under an animation. The controller sizes it once per paint. */
++  /* Height comes from the row count, set once per paint by the controller, so a
++   * row entering or leaving never resizes the card mid-animation. */
 +  height: calc(var(--ctrl-tab-rows, 0) * 40px);
 +  max-height: 360px;
 +  overflow: hidden;
@@ -273,14 +236,13 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +              opacity 120ms cubic-bezier(0.2, 0, 0, 1);
 +}
 +
-+/* Last resort: the space holds tabs, our own filters hid them all. */
++/* Last resort: the space has tabs, but the filters hid them all. */
 +.ctrlTab-card.is-fallback .ctrlTab-list {
 +  opacity: 0.65;
 +}
 +
-+/* The list moves as one, along the direction of the switch. Staggering the rows
-+ * instead meant each row dropped to zero opacity at a different moment, which
-+ * read as a flicker on a long list rather than as motion. */
++/* The list moves as one, in the switch direction. Staggered rows flicker on
++ * long lists. */
 +@keyframes ctrlTabSwapInNext {
 +  from {
 +    opacity: 0.45;
@@ -311,8 +273,7 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  animation: ctrlTabSwapInPrev 130ms cubic-bezier(0.2, 0, 0, 1);
 +}
 +
-+/* One travelling highlight for the selection: moving it is a transform, so the
-+ * rows never repaint when the selection changes. */
++/* Selection pill. Moving it is a transform, so rows never repaint. */
 +.ctrlTab-pill {
 +  position: absolute;
 +  inset-inline: 0;
@@ -342,22 +303,16 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  color: light-dark(rgba(0, 0, 0, 0.45), rgba(255, 255, 255, 0.45));
 +}
 +
-+/* `hidden` is implemented as a presentation attribute in Gecko, so the
-+ * `display` rules above beat it: a row (or the empty label) set to hidden kept
-+ * painting anyway. That left blank / stale rows in the card and let the empty
-+ * label push real rows out of the clipped list. The controller toggles the
-+ * attribute, so force it to win here. */
++/* Gecko treats `hidden` as a presentation attribute, which the `display` rules
++ * above beat, so hidden rows kept painting. The controller toggles the
++ * attribute, so force it to win. */
 +.ctrlTab-preview[hidden],
 +.ctrlTab-empty[hidden],
 +.ctrlTab-dots[hidden] {
 +  display: none !important;
 +}
 +
-+/* -------------------------------------------------------------------------
-+ * Tab row — Ardia <SwitcherRow>
-+ *   height ROW (40px), borderRadius ROW_RADIUS (8px),
-+ *   paddingHorizontal space.ml (10px), gap space.ml (10px)
-+ * ---------------------------------------------------------------------- */
++/* Row. ROW (40px) high, ROW_RADIUS (8px), 10px padding and gap. */
 +.ctrlTab-preview {
    appearance: none;
 -  color: inherit;
@@ -369,7 +324,7 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 -    0 0 2px hsl(0, 0%, 12%);
 -  border: none;
 +
-+  /* Reserve the focused ring so selecting a row never shifts its contents. */
++  /* Reserve the focus ring, so selecting a row never shifts its contents. */
 +  border: 0.5px solid transparent;
 +  outline: none !important;
 +
@@ -388,8 +343,7 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  text-align: start;
 +  user-select: none;
 +  overflow: hidden;
-+  /* Rows paint above the pill, and only transform/opacity animate: no layout
-+   * properties are touched by a row entering or leaving. */
++  /* Rows paint above the pill. */
 +  position: relative;
 +  z-index: 1;
 +  transition: background-color 100ms ease,
@@ -442,14 +396,9 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 -  box-shadow: 1px 1px 2px hsl(0, 0%, 12%);
 -  margin-bottom: 8px;
 -  min-width: 0;
-+/* Focused/hovered row. Ardia fills the row and adds the same 0.5px ring:
-+ *   backgroundColor: focused ? switcherFocus : undefined
-+ *   borderWidth: focused ? hairline.ring : 0
-+ *   borderColor: switcherOutline
-+ * Hover is routed through the controller, so :hover needs no rule of its own
-+ * (the pointer only selects once it has really moved). */
-+/* The pill carries the fill; the row keeps the hairline ring so keyboard focus
-+ * stays visible, and no background is painted on selection. */
++/* Selected or focused row. The pill paints the fill, the row keeps a hairline
++ * ring so keyboard focus stays visible. Hover selects through the controller,
++ * so no :hover rule is needed. */
 +.ctrlTab-preview[selected="true"],
 +.ctrlTab-preview:focus {
 +  background-color: transparent;
@@ -467,7 +416,7 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 -  > img,
 -  > canvas {
 -    min-width: 0;
-+/* Space dots: the 1..9 shortcuts need somewhere to land. */
++/* Space dots, the target of the 1-9 shortcuts. */
 +.ctrlTab-dots {
 +  display: flex;
 +  align-items: center;
@@ -511,10 +460,6 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 -  padding: 8px;
 -  border: 2px solid transparent;
 -  border-radius: 0.5em;
-+/* -------------------------------------------------------------------------
-+ * Favicon — <TabIcon size={18}> / <Favicon size={18}>
-+ *   borderRadius: size > 18 ? radius.control : radius.hair (2px)
-+ * ---------------------------------------------------------------------- */
 +.ctrlTab-icon {
 +  position: relative;
 +  display: grid;
@@ -527,11 +472,7 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1);
 +}
 +
-+/* FaviconFallback letter tile:
-+ *   tile = round(size * 14 / 16) = 16px
-+ *   borderRadius = tile * 0.32 = 5px
-+ *   fontSize = round(tile * 0.64) = 10px, weight semibold
-+ *   background faviconTile, colour textSecondary */
++/* Letter tile shown until a favicon loads. */
 +.ctrlTab-tile {
 +  display: grid;
 +  place-items: center;
@@ -569,9 +510,6 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  display: none;
 +}
 +
-+/* -------------------------------------------------------------------------
-+ * Text block — <FadeLabel> title + URL
-+ * ---------------------------------------------------------------------- */
 +.ctrlTab-details {
 +  display: flex;
 +  flex-direction: column;
@@ -581,8 +519,6 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  overflow: hidden;
 +}
 +
-+/* Title: font.body (13px), height 17px. Ardia switches the weight from
-+ * regular to medium while the row is focused; the colour stays textPrimary. */
 +.ctrlTab-title {
 +  font-size: 13px;
 +  font-weight: 400;
@@ -598,7 +534,6 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  font-weight: 500;
 +}
 +
-+/* URL: font.caption (11px), lineHeight.caption (14px), textSecondary. */
 +.ctrlTab-url {
 +  font-size: 11px;
 +  font-weight: 400;
@@ -623,8 +558,7 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 -  background-color: var(--color-black-alpha-70);
 -  text-shadow: none;
 -  border-color: #45a1ff;
-+/* No transparency: paint the same opaque panel Ardia uses when the platform
-+ * disables materials. */
++/* Opaque card when the platform disables transparency. */
 +@media (prefers-reduced-transparency: reduce) {
 +  #ctrlTab-panel .ctrlTab-card.zen-ardia-glass {
 +    backdrop-filter: none !important;
@@ -637,7 +571,7 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 -  flex: 1;
 -  text-align: center;
 -  contain: inline-size;
-+/* No motion at all. Also what keeps screenshots and CI stable. */
++/* No animation or transitions when reduced motion is requested. */
 +@media (prefers-reduced-motion: reduce) {
 +  .ctrlTab-card,
 +  .ctrlTab-list.swap-in-next,

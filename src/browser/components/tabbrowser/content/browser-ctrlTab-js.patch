@@ -1,28 +1,22 @@
 diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/components/tabbrowser/content/browser-ctrlTab.js
 --- a/browser/components/tabbrowser/content/browser-ctrlTab.js
 +++ b/browser/components/tabbrowser/content/browser-ctrlTab.js
-@@ -3,157 +3,40 @@
+@@ -3,157 +3,34 @@
   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
  
  /**
 - * Tab previews utility, produces thumbnails
-+ * Zen / Ardia Recent Tabs Switcher
++ * Zen recent tabs switcher, shown on Ctrl+Tab in place of the thumbnail grid.
 + *
-+ * Replaces the legacy thumbnail grid with Ardia's sleek, floating frosted glass
-+ * "Recent Tabs" switcher overlay.
++ * Lists the tabs of the active space, most recently used first. Releasing Ctrl
++ * within SHOW_AFTER_MS (140ms) switches without showing the card.
 + *
-+ * Key Behaviors (matching Ardia 1:1):
-+ * - Fast-switch: 140ms delay (SHOW_AFTER_MS). Releasing Ctrl within 140ms switches
-+ *   tabs immediately without showing any UI or causing visual flash.
-+ * - Glass card: 400px wide, 16px radius, 8px padding, frosted acrylic appearance
-+ *   (--zen-ardia-glass-*), centered horizontally and 40px above center.
-+ * - Header: "Recent Tabs" caption above the list.
-+ * - Vertical list: MRU-ordered 40px rows (max 9) with an 18px favicon (or host
-+ *   initial fallback tile), 13px tab title, and clean stripped URL subtitle.
-+ * - Pointer stabilization: When opening, resting pointer hover is suppressed
-+ *   until the mouse actually moves (>=3px distance), preventing accidental selection.
-+ * - Keyboard navigation: Ctrl+Tab / Down / Tab cycles forward, Ctrl+Shift+Tab / Up /
-+ *   Shift+Tab cycles backward. Escape cancels without switching.
++ * Card geometry (400px wide, 16px radius, 8px padding, 40px rows) is mirrored
++ * in ctrlTab.css and must stay in sync.
++ *
++ * Keys: Ctrl+Tab and Down move forward, Ctrl+Shift+Tab and Up move back,
++ * 1-9 switch space, W closes the tab, Q closes all of them, Enter picks,
++ * Escape cancels.
   */
 -var tabPreviews = {
 -  get aspectRatio() {
@@ -181,7 +175,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    _generateHandler(host) {
      var self = this;
      return function listener(event) {
-@@ -163,11 +46,13 @@ var tabPreviewPanelHelper = {
+@@ -163,11 +40,13 @@ var tabPreviewPanelHelper = {
        }
      };
    },
@@ -195,7 +189,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    _popuphiding(host) {
      if ("suspendGUI" in host) {
        host.suspendGUI();
-@@ -180,7 +65,7 @@ var tabPreviewPanelHelper = {
+@@ -180,7 +59,7 @@ var tabPreviewPanelHelper = {
        );
        host._prevFocus = null;
      } else {
@@ -204,7 +198,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      }
  
      if (host.tabToSelect) {
-@@ -192,82 +77,213 @@ var tabPreviewPanelHelper = {
+@@ -192,82 +71,204 @@ var tabPreviewPanelHelper = {
        );
        host.tabToSelect = null;
      }
@@ -215,31 +209,28 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
  
  /**
 - * Ctrl-Tab panel
-+ * Ardia Recent Tabs Switcher Controller
++ * Recent tabs switcher controller
   */
  var ctrlTab = {
 -  previewsPerRow: 7,
-+  // Ardia SHOW_AFTER_MS: 140ms delay before presenting UI.
++  // Delay before the card shows, so a quick Ctrl+Tab only switches tabs.
 +  SHOW_AFTER_MS: 140,
 +
 +  _selectedIndex: 0,
-+  // Tabs the user actually visited this session. Pins and essentials outside
-+  // this set are left out of the card: they already live in the sidebar, and a
-+  // restored tile nobody opened is not a recent tab.
++  // Tabs visited this session. Pins and essentials outside this set stay out of
++  // the card: they are already in the sidebar.
 +  _usedTabs: new WeakSet(),
 +  _timer: null,
 +  tabToSelect: null,
 +  _recentlyUsedTabs: null,
 +  previews: [],
 +
-+  // Render state. `_cardState` drives the empty label; `_transitionToken`
-+  // invalidates the settle step of a switch that has been superseded;
-+  // `_spaceOverride` pins the card to the space being switched to.
++  // `_cardState` drives the empty label. `_transitionToken` marks a switch as
++  // superseded. `_spaceOverride` pins the card to the space being switched to.
 +  _cardState: "ready",
 +  _transitionToken: 0,
-+  // Token of the space switch in flight, or null. Holds the token rather than a
-+  // boolean so a superseded switch cannot clear the flag of the one replacing
-+  // it: both await changeWorkspace, and only the newest may release the card.
++  // Token of the switch in flight, or null. Holding the token stops a superseded
++  // switch from clearing the flag of the one replacing it.
 +  _switchInFlight: null,
 +  _swapTimer: null,
 +  _spaceOverride: null,
@@ -247,7 +238,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  _dots: null,
 +  _visibleRows: 0,
 +
-+  // Pointer stabilization state (Ardia resting pointer immunity)
++  // Pointer state: hover selects only after the cursor moves.
 +  pointerStale: false,
 +  lastMouseX: -1,
 +  lastMouseY: -1,
@@ -324,9 +315,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  /**
 +   * Tabs of `spaceId`, most recently used first.
 +   *
-+   * With `gates: false` this returns the raw membership of the space, with no
-+   * pending or pin filtering. The card uses that to tell "this space is empty"
-+   * apart from "our own filters hid everything".
++   * `gates: false` skips the pending and pin filters, so the card can tell an
++   * empty space from an empty filtered list.
 +   */
 +  _buildList(spaceId, { gates = true } = {}) {
 +    let workspaces = null;
@@ -356,12 +346,11 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +        if (!gates) {
 +          return true;
 +        }
-+        // Sleeping tabs belong to the space as much as loaded ones.
++        // Sleeping tabs count as part of the space.
 +        if (!showPending && (tab.hasAttribute("pending") || tab.discarded)) {
 +          return false;
 +        }
-+        // Pins and essentials live in the sidebar; only the ones the user
-+        // actually visited this session and are not unloaded count as recent tabs.
++        // Pins and essentials count only if visited this session and still loaded.
 +        if (this._isPinnedOrEssential(tab)) {
 +          if (tab.hasAttribute("pending") || tab.discarded || !this._usedTabs.has(tab)) {
 +            return false;
@@ -375,8 +364,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    /**
 -   * The number of grid columns the visible previews are laid out in, which is
 -   * also the number of previews in the widest row.
-+   * Everything the space holds, gates ignored. Used only as a last resort so a
-+   * space that has tabs never renders as "No recent tabs".
++   * Every tab in the space, filters ignored. Last resort, so a space that has
++   * tabs never shows "No recent tabs".
     */
 -  get previewColumnCount() {
 -    return Math.min(this.tabPreviewCount, this.previewsPerRow);
@@ -387,9 +376,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -  get tabList() {
 -    return this._recentlyUsedTabs;
 +  /**
-+   * The list the card shows for `spaceId`, and whether it is the raw one because
-+   * our own filters hid every tab. Both the paint before a switch and the paint
-+   * after it go through here, so the two can never disagree.
++   * Rows to paint for `spaceId`, and whether they come from the fallback. Used
++   * before a switch and again after it, so both paints agree.
 +   */
 +  _listForSpace(spaceId) {
 +    let list = this._buildList(spaceId);
@@ -403,8 +391,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Whether two lists would paint the same rows. Compared on the rows the card
-+   * can actually show, so a difference past the row cap never causes a repaint.
++   * Whether two lists paint the same rows. Compares only the rows the card can
++   * show, so changes past the row cap never cause a repaint.
 +   */
 +  _sameTabs(a, b) {
 +    let cap = this.maxTabPreviews;
@@ -419,9 +407,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    return true;
 +  },
 +
-+  // Only an explicit opt-out hides sleeping tabs. The compiled default of the
-+  // pref is false in shipped builds, and honouring that default is what left a
-+  // space with a single row (the one tab that happened to be loaded).
++  // Only an explicit false hides sleeping tabs; the shipped default is false.
 +  _showPendingTabs() {
 +    return (
 +      !Services.prefs.prefHasUserValue("zen.ctrlTab.show-pending-tabs") ||
@@ -430,9 +416,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Space the card is showing. Usually the live active space; a space switch
-+   * started from inside the card ("2", "3"…) overrides it until the switch
-+   * lands.
++   * Space the card shows: the active space, or the target of a switch started
++   * from inside the card until that switch lands.
 +   */
 +  get currentSpaceId() {
 +    return this._spaceOverride || window.gZenWorkspaces?.activeWorkspace || "";
@@ -465,7 +450,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      if (!this._recentlyUsedTabs) {
        this._initRecentlyUsedTabs();
        this._init(true);
-@@ -275,6 +291,9 @@ var ctrlTab = {
+@@ -275,6 +276,9 @@ var ctrlTab = {
    },
  
    uninit: function ctrlTab_uninit() {
@@ -475,7 +460,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      if (this._recentlyUsedTabs) {
        this._recentlyUsedTabs = null;
        this._init(false);
-@@ -294,8 +313,11 @@ var ctrlTab = {
+@@ -294,8 +298,11 @@ var ctrlTab = {
    },
  
    readPref: function ctrlTab_readPref() {
@@ -488,7 +473,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
        !Services.prefs.getBoolPref(
          "browser.ctrlTab.disallowForScreenReaders",
          false
-@@ -307,146 +329,643 @@ var ctrlTab = {
+@@ -307,146 +314,621 @@ var ctrlTab = {
        this.uninit();
      }
    },
@@ -498,18 +483,16 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    },
  
 +  /**
-+   * Constructs the Ardia Recent Tabs card UI inside #ctrlTab-panel.
++   * Builds the card UI inside #ctrlTab-panel.
 +   */
    _buildPreviews() {
 -    this.previewsContainer.replaceChildren();
 +    this.panel.classList.add("zen-ctrlTab-panel");
 +    this.panel.replaceChildren();
 +
-+    // Floating frosted glass card container
 +    let card = (this._card = document.createElement("div"));
 +    card.className = "ctrlTab-card zen-ardia-glass";
 +
-+    // Section header: Space icon + Recent Tabs label, plus the space dots
 +    let header = document.createElement("div");
 +    header.className = "ctrlTab-header";
 +
@@ -523,8 +506,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +
 +    card.appendChild(header);
 +
-+    // List container. The pill is one travelling highlight, so changing the
-+    // selection never repaints a row.
++    // List. The selection pill is a single moving element, so selecting a row
++    // only transforms it.
 +    let list = (this._list = document.createElement("div"));
 +    list.className = "ctrlTab-list";
 +    card.appendChild(list);
@@ -533,8 +516,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    pill.className = "ctrlTab-pill";
 +    list.appendChild(pill);
 +
-+    // The empty label sits beside the list, not inside it, so the row array
-+    // always matches the list contents.
++    // Empty label sits outside the list, so `previews` always matches the rows.
 +    let emptyLabel = (this._emptyLabel = document.createElement("div"));
 +    emptyLabel.className = "ctrlTab-empty";
 +    emptyLabel.textContent = "No recent tabs in this space";
@@ -607,8 +589,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * One dot per space, the current one widened. Gives the 1..9 shortcuts a place
-+   * to land instead of a silent jump.
++   * One dot per space, the active one widened; the 1-9 shortcuts index them.
 +   */
 +  _updateSpaceDots() {
 +    if (!this._dots) {
@@ -627,8 +608,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +
 +    this._dots.hidden = false;
 +    let count = Math.min(workspaces.length, 9);
-+    // Reuse the dots: rebuilding them on every header update killed the width
-+    // transition on the active one, so the row of dots just snapped.
++    // Rebuild only when the space count changes, or the width transition on the
++    // active dot restarts.
 +    if (this._dots.childElementCount !== count) {
 +      this._dots.replaceChildren();
 +      for (let i = 0; i < count; i++) {
@@ -647,9 +628,6 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    }
 +  },
 +
-+  /**
-+   * Builds an individual tab row matching Ardia's vertical recent tabs item.
-+   */
 +  _makePreview(index) {
 +    let preview = document.createElement("button");
      preview.className = "ctrlTab-preview";
@@ -660,7 +638,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    preview.setAttribute("tabindex", "-1");
 +    preview.dataset.index = index;
 +
-+    // Favicon / icon container with fallback initial tile
++    // Icon, with a fallback letter tile.
 +    let icon = (preview._icon = document.createElement("span"));
 +    icon.className = "ctrlTab-icon";
 +
@@ -681,7 +659,6 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +
 +    preview.appendChild(icon);
 +
-+    // Tab details: 2-line title and display URL
 +    let details = document.createElement("div");
 +    details.className = "ctrlTab-details";
 +
@@ -734,8 +711,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    }
 +
 +    this._visibleRows = count;
-+    // The box is sized for the list being painted, once: nothing resizes under
-+    // the motion, so the card never moves mid-transition.
++    // Size the box once per paint, so nothing resizes during the swap.
 +    this._setListHeight(count);
 +
 +    this._syncCardState(count);
@@ -749,8 +725,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Keeps the empty label and the selection pill consistent with the rows that
-+   * were just painted, so a paint can never show "No recent tabs" beside rows.
++   * Keeps the empty label and selection pill in sync with the painted rows.
 +   */
 +  _syncCardState(count) {
 +    if (!this._card) {
@@ -775,11 +750,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * One short, direction-aware nudge for the whole list.
-+   *
-+   * Rows used to enter one by one on a stagger, so every row dropped to zero
-+   * opacity at a different moment: on a long list that reads as a flicker, not
-+   * as motion. The list moves as one and the rows simply change content.
++   * Moves the whole list one short step in the switch direction.
 +   */
 +  _animateSwap(direction) {
 +    clearTimeout(this._swapTimer);
@@ -808,14 +779,13 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Populates a preview row with tab metadata (title, URL, favicon).
++   * Fills a row with the tab's title, URL and favicon.
 +   */
 +  updatePreview: function ctrlTab_updatePreview(aPreview, aTab) {
 +    aPreview._tab = aTab;
 +
 +    if (!aTab) {
-+      // Clear the row too: a hidden leftover would keep showing the previous
-+      // space's title and URL next time the row is reused.
++      // Clear the row as well, or the next tab reusing it shows stale text.
 +      aPreview.hidden = true;
 +      aPreview._title.textContent = "";
 +      aPreview._url.textContent = "";
@@ -830,11 +800,9 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    let spec = aTab.linkedBrowser?.currentURI?.spec || "";
 +    aPreview._url.textContent = this._displayUrl(spec);
 +
-+    // Site initial for fallback tile
 +    aPreview._tile.textContent = this._hostInitial(spec);
 +
-+    // Load favicon. Reset first, otherwise a row reused for a tab without an
-+    // icon keeps the previous tab's favicon.
++    // Reset first, or a row reused for a tab without an icon keeps the old one.
 +    aPreview._favicon.removeAttribute("src");
 +    aPreview._icon.classList.remove("has-favicon");
 +    if (aTab.image) {
@@ -860,7 +828,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Ardia displayUrl: cleans URL by stripping scheme, www, and trailing slash.
++   * Display URL: no scheme, credentials, "www." or trailing slash. about: and
++   * zen: URLs pass through unchanged.
 +   */
 +  _displayUrl(url) {
 +    if (!url) {
@@ -877,7 +846,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Extracts uppercase initial letter from host for fallback tile.
++   * First letter of the host, uppercased, for the fallback tile.
 +   */
 +  _hostInitial(aURL) {
 +    if (!aURL) {
@@ -894,7 +863,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Sets the active selection to the given index with wrapping.
++   * Selects `index`, wrapping around the list.
 +   */
 +  _selectIndex(index) {
 +    let count = this.tabPreviewCount;
@@ -906,7 +875,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Synchronizes visual selection attribute and tab warmup.
++   * Marks the selected row, focuses it, warms its tab and moves the pill.
 +   */
 +  _updateSelectedPreview() {
 +    for (let i = 0; i < this.previews.length; i++) {
@@ -932,7 +901,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Steps selection forward or backward.
++   * Moves the selection forward or backward.
 +   */
 +  advanceFocus: function ctrlTab_advanceFocus(aForward) {
 +    let count = this.tabPreviewCount;
@@ -943,10 +912,10 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    let delta = aForward ? 1 : -1;
 +    this._selectIndex(this._selectedIndex + delta);
 +
-+    // Ardia: Keyboard navigation marks pointer stale so resting mouse doesn't hijack selection
++    // Keep the resting pointer from overriding keyboard selection.
 +    this.pointerStale = true;
 +
-+    // If timer was waiting to open panel, cancel delay and show immediately
++    // Skip the show delay, the user is already cycling.
 +    if (this._timer) {
 +      clearTimeout(this._timer);
 +      this._timer = null;
@@ -955,7 +924,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Commits the switcher to the picked preview or currently selected tab.
++   * Switches to the given row, or the selected one, and closes.
 +   */
 +  pick: function ctrlTab_pick(aPreview) {
 +    let preview = aPreview || this.selected;
@@ -964,7 +933,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Closes the switcher and activates the target tab if provided.
++   * Closes the card and selects `aTabToSelect` if given.
 +   */
 +  close: function ctrlTab_close(aTabToSelect) {
 +    if (!this.isOpen) {
@@ -994,7 +963,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Opens the switcher session with 140ms fast-switch delay.
++   * Starts a session and shows the card after SHOW_AFTER_MS.
 +   */
 +  open: function ctrlTab_open(aBackward = false) {
 +    this._spaceOverride = null;
@@ -1002,7 +971,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +      return;
 +    }
 +
-+    // A fresh session owns the card: invalidate whatever the last one left.
++    // A new session owns the card, so drop anything the last one left.
 +    this._transitionToken++;
 +    this._switchInFlight = null;
 +    this._clearSwap();
@@ -1015,7 +984,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    this.updatePreviews();
 +
 +    let count = this.tabPreviewCount;
-+    // Ardia: if only 1 tab, select it; otherwise initial index is backward ? count - 1 : 1
++    // One tab selects itself, otherwise start on the next or previous tab.
 +    this._selectedIndex = count <= 1 ? 0 : (aBackward ? count - 1 : 1);
 +    this._updateSelectedPreview();
 +
@@ -1024,8 +993,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +      gBrowser.warmupTab(targetTab);
 +    }
 +
-+    // Ardia SHOW_AFTER_MS: 140ms delay before presenting UI.
-+    // Releasing Ctrl before 140ms executes immediate switch with zero UI flash.
++    // Show the card after SHOW_AFTER_MS. Releasing Ctrl before that switches
++    // without any UI.
 +    this._timer = setTimeout(() => {
 +      this._timer = null;
 +      this._openPanel();
@@ -1033,15 +1002,10 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Positions and displays the floating card.
++   * Shows the card, centered horizontally and 40px above the window center.
 +   *
-+   * Ardia positions the card with:
-+   *   left = (windowWidth - WIDTH) / 2
-+   *   top  = max(40, (windowHeight - height) / 2 - 40)
-+   *
-+   * The popup window gets SHADOW_MARGIN of transparent padding on every side so
-+   * the card's drop shadow is not clipped by the popup bounds; the extra space
-+   * is subtracted again when the card is centered.
++   * The popup gets SHADOW_MARGIN of transparent padding so the card's shadow is
++   * not clipped; the margin is subtracted again when centering.
 +   */
 +  _openPanel: function ctrlTab_openPanel() {
 +    this.updateSpaceHeader();
@@ -1056,7 +1020,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -    label.className = "ctrlTab-label plain";
 -    label.setAttribute("crop", "end");
 -    previewInner.appendChild(label);
-+    // Ardia: Ignore resting cursor until mouse moves
++    // Ignore the resting cursor until it moves.
 +    this.pointerStale = true;
 +    this.lastMouseX = -1;
 +    this.lastMouseY = -1;
@@ -1080,14 +1044,14 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -      "tabbrowser-ctrl-tab-list-all-tabs",
 -      { tabCount: this.tabCount }
 +  /**
-+   * Places the card, or re-places it after a space switch changed the row count.
-+   * Constants mirror TabSwitcher; keep in sync with ctrlTab.css.
++   * Places the card, or repositions it after a space switch changed the row count.
++   * Constants mirror ctrlTab.css.
 +   */
 +  _positionPanel(rowCount = this.tabPreviewCount) {
 +    const SWITCHER_WIDTH = 400;
 +    const HEADER_HEIGHT = 26;
 +    const ROW_HEIGHT = 40;
-+    const EMPTY_HEIGHT = 48; // The "No recent tabs" label, in place of the rows.
++    const EMPTY_HEIGHT = 48; // Empty label height, shown instead of rows.
 +    const PANEL_PAD = 8; // SWITCHER_PAD, on each side.
 +    const SHADOW_MARGIN = 24; // Transparent gutter for the card shadow.
 +
@@ -1101,8 +1065,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +
 +    let left =
 +      window.screenX + Math.round((window.outerWidth - panelWidth) / 2);
-+    // Ardia keeps the card 40px above the window center, but never closer than
-+    // 40px to the top edge.
++    // 40px above the window center, never closer than 40px to the top edge.
 +    let topOffset = Math.max(
 +      40,
 +      Math.round((window.outerHeight - cardHeight) / 2) - 40
@@ -1167,7 +1130,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    document.removeEventListener("keyup", this, { mozSystemGroup: true });
 +    this.pointerStale = false;
 +
-+    // Invalidate anything a switch left in flight and drop its decorations.
++    // Drop anything a switch left in flight.
 +    this._transitionToken++;
 +    this._switchInFlight = null;
 +    this._clearSwap();
@@ -1237,7 +1200,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      }
  
      if (this._timer) {
-@@ -454,102 +973,86 @@ var ctrlTab = {
+@@ -454,102 +936,86 @@ var ctrlTab = {
        this._timer = null;
        this._openPanel();
      }
@@ -1395,7 +1358,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      if (!this.isOpen) {
        return;
      }
-@@ -557,126 +1060,179 @@ var ctrlTab = {
+@@ -557,126 +1023,173 @@ var ctrlTab = {
      if (this._timer) {
        clearTimeout(this._timer);
        this._timer = null;
@@ -1509,9 +1472,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -          gBrowser.TabMetrics.METRIC_SOURCE.CTRL_TAB
 -        )
 -      );
-+    // The target space's tabs already carry its id, so its list is known before
-+    // the switch runs: the card paints the truth at once and the empty label can
-+    // never flash while Zen animates and lazily reloads the space.
++    // The target space's tabs carry its id, so the list can be built before the
++    // switch: the empty label never flashes while Zen reloads the space.
 +    let { list: targetList, fallback } = this._listForSpace(targetWorkspace.uuid);
 +    let targetRows = Math.min(this.maxTabPreviews, targetList.length);
 +
@@ -1523,10 +1485,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    this._cardState = "ready";
 +    this.updateSpaceHeader({ animate: true });
 +
-+    // Paint the target space before the switch runs. Its tabs already live in
-+    // this window, so the card shows the real list from the first frame: the
-+    // outgoing rows are not dimmed, no skeleton grows under them, and there is
-+    // no second paint waiting to flicker through once the switch lands.
++    // Paint the target list first, so the card shows real rows from frame one.
 +    this.updatePreviews({ list: targetList, animate: true, direction, fallback });
 +    this._selectedIndex = 0;
 +    this._updateSelectedPreview();
@@ -1535,7 +1494,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +    try {
 +      await window.gZenWorkspaces.changeWorkspace(targetWorkspace);
 +    } catch (e) {
-+      // The switch never happened: stop claiming the space the user aimed at.
++      // Switch failed, drop the override.
 +      console.error(e);
 +      this._spaceOverride = null;
      }
@@ -1544,7 +1503,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -  onKeyPress(event) {
 -    if (!this.isOpen || !event.ctrlKey) {
 +    if (token !== this._transitionToken) {
-+      // A newer switch, or the card closing, owns the DOM and the flag now.
++      // A newer switch or the close owns the card now.
 +      if (this._switchInFlight === token) {
 +        this._switchInFlight = null;
 +      }
@@ -1558,9 +1517,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -    if (event.keyCode == event.DOM_VK_DELETE) {
 -      this.remove(this.selected);
 -      return;
-+    // Zen may have reloaded, opened or dropped tabs while switching. Repaint only
-+    // when the visible rows really changed, and without motion or a move: the
-+    // swap already played, and animating the same rows twice is the flicker.
++    // Zen may have changed tabs during the switch. Repaint only if the rows
++    // differ, and without animating again.
 +    let { list: settled, fallback: settledFallback } = this._listForSpace(
 +      this.currentSpaceId
 +    );
@@ -1569,8 +1527,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +      this.updatePreviews({ list: settled, fallback: settledFallback });
 +      let rows = Math.min(this.maxTabPreviews, settled.length);
 +      if (this._selectedIndex >= rows) {
-+        // The user moved the selection while the switch ran; keep it if the row
-+        // still exists, otherwise fall back to the top instead of vanishing.
++        // Keep the selection if the row still exists, else fall back to the top.
 +        this._selectedIndex = 0;
 +      }
 +      this._positionPanel(rows);
@@ -1659,7 +1616,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      }
    },
  
-@@ -686,8 +1242,6 @@ var ctrlTab = {
+@@ -686,8 +1199,6 @@ var ctrlTab = {
          this._initRecentlyUsedTabs();
          break;
        case "TabAttrModified":
@@ -1668,7 +1625,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
          if (
            event.detail.changed.some(elem =>
              ["label", "busy", "image"].includes(elem)
-@@ -705,11 +1259,10 @@ var ctrlTab = {
+@@ -705,11 +1216,10 @@ var ctrlTab = {
          }
          break;
        case "TabSelect": {
@@ -1682,7 +1639,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
            this.detachTab(previousTab);
          }
          break;
-@@ -734,76 +1287,232 @@ var ctrlTab = {
+@@ -734,76 +1244,231 @@ var ctrlTab = {
          this.onKeyDown(event);
          break;
        case "keypress":
@@ -1723,9 +1680,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -          document.getElementById("menu_showAllTabs").hidden =
 -            !gTabsPanel.canOpen;
 +      case "ZenWorkspacesUIUpdate":
-+        // A switch started from the card already painted its target space and
-+        // settles it itself: repainting here too painted the list twice and
-+        // moved the card under the animation.
++        // A switch started from the card paints and settles itself. Repainting
++        // here would paint the list twice under the animation.
 +        if (this.isOpen && !this._switchInFlight) {
 +          this._cardState = "ready";
 +          this.updateSpaceHeader();
@@ -1746,7 +1702,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +          this.lastMouseY = event.screenY;
 +          return;
 +        }
-+        // Ardia resting pointer check: cursor must travel >= 3px before hovering selects
++        // The cursor must move at least 3px before hover selects.
 +        if (
 +          Math.hypot(
 +            event.screenX - this.lastMouseX,
@@ -1951,7 +1907,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    },
  
    _init: function ctrlTab__init(enable) {
-@@ -812,6 +1521,7 @@ var ctrlTab = {
+@@ -812,6 +1477,7 @@ var ctrlTab = {
        : "removeEventListener";
  
      window[toggleEventListener]("SSWindowRestored", this);
@@ -1959,7 +1915,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
  
      var tabContainer = gBrowser.tabContainer;
      tabContainer[toggleEventListener]("TabOpen", this);
-@@ -828,19 +1538,6 @@ var ctrlTab = {
+@@ -828,19 +1494,6 @@ var ctrlTab = {
      }
      document[toggleEventListener]("keypress", this);
      gBrowser.tabbox.handleCtrlTab = !enable;
@@ -1979,7 +1935,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    },
  };
  
-@@ -851,8 +1548,11 @@ ChromeUtils.defineESModuleGetters(ctrlTab, {
+@@ -851,8 +1504,11 @@ ChromeUtils.defineESModuleGetters(ctrlTab, {
  XPCOMUtils.defineLazyPreferenceGetter(
    ctrlTab,
    "maxTabPreviews",
@@ -1991,5 +1947,5 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    value => Math.max(4, Math.min(49, value))
  );
 +
-+// Automatically initialize preferences and start observing
-+ctrlTab.observePref();
++// Initialize from the pref at startup.
++ctrlTab.readPref();
