@@ -45,10 +45,6 @@ zen-new-urlbar-notification = The new URL bar has been enabled, removing the nee
 
 zen-disable = Disable
 
-pictureinpicture-minimize-btn =
-  .aria-label = Minimize
-  .tooltip = Minimize
-
 zen-panel-ui-gradient-generator-custom-color = Custom Color
 
 zen-copy-urls-confirmation =
