@@ -6,14 +6,6 @@ Specs for the native macOS work merged through
 Each folder holds the behavior contract for one feature. The "why" lives in
 `docs/decisions/` as an ADR. The product summary lives in [PRD.md](PRD.md).
 
-New ADRs: [0002](../decisions/0002-trackpad-swipe-in-two-layers.md),
-[0003](../decisions/0003-pip-motion-math-in-headers.md),
-[0004](../decisions/0004-pip-zoom-through-owned-live-resize.md),
-[0005](../decisions/0005-pip-focus-without-raising-the-browser.md),
-[0006](../decisions/0006-ctrl-tab-per-space-mru-card.md),
-[0007](../decisions/0007-meet-controls-through-the-child-actor.md),
-[0008](../decisions/0008-single-glass-token-sheet.md). Extension isolation keeps
-its original [ADR-001](../decisions/0001-per-space-extension-isolation-and-stack-ui.md).
 
 ## Index
 
@@ -27,18 +19,6 @@ its original [ADR-001](../decisions/0001-per-space-extension-isolation-and-stack
 | [spaces/spec-swipe-haptics.md](spaces/spec-swipe-haptics.md) | Trackpad detent feedback while swiping between spaces | `src/zen/spaces/ZenSpacesSwipe.mjs`, `src/zen/spaces/ZenSpaceManager.mjs` |
 | [glass/spec.md](glass/spec.md) | Shared frosted glass tokens for new chrome surfaces | `src/zen/common/styles/zen-ardia-glass.css` |
 
-## Not covered here
-
-CI workflows, MAR signing, release naming and other repository chores from the
-same PR are build plumbing. They live in `.github/workflows/` and
-`docs/rc-build-todo.md`, and this spec set does not restate them.
-
-## Status and platform
-
-All specs are draft, matching the branch state at the time of writing.
-
-The PiP, swipe and haptics work is Cocoa only. Ctrl+Tab, extension isolation and
-the glass sheet are platform neutral, though only macOS was exercised.
 
 ## How to read a spec
 
@@ -47,8 +27,3 @@ state machine, the failure modes the code already handles, and the places that
 must change together. When a spec and the code disagree, the code is right and
 the spec needs a fix.
 
-## Verification
-
-Files under `src/` with a `.patch` suffix are applied to the vendored Gecko tree
-during the build. Changes to those files need a CI build. Chrome JS, XHTML and
-CSS can be hotpatched into the local Twilight app; see `.agents/skills/zen-dev-loop/SKILL.md`.
