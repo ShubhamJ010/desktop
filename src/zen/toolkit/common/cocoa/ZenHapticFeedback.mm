@@ -23,8 +23,11 @@ nsresult ZenCommonUtils::PlayHapticFeedbackInternal() {
   if (@available(macOS 10.14, *)) {
     id<NSHapticFeedbackPerformer> performer =
         [NSHapticFeedbackManager defaultPerformer];
+    // Keep the upstream timing: AppKit synchronizes the bump to the next
+    // screen draw. "Now" plays synchronously on the calling thread, which
+    // hitches the main thread when a swipe fires the detent mid-gesture.
     [performer performFeedbackPattern:NSHapticFeedbackPatternAlignment
-                      performanceTime:NSHapticFeedbackPerformanceTimeNow];
+                      performanceTime:NSHapticFeedbackPerformanceTimeDefault];
   }
   return NS_OK;
   NS_OBJC_END_TRY_BLOCK_RETURN(NS_OK);
