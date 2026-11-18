@@ -1070,6 +1070,7 @@ static void NotifyPiPGestureHover() {
         [self armUIRestoreOnMouseMove];
       }
       [self showCursorIfNeeded];
+      [self focusPiP];
       return;
     }
 
@@ -1122,6 +1123,7 @@ static void NotifyPiPGestureHover() {
         [self armUIRestoreOnMouseMove];
       }
       [self showCursorIfNeeded];
+      [self focusPiP];
       return;
     }
 
@@ -1248,6 +1250,8 @@ static void NotifyPiPGestureHover() {
   _swipeStart = _window.frame;
   _swipeHome = (_armed && _armedHome) ? _armedHome : [self gestureHome];
   [self disarmSwipe];
+  [self frontForGesture];
+  [self focusPiP];
 
   CGPoint point = CGEventGetLocation(event.CGEvent);
   NSPoint pointer = NSMakePoint(point.x, NSMaxY(NSScreen.screens.firstObject.frame) - point.y);
@@ -1284,6 +1288,10 @@ static void NotifyPiPGestureHover() {
 // of that app's windows above it, in which case the pointer is not over the
 // card at all.
 + (ZenPiPController *)controllerUnderPointer {
+  return [self controllerUnderPointerAllowingOccluded:NO];
+}
+
++ (ZenPiPController *)controllerUnderPointerAllowingOccluded:(BOOL)allowOccluded {
   const NSPoint mouse = NSEvent.mouseLocation;
   const NSInteger windowNumber = [NSWindow windowNumberAtPoint:mouse belowWindowWithWindowNumber:0];
   if (windowNumber > 0) {
@@ -1294,20 +1302,17 @@ static void NotifyPiPGestureHover() {
       window = window.parentWindow;
     }
     ZenPiPController *controller = window ? [self forWindow:window] : nil;
-    // Whatever is on top is not ours, so the pointer is over another app's
-    // window. Never fall through to a frame test: it would claim the card is
-    // hovering while it is actually behind that window.
-    return (controller && controller.window.isVisible) ? controller : nil;
+    if (controller && controller.window.isVisible) return controller;
+    if (!allowOccluded) return nil;
   }
 
-  // No window under the pointer at all (a gap between windows, or the desktop).
-  // A frame test over our own windows is close enough to tell which card, if
-  // any, the pointer is over.
+  // No window under the pointer at all (a gap between windows, or the desktop),
+  // or an occluded PiP card when explicitly allowed for user gestures.
   for (NSWindow *candidate in NSApp.windows) {
     if (!candidate.visible) continue;
     if (!NSPointInRect(mouse, candidate.frame)) continue;
     ZenPiPController *controller = [self forWindow:candidate];
-    if (controller) return controller;
+    if (controller && controller.window.isVisible) return controller;
   }
   return nil;
 }
@@ -1341,6 +1346,7 @@ static void NotifyPiPGestureHover() {
 - (void)beginGestureChrome:(ZenPiPGesture)kind chained:(BOOL)chained {
   _awaitingMouseMoveToShowUI = NO;
   [self frontForGesture];
+  [self focusPiP];
   const uint64_t generation = ++_gestureGeneration;
   [self retain];
   dispatch_async(dispatch_get_main_queue(), ^{
@@ -1359,6 +1365,7 @@ static void NotifyPiPGestureHover() {
   // Window, not app: ordering the card front puts it above the other app without
   // dragging Zen's browser window forward.
   [self frontForGesture];
+  [self focusPiP];
   [self setPiPUIVisible:NO];
   if (kind == ZenPiPGesturePinch) {
     // A resize is a sustained 120 Hz gesture: drop the big soft shadow for its
@@ -1583,6 +1590,7 @@ static void NotifyPiPGestureHover() {
   _startedUnderOtherApp = !NSApp.isActive;
   _awaitingMouseMoveToShowUI = NO;
   [self frontForGesture];
+  [self focusPiP];
   // Announce the gesture now, not one main-loop turn later with the chrome: the
   // page freezes the remote video viewport from this notification, and it must
   // already be frozen when the first size change lands.
@@ -1870,9 +1878,10 @@ void InstallMonitors() {
     [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMagnify
                                            handler:^(NSEvent *event) {
       if (NSApp.isActive) return;
-      ZenPiPController *controller = [ZenPiPController controllerUnderPointer];
+      ZenPiPController *controller = [ZenPiPController controllerUnderPointerAllowingOccluded:YES];
       if (!controller || ![ZenPiPZoom zooms:controller.window]) return;
       [controller frontForGesture];
+      [controller focusPiP];
       if (GestureTimingEnabled()) {
         NSLog(@"[pip-gesture] pinch (global) key=%d prevents=%d", controller.window.isKeyWindow,
               [controller.window _preventsActivation]);

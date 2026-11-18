@@ -237,6 +237,7 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (void)armSwipe;
 - (void)disarmSwipe;
 + (ZenPiPController *)controllerUnderPointer;
++ (ZenPiPController *)controllerUnderPointerAllowingOccluded:(BOOL)allowOccluded;
 - (void)swipeBegan:(NSEvent *)event;
 - (void)beginGestureChrome:(ZenPiPGesture)kind chained:(BOOL)chained;
 - (void)applyGestureChrome:(ZenPiPGesture)kind chained:(BOOL)chained;

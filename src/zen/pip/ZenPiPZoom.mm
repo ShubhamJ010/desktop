@@ -91,7 +91,7 @@ static __unsafe_unretained NSWindow *gZoomGesture = nil;
 }
 
 + (NSWindow *)windowFor:(NSEvent *)event {
-  ZenPiPController *controller = [ZenPiPController controllerUnderPointer];
+  ZenPiPController *controller = [ZenPiPController controllerUnderPointerAllowingOccluded:YES];
   NSWindow *window = controller.window;
   return (window && [self zooms:window]) ? window : nil;
 }
@@ -138,7 +138,15 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   if (!command && gZoomGesture != window) return NO;
   // Front once per gesture. A precise trackpad scroll arrives at up to 120 Hz
   // and an orderFront per event is a WindowServer round trip each time.
-  if (gZoomGesture != window) [window orderFrontRegardless];
+  if (gZoomGesture != window) {
+    ZenPiPController *controller = [ZenPiPController forWindow:window];
+    if (controller) {
+      [controller frontForGesture];
+      [controller focusPiP];
+    } else {
+      [window orderFrontRegardless];
+    }
+  }
   if (!wheel) gZoomGesture = window;
   const BOOL ended = (momentum & (NSEventPhaseEnded | NSEventPhaseCancelled)) != 0;
   if (ended) gZoomGesture = nil;
@@ -158,7 +166,13 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   if (phase & (NSEventPhaseBegan | NSEventPhaseMayBegin)) gZoomGesture = nil;
   if (gZoomGesture) window = gZoomGesture;
   if (![self zooms:window]) return NO;
-  if (gZoomGesture != window) [window orderFrontRegardless];
+  ZenPiPController *controller = [ZenPiPController forWindow:window];
+  if (controller) {
+    [controller frontForGesture];
+    [controller focusPiP];
+  } else if (gZoomGesture != window) {
+    [window orderFrontRegardless];
+  }
   gZoomGesture = window;
   if (phase & (NSEventPhaseEnded | NSEventPhaseCancelled)) gZoomGesture = nil;
   [[self forWindow:window] handleMagnify:event];
@@ -185,8 +199,10 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   if (!window || _resizing) return;
   // One front per gesture, before any frame changes: a PiP that sits behind
   // another app's window or panel must come forward the moment the gesture
-  // starts, and stay above it until the gesture ends, without activating Zen.
-  [[ZenPiPController forWindow:window] frontForGesture];
+  // starts, and stay above it until the gesture ends, bringing it to front.
+  ZenPiPController *controller = [ZenPiPController forWindow:window];
+  [controller frontForGesture];
+  [controller focusPiP];
 
   _resizing = YES;
   _endPending = NO;
