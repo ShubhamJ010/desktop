@@ -34,22 +34,28 @@ swipe code does not read it; the shared helper does.
 The detent fires before the commit, which is what makes the gesture feel like a
 keyboard key with a bump rather than a reaction after the switch.
 
+The native helper uses `NSHapticFeedbackPerformanceTimeDefault`, which syncs the
+bump to the next screen draw. `PerformanceTimeNow` plays synchronously on the
+calling thread and hitches the main-thread frames that animate the strip.
+
 ## Order of checks
 
 `#handleDetentHaptic` runs on every swipe update, before the swipe is applied to
 the strip.
 
-1. If the gesture has turned into an action (open library, add space), stop. The
-   action has its own feedback.
-2. Resolve direction. A right swipe means forward unless the document is RTL.
-   `naturalScroll` flips the meaning.
-3. Ask `#canSwitchWorkspace(offset)`. This returns false at the first space when
+1. If the gesture has turned into an action (open library, add space), or the
+   detent was already resolved, stop. The action has its own feedback.
+2. Compute progress and compare with 0.6. This is cheap math, so most update
+   frames stop here without touching the DOM or the workspace cache.
+3. Mark the detent resolved, then resolve direction. A right swipe means forward
+   unless the document is RTL. `naturalScroll` flips the meaning.
+4. Ask `#canSwitchWorkspace(offset)`. This returns false at the first space when
    moving back and at the last when moving forward, and false when wrap is off.
-4. Compute progress and compare with 0.6.
-5. Fire only when the flag is not already set, then set it.
+5. Fire only when a switch is possible.
 
-The flag is part of the gesture state and resets when the gesture starts. One
-gesture fires one detent even when the user wiggles across the threshold.
+The flag is forward-only and resets when the gesture starts. One gesture fires
+one detent even when the user wiggles across the threshold, and an edge swipe
+does no repeat work on later frames.
 
 ## Commit path
 

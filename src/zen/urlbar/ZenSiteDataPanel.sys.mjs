@@ -31,6 +31,8 @@ export class ZenSpaceExtensionsManager {
   static TOPIC_CHANGED = "zen-space-extensions-changed";
 
   static #listeners = new Set();
+  static #reloadPendingTabs = new WeakSet();
+  static #watchedWindows = new WeakSet();
 
   /**
    * Get all disabled extension IDs for a given workspace.
@@ -270,6 +272,90 @@ export class ZenSpaceExtensionsManager {
   }
 
   /**
+   * Resolve the workspace a tab belongs to.
+   *
+   * @param {Window} win
+   * @param {MozTabbrowserTab} tab
+   * @returns {string|null}
+   */
+  static #tabSpaceId(win, tab) {
+    return (
+      tab.getAttribute("zen-workspace-id") ||
+      win.gZenWorkspaces?.activeWorkspace ||
+      null
+    );
+  }
+
+  /**
+   * Reload one tab so the updated per-space isolation map takes effect.
+   *
+   * @param {MozTabbrowserTab} tab
+   */
+  static #reloadTab(tab) {
+    const browser = tab.linkedBrowser;
+    if (!browser || tab.closing || tab.hasAttribute("pending")) {
+      return;
+    }
+    // linkedBrowser.reload() targets this exact tab; gBrowser.reload()
+    // would only hit whichever tab is selected at the time.
+    browser.reload();
+  }
+
+  /**
+   * Attach a single lazy-reload TabSelect handler to a browser window.
+   *
+   * @param {Window} win
+   */
+  static #watchTabSelect(win) {
+    if (this.#watchedWindows.has(win)) {
+      return;
+    }
+    this.#watchedWindows.add(win);
+    win.gBrowser.tabContainer.addEventListener("TabSelect", event => {
+      const tab = event.target;
+      if (!this.#reloadPendingTabs.has(tab)) {
+        return;
+      }
+      this.#reloadPendingTabs.delete(tab);
+      this.#reloadTab(tab);
+    });
+  }
+
+  /**
+   * Reload the frontmost tab of a changed space now. Other open tabs in that
+   * space are marked and reload when they are selected, so isolation stays
+   * correct without reloading every tab at once.
+   *
+   * @param {string} spaceId
+   */
+  static #reloadSpaceTabs(spaceId) {
+    if (!spaceId) {
+      return;
+    }
+    for (const win of Services.wm.getEnumerator("navigator:browser")) {
+      if (!win.gBrowser?.tabs) {
+        continue;
+      }
+      this.#watchTabSelect(win);
+      for (const tab of win.gBrowser.tabs) {
+        if (
+          this.#tabSpaceId(win, tab) !== spaceId ||
+          !tab.linkedBrowser ||
+          tab.closing ||
+          tab.hasAttribute("pending")
+        ) {
+          continue;
+        }
+        if (tab === win.gBrowser.selectedTab) {
+          this.#reloadTab(tab);
+        } else {
+          this.#reloadPendingTabs.add(tab);
+        }
+      }
+    }
+  }
+
+  /**
    * Disable an extension in a workspace.
    *
    * @param {string} spaceId
@@ -316,6 +402,7 @@ export class ZenSpaceExtensionsManager {
 
   static #notifyChange(spaceId) {
     this.updateAllWindows();
+    this.#reloadSpaceTabs(spaceId);
     try {
       Services.obs.notifyObservers(null, this.TOPIC_CHANGED, spaceId);
     } catch {
