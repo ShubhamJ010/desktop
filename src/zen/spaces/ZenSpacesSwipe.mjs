@@ -211,21 +211,9 @@ export class ZenSpacesSwipe {
   }
 
   #handleDetentHaptic(event) {
-    const state = this.#swipeState;
-    if (state.action || state.detentCrossed) {
+    if (this.#swipeState.action) {
       return;
     }
-
-    // Cheap math first: most update frames are nowhere near the detent, so
-    // they should not pay for the direction and workspace lookups below.
-    const progress = Math.abs(event.delta) / ZenSpacesSwipe.SUCCESS_THRESHOLD;
-    if (progress < 0.6) {
-      return;
-    }
-
-    // Resolve the gesture once. The flag is forward-only, so a swipe that
-    // wavers around the threshold neither re-checks nor re-fires.
-    state.detentCrossed = true;
 
     const ws = gZenWorkspaces;
     const isRTL = document.documentElement.matches(":-moz-locale-dir(rtl)");
@@ -239,8 +227,14 @@ export class ZenSpacesSwipe {
       return;
     }
 
-    // eslint-disable-next-line mozilla/valid-services
-    Services.zen?.playHapticFeedback?.();
+    const progress = Math.abs(event.delta) / ZenSpacesSwipe.SUCCESS_THRESHOLD;
+    const crossed = progress >= 0.6;
+
+    if (crossed && !this.#swipeState.detentCrossed) {
+      this.#swipeState.detentCrossed = true;
+      // eslint-disable-next-line mozilla/valid-services
+      Services.zen?.playHapticFeedback?.();
+    }
   }
 
   #handleSwipeUpdate(event) {
