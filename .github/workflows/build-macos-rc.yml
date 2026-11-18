@@ -31,10 +31,11 @@ concurrency:
 permissions:
   contents: read
   actions: read
+  workflows: write
 
 env:
   ARCH: aarch64
-  FORK_REPO_URL: "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+  FORK_REPO_URL: "https://x-access-token:${{ secrets.DEPLOY_KEY || github.token }}@github.com/${{ github.repository }}.git"
 
 jobs:
   detect:
@@ -124,10 +125,11 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      workflows: write
     steps:
       - name: Push upstream dev to fork dev
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.DEPLOY_KEY || github.token }}
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP"
@@ -146,6 +148,7 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: write
+      workflows: write
     outputs:
       sha: ${{ steps.merge.outputs.sha }}
       firefox: ${{ steps.firefox.outputs.version }}
@@ -157,7 +160,7 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.branch || 'zen-enh-main' }}
           fetch-depth: 0
-          token: ${{ github.token }}
+          token: ${{ secrets.DEPLOY_KEY || github.token }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -172,7 +175,7 @@ jobs:
       - name: Merge fork dev
         id: merge
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.DEPLOY_KEY || github.token }}
         run: |
           set -euo pipefail
           git fetch --no-tags "$FORK_REPO_URL" dev
@@ -210,7 +213,7 @@ jobs:
         if: ${{ steps.merge.outputs.changed == 'true' }}
         env:
           BRANCH: ${{ inputs.branch || 'zen-enh-main' }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.DEPLOY_KEY || github.token }}
         run: git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${BRANCH}"
 
       - name: Get Firefox version
