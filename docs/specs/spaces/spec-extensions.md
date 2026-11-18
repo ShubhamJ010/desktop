@@ -158,6 +158,7 @@ and any network work the background page does on its own schedule.
 | Case | Behavior |
 | --- | --- |
 | Extension disabled in two spaces | Each list is independent |
+| Tabs open in the changed space | Frontmost reloads immediately; others reload on `TabSelect` |
 | Space deleted | Its entry stays in the pref until the list is rewritten |
 | Tab moved to another space | `syncBrowserSpaces` runs on change and rewrites the browser map. Existing content scripts are not retroactively removed |
 | New window | `updateToolbarVisibility` runs per window |
@@ -167,8 +168,10 @@ and any network work the background page does on its own schedule.
 
 ## Known limits
 
-- Content scripts already running when the disabled list changes stay in that
-  document until reload. The hooks gate new injection, not removal.
+- Content scripts already running when the disabled list changes are flushed by
+  reloading the frontmost tab of that space. Other open tabs in the space are
+  marked and reload when selected — no burst of reloads at change time.
+  Background pages remain unaffected.
 - Background pages remain loaded. A background page can still use APIs that do
   not go through tabs, menus or commands, such as storage or its own network
   requests.
@@ -181,8 +184,10 @@ and any network work the background page does on its own schedule.
 
 1. Disable extension A in space 1. Its toolbar icon disappears in space 1 and
    returns in space 2.
-2. Open a page in space 1 with the extension's content script. The script does
-   not run. Reload after enabling it and the script runs.
+2. Open a page in space 1 with the extension's content script. Disable the
+   extension in space 1: the frontmost page reloads and the script stops. Other
+   tabs in the space reload when selected. Re-enable it: same path, script runs
+   again.
 3. Press the extension's shortcut in space 1. Nothing happens. Press it in space
    2 and the command runs.
 4. Right-click a page in space 1. The extension's menu items are absent.

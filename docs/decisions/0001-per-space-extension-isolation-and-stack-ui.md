@@ -95,6 +95,7 @@ Coordinates user interactions, folder states, and context menu options.
 - **Tab Access Restriction**: Hooking `canAccessTab` in `ext-browser.js` prevents background scripts from querying or messaging tabs in spaces where the extension is marked disabled.
 - **Zero CI Wait Time**: Hotpatchable in under 2 seconds on Twilight.app while preserving exact upstream patches in `src/browser/` for production CI builds.
 - **Extensible & SOLID Architecture**: `ZenSpaceExtensionsManager` acts as the domain service mediating state and synchronization across parent and child processes.
+- **Live Isolation on State Change**: After the browser-disabled map is written, the frontmost tab of the changed space reloads immediately; remaining tabs in that space reload lazily on `TabSelect`. Already-injected content scripts stop without a manual reload or a multi-tab reload burst.
 
 ### Negative & Mitigations
 - **Global Extension Background Pages**: Some WebExtension background pages remain loaded globally in the background process.
