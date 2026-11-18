@@ -237,7 +237,6 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
       {NSMinX(_baseFrame), NSMinY(_baseFrame), NSWidth(_baseFrame), NSHeight(_baseFrame)}, _visible,
       zen_pip_zoom::kSnapTolerance);
 
-  ZenPiPController *controller = [ZenPiPController forWindow:window];
   [controller disarmSwipe];
   [controller pinchBegan];
   // Freeze the picture at its current size for the whole gesture. AppKit then
