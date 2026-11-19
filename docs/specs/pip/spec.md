@@ -139,15 +139,28 @@ it the tap is absent and local events still work.
 
 ## Keyboard
 
-A local key monitor routes keys to the key card.
+A local key monitor routes keys to the key card. Escape and Command+W answer
+whenever the pointer is over the card; the letter shortcuts only while the card
+itself has the keyboard, so they cannot eat ordinary typing in the browser.
 
 | Key | Action |
 | --- | --- |
-| Escape, Command+W | Close the card |
+| Escape | Back to the tab: the card closes and the video plays inline again |
+| Command+W | Pause, then close the card |
+| A | Close the card and keep playing |
 | Space | Play or pause |
 | Left, Right | Seek back or forward |
 | Up, Down | Volume |
-| M | Mute |
+| M | Mute or unmute |
+
+Escape and Command+W match the close and back-to-tab buttons. While the card has
+the keyboard, Escape still reaches the page first so an open settings panel or
+fullscreen closes before the card does.
+
+The controller does not act on those keys itself. It posts a `zen-pip-command`
+notification and the player document performs it, because playback and the
+originating tab are reachable only from there. That also means the context
+menu's Back to Tab and the player's own key handler use the same code path.
 
 Other modified keys pass through untouched.
 
@@ -178,6 +191,9 @@ not their visible frame, so a card can cross the menu bar gap between screens.
 The controller posts `zen-pip-gesture-begin`, `zen-pip-gesture-end` and
 `zen-pip-gesture-hover` through `Services.obs`. The PiP player uses them to hide
 controls during a gesture and to scale the frozen child frame.
+
+It also posts `zen-pip-command` with one of `close-pause`, `close`, `unpip` or
+`mute`. Keys arrive that way, and the player decides what they mean.
 
 ## Known limits
 
