@@ -103,13 +103,13 @@
 +// swallowed the start of exactly that pull-back).
 +//
 +// Units are swipe delta, where 1.0 is 300pt of travel.
-+const ZEN_SWIPE_CANCEL_TRAVEL = 0.22;
++const ZEN_SWIPE_CANCEL_TRAVEL = 0.18;
 +const ZEN_SWIPE_CANCEL_LEAK_MS = 600;
 +
 +// How much of that travel counts when the fingers lift. Half a pull-back is
 +// already a decision to cancel; waiting for the full 66pt made the sheet sit
 +// there while the hand was clearly taking the gesture back.
-+const ZEN_SWIPE_CANCEL_RELEASE = 0.5;
++const ZEN_SWIPE_CANCEL_RELEASE = 0.40;
 +
 +
 +// The vertical component of a macOS swipe never reaches chrome JS (Gecko only
@@ -180,22 +180,31 @@
      if (this.active) {
        this._addBoxes();
      }
-@@ -766,16 +911,26 @@
+@@ -758,7 +903,6 @@
+     }
+ 
+     let box = null;
+-    let isCancelPath = false;
+     if (!this._prevBox.collapsed) {
+       box = this._prevBox;
+     } else if (!this._nextBox.collapsed) {
+@@ -766,16 +910,33 @@
      } else if (this._lastVisibleBox) {
        box = this._lastVisibleBox;
        box.collapsed = false;
 -      box.style.translate = this._lastVisibleTranslate;
+-      isCancelPath = true;
 +      box.style.transform = this._lastVisibleTranslate;
-       isCancelPath = true;
      }
++    const isCancelPath = !this._wasConfirmed || this._swipeCancelled;
      if (box != null) {
        this._isStoppingAnimation = true;
 -      box.style.transition = isCancelPath
 -        ? "opacity 0.2s linear"
 -        : "opacity 0.35s 0.35s cubic-bezier(.25,.1,0.25,1)";
-+      // Ardia SWIPE_MOTION.dismiss: the capsule fades and shrinks in place
-+      // instead of sliding back into the edge. Navigating keeps Ardia's
-+      // dismiss(120) beat so the capsule stays up while the page starts sliding.
++      // Ardia SWIPE_MOTION.dismiss: when navigating, capsule fades and shrinks in
++      // place after Ardia's dismiss(120) beat. On cancel, spring/slide back into
++      // the edge with zero delay instead of glitching or shrinking in mid-air.
 +      const DISMISS_MS = 150;
 +      const DISMISS_DELAY_MS = isCancelPath ? 0 : 120;
 +      const DISMISS_EASE = "cubic-bezier(0.55, 0.085, 0.68, 0.53)";
@@ -204,14 +213,21 @@
 +        `transform ${DISMISS_MS}ms ${DISMISS_EASE} ${DISMISS_DELAY_MS}ms`;
        box.addEventListener("transitionend", this, true);
        box.style.opacity = 0;
-+      const shownTranslate = box.style.transform;
-+      box.style.transform = `${
-+        shownTranslate && shownTranslate !== "none" ? `${shownTranslate} ` : ""
-+      }scale(0.01)`;
++      if (isCancelPath) {
++        const isBack =
++          box === this._prevBox ||
++          (this._lastVisibleBox && this._lastVisibleBox === this._prevBox);
++        box.style.transform = isBack ? "translateX(-72px)" : "translateX(72px)";
++      } else {
++        const shownTranslate = box.style.transform;
++        box.style.transform = `${
++          shownTranslate && shownTranslate !== "none" ? `${shownTranslate} ` : ""
++        }scale(0.01)`;
++      }
        window.getComputedStyle(box).opacity;
      } else {
        this._isStoppingAnimation = false;
-@@ -784,24 +939,44 @@
+@@ -784,24 +945,44 @@
    },
  
    _swipeCommand: function HSA_swipeCommand(aSwipeUpdate) {
@@ -266,7 +282,7 @@
    },
  
    /**
-@@ -818,71 +993,88 @@
+@@ -818,71 +999,91 @@
      if (!this.isAnimationRunning() || this._isStoppingAnimation) {
        return;
      }
@@ -278,7 +294,9 @@
 +    // _dismissSwipeSheet, which gates this method through _isStoppingAnimation
 +    // for the length of the dismissal.
 +    if (this._swipeList) {
-+      if (this._sheetCancelTravel(aSwipeUpdate) >= 1) {
++      const cancelProgress = this._sheetCancelTravel(aSwipeUpdate);
++      this._applySwipeListGeometry();
++      if (cancelProgress >= 1) {
 +        this._collapseSwipeHistory();
 +      }
 +      return;
@@ -378,26 +396,30 @@
 +        this._nextBox.classList.remove("will-navigate");
        }
      } else {
-       // Preserve a fade target for the aVal == 0 cancel-collapse path.
+-      // Preserve a fade target for the aVal == 0 cancel-collapse path.
++      // Preserve a fade target for the aVal == 0 cancel-collapse path without
++      // instantly collapsing the box to display:none, preventing flicker on stopAnimation.
        if (!this._prevBox.collapsed) {
          this._lastVisibleBox = this._prevBox;
 -        this._lastVisibleTranslate = this._prevBox.style.translate;
 +        this._lastVisibleTranslate = this._prevBox.style.transform;
++        this._prevBox.style.transform = `translateX(${offset}px)`;
++        this._prevBox.classList.remove("will-navigate");
        } else if (!this._nextBox.collapsed) {
          this._lastVisibleBox = this._nextBox;
 -        this._lastVisibleTranslate = this._nextBox.style.translate;
 +        this._lastVisibleTranslate = this._nextBox.style.transform;
++        this._nextBox.style.transform = `translateX(${-offset}px)`;
++        this._nextBox.classList.remove("will-navigate");
        }
-       this._prevBox.collapsed = true;
-       this._nextBox.collapsed = true;
+-      this._prevBox.collapsed = true;
+-      this._nextBox.collapsed = true;
 -      this._prevBox.style.translate = "none";
 -      this._nextBox.style.translate = "none";
-+      this._prevBox.style.transform = "none";
-+      this._nextBox.style.transform = "none";
      }
    },
  
-@@ -901,7 +1093,11 @@
+@@ -901,7 +1102,11 @@
     * @return true if there is a previous page in history, false otherwise.
     */
    canGoBack: function HSA_canGoBack() {
@@ -410,7 +432,7 @@
    },
  
    /**
-@@ -919,7 +1115,683 @@
+@@ -919,23 +1124,740 @@
     * any. This will also result in the animation overlay to be torn down.
     */
    swipeEndEventReceived: function HSA_swipeEndEventReceived() {
@@ -422,9 +444,9 @@
 +      this.commitSwipeHistorySelection();
 +      return;
 +    }
-+    this.stopAnimation();
-+  },
-+
+     this.stopAnimation();
+   },
+ 
 +  // ---------------------------------------------------------------------------
 +  // Ardia history sheet (hold after the gesture is confirmed)
 +  // ---------------------------------------------------------------------------
@@ -447,7 +469,7 @@
 +  //      does not morph back into the chevron first - a cancel has to read as
 +  //      fast as the swipe that never showed a list (see _dismissSwipeSheet).
 +
-+  /**
+   /**
 +   * Publishes the current gesture phase for the native scroll monitor.
 +   *
 +   * @param aPhase 0 = idle, 1 = swipe tracked, 2 = history sheet visible.
@@ -814,7 +836,11 @@
 +    // The sheet slides so the selected row sits on the window centre line.
 +    const offsetY =
 +      ((2 * state.selected + 1 - count) * ZEN_SWIPE_LIST_ROW) / 2 + state.nudge;
-+    state.capsule.style.transform = `translateY(${offsetY}px)`;
++    const cancelProgress = this._swipeTravelProgress(state.travel);
++    const isBack = this._swipeDirection === "back";
++    const cancelShiftX = isBack ? -cancelProgress * 28 : cancelProgress * 28;
++    state.capsule.style.transform = `translateX(${cancelShiftX}px) translateY(${offsetY}px)`;
++    state.capsule.style.opacity = `${1 - cancelProgress * 0.35}`;
 +    state.pill.style.transform = `translateY(${
 +      (count - 1 - state.selected) * ZEN_SWIPE_LIST_ROW
 +    }px)`;
@@ -841,6 +867,7 @@
 +    if (!state || !Number.isFinite(aDy)) {
 +      return;
 +    }
++    state.lastVerticalTs = Date.now();
 +    // Mirror each sample into the browser console when the native debug pref is
 +    // on, so the JS side of the channel can be traced alongside the native log.
 +    try {
@@ -887,16 +914,33 @@
 +    const now = Date.now();
 +    state.travel = this._leakSwipeTravel(state, now);
 +    const delta = aSwipeUpdate.delta;
-+    if (Number.isFinite(delta) && delta !== 0) {
++    if (Number.isFinite(delta)) {
 +      const sign = this._swipeDirSign || Math.sign(delta) || 1;
 +      // Movement along the confirmed direction is positive; pulling back is
 +      // negative, and that is what the bucket collects. Vertical browsing
 +      // arrives here as small alternating samples, which cancel themselves out.
 +      const pos = sign * delta;
++      const isVerticalActive =
++        state.lastVerticalTs && now - state.lastVerticalTs < 250;
++
 +      if (state.lastPos !== null) {
-+        state.travel = Math.max(0, state.travel + (state.lastPos - pos));
++        const step = state.lastPos - pos;
++        if (step > 0) {
++          // While browsing vertically, ignore tiny horizontal trackpad jitter (< 0.03)
++          if (!isVerticalActive || step >= 0.03) {
++            state.travel = Math.max(0, state.travel + step);
++          }
++        } else {
++          // Moving forward drains accumulated cancel travel
++          state.travel = Math.max(0, state.travel + step);
++        }
 +      }
 +      state.lastPos = pos;
++      // Instant cancel when pulled all the way back near the screen edge (pos <= 0.04)
++      // and user is not actively scrolling vertically
++      if (pos <= 0.04 && !isVerticalActive) {
++        state.travel = ZEN_SWIPE_CANCEL_TRAVEL;
++      }
 +    }
 +    return this._swipeTravelProgress(state.travel);
 +  },
@@ -1046,8 +1090,14 @@
 +    // count and the swipe commits normally.
 +    const state = this._swipeList;
 +    if (state) {
-+      state.travel = this._leakSwipeTravel(state, Date.now());
-+      if (this._swipeTravelProgress(state.travel) >= ZEN_SWIPE_CANCEL_RELEASE) {
++      const now = Date.now();
++      state.travel = this._leakSwipeTravel(state, now);
++      const isVerticalActive =
++        state.lastVerticalTs && now - state.lastVerticalTs < 250;
++      if (
++        this._swipeTravelProgress(state.travel) >= ZEN_SWIPE_CANCEL_RELEASE ||
++        (!isVerticalActive && state.lastPos !== null && state.lastPos <= 0.05)
++      ) {
 +        this._collapseSwipeHistory();
 +        return true;
 +      }
@@ -1067,7 +1117,7 @@
 +    // Keep the sheet on screen for the fade so the dismissal matches Ardia's
 +    // `dismiss()`; `_removeBoxes()` drops the nodes when the fade is over.
 +    this._dismissSwipeHistory();
-     this.stopAnimation();
++    this.stopAnimation();
 +    if (target) {
 +      // `gotoIndex` is the jump the sheet exists for: Ardia's
 +      // `goToHistoryItem()` goes straight to the picked entry, not one step.
@@ -1091,10 +1141,12 @@
 +      }
 +    }
 +    return true;
-   },
- 
-   /**
-@@ -929,13 +1801,26 @@
++  },
++
++  /**
+    * Checks to see if history swipe animations are supported by this
+    * platform/configuration.
+    *
     * return true if supported, false otherwise.
     */
    _isSupported: function HSA__isSupported() {
@@ -1123,7 +1175,7 @@
          break;
      }
    },
-@@ -954,42 +1839,87 @@
+@@ -954,42 +1876,87 @@
     * Adds the boxes that contain the arrows used during the swipe animation.
     */
    _addBoxes: function HSA__addBoxes() {
@@ -1218,7 +1270,7 @@
      if (this._container) {
        this._container.remove();
      }
-@@ -1011,10 +1941,14 @@
+@@ -1011,10 +1978,14 @@
      return element;
    },
  
