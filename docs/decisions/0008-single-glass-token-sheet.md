@@ -30,8 +30,8 @@ tokens and one class.
 - `--zen-ardia-glass-filter`: `blur(42px) saturate(180%)`, declared once.
 - `--zen-ardia-glass-fill`: `light-dark()` with 0.86 alpha, so the tint follows
   the scheme and the blur establishes depth.
-- Rim and shadow tokens include a 1px inset highlight, which is what makes the
-  edge read as glass rather than as a flat panel.
+- The rim is a 1px border, and the shadow token adds a 1px inset highlight,
+  which is what makes the edge read as glass rather than as a flat panel.
 - `--zen-ardia-glass-fill-over-video`, `-rim-over-video` and `-shadow-over-video`
   are fixed dark values for the PiP controls.
 - `.zen-ardia-glass` applies the fill, filter, border and shadow together.

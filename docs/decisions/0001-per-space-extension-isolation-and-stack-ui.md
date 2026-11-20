@@ -49,7 +49,7 @@ Decouples visual geometry and slot allocation from DOM event logic (**Open/Close
   - **1 Extension**: Center slot contains the active extension icon; Left and Right slots display frosted dashed placeholder slots with generic extension puzzle silhouettes (`chrome://mozapps/skin/extensions/extensionGeneric.svg`).
   - **2 Extensions**: Left and Center slots display active extension icons; Right slot displays the placeholder silhouette.
   - **3+ Extensions**: Left, Right, and elevated Center slots display active extension icons in layered z-index order.
-- **Aesthetics**: Cards use `backdrop-filter: blur(12px)`, translucent obsidian surfaces (`rgba(30, 30, 34, 0.62)` back, `rgba(52, 52, 58, 0.82)` front), specular border highlights (`rgba(255, 255, 255, 0.28)`), and centered rotational fanning (`-12deg`, `0deg`, `+12deg`).
+- **Aesthetics**: 18px cards with `backdrop-filter: blur(12px)`, translucent obsidian surfaces (`rgba(30, 30, 34, 0.62)` sides, `rgba(52, 52, 58, 0.82)` center), specular border highlights (`rgba(255, 255, 255, 0.14)` sides, `rgba(255, 255, 255, 0.28)` center), and centered rotational fanning (`-13deg`, raised center, `+13deg`). Hover widens the fan to `18deg`.
 
 ### 3. Panel Controller: `nsZenSiteDataPanel`
 Coordinates user interactions, folder states, and context menu options.
@@ -75,7 +75,7 @@ Coordinates user interactions, folder states, and context menu options.
 
 ### Alternative C: Dynamic 1/2/3 Card Fan Geometry
 - **Description**: Dynamically resizing or re-angling cards when only 1 or 2 extensions are disabled.
-- **Drawbacks**: Resulted in inconsistent visual weight and awkward asymmetrical gaps inside the 44px extension box.
+- **Drawbacks**: Resulted in inconsistent visual weight and awkward asymmetrical gaps inside the 18px extension box.
 - **Rejected**: Standardized on a 3-card fan geometry at all times, using frosted placeholder silhouettes to maintain visual balance.
 
 ---
@@ -93,7 +93,7 @@ Coordinates user interactions, folder states, and context menu options.
 - **Deep Context Menu Suppression**: Intercepting `canAccessContext` in Gecko's `ext-menus.js` eliminates clutter and prevents interaction with disabled extensions from the webpage right-click menu.
 - **Content Script & DOM Isolation**: Hooking `ExtensionContent.sys.mjs` prevents disabled extensions from injecting scripts, content styles, and sandboxes into tabs belonging to that workspace, directly reducing DOM mutation overhead and improving page load latency.
 - **Tab Access Restriction**: Hooking `canAccessTab` in `ext-browser.js` prevents background scripts from querying or messaging tabs in spaces where the extension is marked disabled.
-- **Zero CI Wait Time**: Hotpatchable in under 2 seconds on Twilight.app while preserving exact upstream patches in `src/browser/` for production CI builds.
+- **Fast Iteration**: Chrome-side changes can be patched into a built Twilight.app while the exact upstream patches in `src/browser/` still drive production CI builds.
 - **Extensible & SOLID Architecture**: `ZenSpaceExtensionsManager` acts as the domain service mediating state and synchronization across parent and child processes.
 - **Live Isolation on State Change**: After the browser-disabled map is written, the frontmost tab of the changed space reloads immediately; remaining tabs in that space reload lazily on `TabSelect`. Already-injected content scripts stop without a manual reload or a multi-tab reload burst.
 

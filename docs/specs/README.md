@@ -4,7 +4,7 @@ Specs for the native macOS work merged through
 [PR #5](https://github.com/ShubhamJ010/desktop/pull/5) on `zen-enh-main`.
 
 Each folder holds the behavior contract for one feature. The "why" lives in
-`docs/decisions/` as an ADR. The product summary lives in [PRD.md](PRD.md).
+`docs/decisions/` as an ADR. The product summary lives in [PRD.md](../PRD.md).
 
 
 ## Index
@@ -12,7 +12,7 @@ Each folder holds the behavior contract for one feature. The "why" lives in
 | Spec | Feature | Code |
 | --- | --- | --- |
 | [pip/spec.md](pip/spec.md) | Floating PiP card. Corner snap, edge stash, fling, pinch zoom, keyboard focus | `src/zen/pip/` |
-| [pip/spec-meet.md](pip/spec-meet.md) | Google Meet call controls inside the PiP window | `src/toolkit/components/pictureinpicture/`, `src/toolkit/actors/PictureInPictureChild-sys-mjs.patch` |
+| [pip/spec-meet.md](pip/spec-meet.md) | Google Meet call controls inside the PiP window | `src/toolkit/components/pictureinpicture/`, `src/toolkit/actors/PictureInPictureChild-sys-mjs.patch`, `src/zen/media/ZenMediaController.sys.mjs` |
 | [ctrl-tab/spec.md](ctrl-tab/spec.md) | Recent tabs card on Ctrl+Tab, scoped to the active space | `src/browser/components/tabbrowser/content/browser-ctrlTab-js.patch`, `src/browser/themes/shared/tabbrowser/ctrlTab-css.patch` |
 | [swipe/spec.md](swipe/spec.md) | Back/forward trackpad swipe with capsule indicator and history sheet | `src/zen/gesture/`, `src/browser/base/content/browser-gestureSupport-js.patch`, `src/widget/cocoa/nsCocoaWindow-mm.patch` |
 | [spaces/spec-extensions.md](spaces/spec-extensions.md) | Enable or disable extensions per space, including Gecko enforcement | `src/zen/urlbar/ZenSiteDataPanel.sys.mjs`, `src/browser/components/extensions/parent/*.patch`, `src/browser/modules/ExtensionContent-sys-mjs.patch` |

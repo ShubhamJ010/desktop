@@ -14,18 +14,19 @@ gesture.
 
 | File | Role |
 | --- | --- |
-| `src/zen/gesture/ZenSwipeController.mm` | Scroll monitor, phase handling, vertical streaming, haptics |
+| `src/zen/gesture/ZenSwipeController.mm` | Scroll monitor, phase handling, vertical streaming |
 | `src/zen/gesture/ZenSwipeCapsuleView.mm` | Capsule drawing and dismiss animations |
 | `src/zen/gesture/ZenSwipeMath.h` | Rubber band, progress, offset |
 | `src/browser/base/content/browser-gestureSupport-js.patch` | Swipe tracker, capsule markup, history sheet, phase pref |
 | `src/widget/cocoa/nsCocoaWindow-mm.patch` | Routes Cocoa magnify and swipe events |
+| `src/widget/cocoa/nsCocoaUtils-mm.patch` | Reads `zen.widget.macos.override-system-swipe-gestures` |
 | `src/zen/common/styles/zen-browser-ui.css` | Capsule and history sheet styles |
 
 ## Prefs
 
 | Pref | Default | Meaning |
 | --- | --- | --- |
-| `zen.widget.macos.override-system-swipe-gestures` | true | Take horizontal swipes from the system |
+| `zen.widget.macos.override-system-swipe-gestures` | true | Let the Cocoa layer claim horizontal swipes from the system |
 | `zen.widget.macos.back-gesture-indicator` | true | Draw the capsule |
 | `zen.widget.macos.back-gesture-phase` | 0 | Published by JS. 0 idle, 1 tracking, 2 sheet visible |
 | `zen.widget.macos.back-gesture-history-count` | 3 | Rows in the history sheet |
@@ -46,7 +47,8 @@ gesture.
 
 `CapsuleOffset` maps progress to an offset with the standard rubber band curve,
 so the capsule decelerates instead of stopping at the edge. A confirmed swipe
-runs a short pulse before removal. A cancelled one springs back into the edge.
+fades out in place over 160ms. A cancelled one animates off into the edge over
+200ms.
 
 The capsule sits in the browser stack, above page content and below panels. It
 uses the shared glass tokens from `zen-ardia-glass.css`.
@@ -120,10 +122,11 @@ row. Release below it returns to the page.
 
 ## Haptics
 
-The native monitor fires one alignment feedback when the gesture crosses the
-confirmation threshold, using the same haptic path as space switches. It fires
-on the way in only, so wavering at the threshold does not buzz repeatedly.
-`zen.haptic-feedback.enabled` gates it.
+The back/forward swipe plays no haptic. Confirmation is visual: the capsule grows
+from 72 to 82 points and its chevron thickens and brightens at the threshold.
+Space swipes have their own detent, documented in
+[spec-swipe-haptics.md](../spaces/spec-swipe-haptics.md); it is a separate code
+path and does not fire for history navigation.
 
 ## Interaction with space swipes
 
@@ -159,8 +162,8 @@ a bug and capture the event at the earliest consumer that wants it.
 
 ## Verification
 
-1. Swipe right on a page with history. The capsule grows and a haptic fires at
-   the threshold. Release. The page goes back.
+1. Swipe right on a page with history. The capsule grows and its chevron
+   brightens at the threshold. Release. The page goes back.
 2. Swipe right, hold. The sheet lists three destinations. Move up and down. The
    selection follows, and the sheet stays.
 3. From a lower row, pull back left. The sheet fades out and the page stays.

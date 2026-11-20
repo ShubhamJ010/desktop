@@ -36,7 +36,7 @@ Zen is a firefox-based browser with the aim of pushing your productivity to a ne
 
 This fork adds native macOS gestures, tab switching, and workspace isolation on top of Zen Browser:
 
-- Trackpad swipe navigation: rubber-band swipe indicator, hold to browse session history, reverse-swipe cancellation, and haptic detents for navigation and workspace switching.
+- Trackpad swipe navigation: rubber-band swipe indicator, hold to browse session history, reverse-swipe cancellation, and haptic detents for workspace switching.
 - Picture-in-picture window management: harmonic spring corner snapping, fling to edge-stash, 120 Hz pinch-to-zoom with freeze-frame scaling, floating window keyboard focus, and Google Meet controls for mic, camera, and hang up.
 - Per-workspace extension isolation: disable extensions per workspace, hide their toolbar icons, block background tab access and shortcut keys, and prevent content script injection. Includes a 3-card stack indicator in the site data panel to manage disabled extensions.
 - Vertical tab switcher: replaces the default Ctrl+Tab grid with a centered frosted glass list filtered to the current workspace, instant switching on release, space switching with number keys 1 to 9, and single-key actions to close or unload tabs.

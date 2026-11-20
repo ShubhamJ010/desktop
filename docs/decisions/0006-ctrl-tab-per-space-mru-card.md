@@ -26,8 +26,8 @@ small card for closing tabs or changing space.
 
 Replace the panel contents in place, keeping Firefox's shortcut plumbing.
 
-- The card is 400px wide with 16px radius and 40px rows. Nine rows maximum,
-  read from `zen.ctrlTab.max-previews`.
+- The card is 400px wide with 16px radius and 40px rows. Nine rows by default,
+  read from `zen.ctrlTab.max-previews`, which the lazy getter clamps to 4 to 49.
 - The list is the active space's tabs in most recent use order. Pending tabs are
   included unless the user explicitly set
   `zen.ctrlTab.show-pending-tabs` to false, because a restored tab is still a

@@ -46,19 +46,23 @@ Neither pref is in `prefs/zen/sync.yaml`, so the list stays on the device.
 | --- | --- |
 | `getDisabled(spaceId)` | Returns a copy of the space's list |
 | `isDisabled(spaceId, extId)` | Boolean check |
-| `setDisabled(spaceId, list)` | Replaces the list, drops empty entries, writes JSON, notifies |
+| `setDisabled(spaceId, list)` | Replaces the list, deduplicates it, deletes the entry when the list is empty, writes JSON, notifies |
 | `disable(spaceId, extId)` | Adds the id and notifies |
 | `enable(spaceId, extId)` | Removes the id and notifies |
-| `addChangeListener(fn)` | Registers a window listener. Returns nothing |
+| `addChangeListener(fn)` | Registers a listener and returns an unsubscribe function |
 | `updateAllWindows()` | Resyncs the browser map and toolbar visibility in every window |
 | `syncBrowserSpaces()` | Rewrites the browserId map |
 | `updateToolbarVisibility(win)` | Adds or removes `data-zen-space-hidden` |
+| `getAllDisabled()` | Returns the whole `{ spaceId: [extId] }` map, or `{}` on a parse failure |
+| `getExtIdFromElement(el)` | Resolves an element to an extension id, or null |
 
 Every write catches a pref or JSON failure and logs it. Worse than throwing, the
 panel keeps rendering from the previous list.
 
 Changes fire `Services.obs` topic `zen-space-extensions-changed` and the
-registered window listeners. The panel listens to the topic.
+registered window listeners. The same path reloads the changed space's tabs: the
+frontmost tab reloads immediately and the rest are marked for reload on
+`TabSelect`. The panel listens to the topic.
 
 ## Toolbar hiding
 
@@ -68,15 +72,16 @@ is disabled in the active space, and removes the attribute otherwise.
 
 `getExtIdFromElement` resolves an id in this order: `data-extensionid`,
 `extension-id`, `dataset.extensionid`, `WebExtensionPolicy.getByWidgetId` on the
-element id, then a match against active policies for ids that end in
-`-browser-action`.
+element id, then, for an element id ending in `-browser-action`, a comparison of
+the prefix against the sanitized ids of active policies and then of the ids
+already in the disabled map.
 
 Elements inside the site data panel are skipped, and any stale hidden attribute
 inside the panel is removed. The panel shows all extensions regardless of space.
 
-CSS hides `[data-zen-space-hidden="true"]` in the nav bar. It does not collapse
-space that was reserved by the toolbar layout, so a hidden icon leaves a gap
-until the toolbar relayouts. Treat that as a cosmetic known limit.
+CSS sets `display: none` on `[data-zen-space-hidden="true"]` items in the nav
+bar, the tabs toolbar and the personal toolbar, so a hidden item leaves the
+toolbar layout instead of only turning transparent.
 
 ## Gecko enforcement
 
@@ -120,9 +125,10 @@ extensions. `ZenDisabledStackRenderer` always lays out three slots.
 | 3 or more | Icon | Icon, raised | Icon |
 
 Placeholders use `chrome://mozapps/skin/extensions/extensionGeneric.svg`. Cards
-are 44px boxes with a frosted fill, a specular rim, and a fan of -12, 0 and +12
-degrees. The geometry is fixed at three cards so the stack never looks
-lopsided.
+are 18px boxes with a 12px backdrop blur. Side cards rotate -13 and +13 degrees
+behind a center card raised 1.5px, and hovering the stack widens the fan to 18
+degrees and lifts the center. The geometry is fixed at three cards so the stack
+never looks lopsided.
 
 Clicking the stack opens the folder view in place. The container gets
 `disabled-folder="true"`, the header shows the space icon and a "Disabled"
@@ -178,7 +184,8 @@ and any network work the background page does on its own schedule.
 - The browser map is rewritten on every change across all windows and tabs. On a
   profile with many windows this is a visible pref write.
 - The stacking order of icons is by list order, not by most recently used.
-- Toolbar layout gaps after hiding are not animated.
+- Hiding a toolbar item is instant; the surrounding items reflow with no
+  animation.
 
 ## Verification
 

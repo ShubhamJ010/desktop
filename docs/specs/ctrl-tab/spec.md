@@ -15,13 +15,13 @@ card for picking, closing and space switching.
 | `src/browser/components/tabbrowser/content/browser-ctrlTab-js.patch` | Card, list building, keys, close and unload |
 | `src/browser/themes/shared/tabbrowser/ctrlTab-css.patch` | Geometry, glass, row and exit animations |
 | `prefs/zen/zen.yaml` | `zen.ctrlTab.max-previews`, `zen.ctrlTab.show-pending-tabs` |
-| `src/zen/common/styles/zen-ardia-glass.css` | Glass tokens reused by the card |
+| `src/zen/common/styles/zen-ardia-glass.css` | Blur token reused by the card; the card redeclares the fill and defines its own rim and shadow |
 
 ## Prefs
 
 | Pref | Default | Meaning |
 | --- | --- | --- |
-| `zen.ctrlTab.max-previews` | 9 | Rows shown. Read once at startup through a lazy preference getter |
+| `zen.ctrlTab.max-previews` | 9 | Rows shown. Read once at startup through a lazy preference getter, clamped to 4 to 49 |
 | `zen.ctrlTab.show-pending-tabs` | true | Include tabs of a space that is restored but not loaded |
 | `zen.tabs.ctrl-tab.ignore-essential-tabs` | false | Existing pref, still honored by the list builder |
 | `zen.tabs.ctrl-tab.ignore-pending-tabs` | false | Existing pref, still honored by the list builder |
@@ -40,14 +40,17 @@ Card and CSS share these numbers. Changing one without the other breaks the card
 | Padding | 8 px |
 | Row height | 40 px |
 | Row radius | 8 px |
-| Row gap | 10 px |
+| Icon to label gap | 10 px (rows sit back to back, with no gap between them) |
 | Favicon | 16 px |
 | Card height | rows times 40 px, capped at 360 px |
-| Backdrop | `blur(42px) saturate(180%)` |
+| Backdrop filter | `blur(42px) saturate(180%)`, the shared token |
+| Card fill | `light-dark(rgba(248,248,252,0.97), rgba(40,41,45,0.97))`, denser than the shared glass fill because a popup has no page behind it |
+| Card rim and shadow | A 0.5px rim and a `0 12px 28px` shadow, declared by the card rather than taken from the glass tokens |
 | Show delay | 140 ms (`SHOW_AFTER_MS`) |
 
 The card is a popup with its native max width and max height removed, so the
-frosted panel can reach 400px and 360px.
+frosted panel can reach 400px and 360px. It enters with a 150ms scale and
+opacity animation.
 
 ## Lifecycle
 
@@ -154,4 +157,5 @@ A failed switch clears the override and logs the error.
 5. Press Q. Normal tabs close, essentials unload, the card closes.
 6. Press 2 while holding Ctrl. The space switches with a slide, and the card
    lists the new space's tabs.
-7. Set `zen.ctrlTab.max-previews` to 3. Three rows appear. Restart and repeat.
+7. Set `zen.ctrlTab.max-previews` to 4 and restart. Four rows appear. Values
+   below 4 clamp to 4.

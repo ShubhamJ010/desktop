@@ -26,7 +26,7 @@ came out looking like different materials.
 | `--zen-ardia-glass-filter` | `blur(42px) saturate(180%)` |
 | `--zen-ardia-glass-fill` | `light-dark(rgba(246,246,250,0.86), rgba(38,39,43,0.86))` |
 | `--zen-ardia-glass-rim` | 1px, `rgba(0,0,0,0.125)` light, `rgba(255,255,255,0.15)` dark |
-| `--zen-ardia-glass-shadow` | 2px 8px drop shadow plus a 1px inset highlight |
+| `--zen-ardia-glass-shadow` | `0 2px 8px` drop shadow plus a 1px inset highlight |
 | `--zen-ardia-glass-fill-over-video` | `rgba(38,39,43,0.86)` |
 | `--zen-ardia-glass-rim-over-video` | 1px `rgba(255,255,255,0.15)` |
 | `--zen-ardia-glass-shadow-over-video` | Heavier drop shadow, same inset highlight |
@@ -44,6 +44,9 @@ to follow there.
   recipe.
 - The PiP player links the sheet directly because it is a separate document and
   does not load `zen-single-components.css`.
+- The Ctrl+Tab card is the one consumer that goes further: it takes the filter
+  token but redeclares the fill at 0.97 alpha and sets its own 0.5px rim and
+  `0 12px 28px` shadow, because a popup window has no page behind it to sample.
 
 ## Reduced transparency
 
@@ -56,7 +59,7 @@ override the surface would read as a washed-out gray.
 | Filter | `none` |
 | Fill | `#f2f2f7` light, `#252629` dark |
 | Over-video fill | `#252629` |
-| Shadow | 4px 14px, no inset highlight |
+| Shadow | `0 4px 14px`, no inset highlight |
 
 ## Contrast
 

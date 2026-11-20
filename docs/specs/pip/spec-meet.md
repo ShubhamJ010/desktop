@@ -13,7 +13,9 @@ mute, camera and hangup buttons that act on the real meeting page.
 | File | Role |
 | --- | --- |
 | `src/toolkit/actors/PictureInPictureChild-sys-mjs.patch` | Picks the Meet video, reads meeting state, clicks page buttons, sends state |
-| `src/toolkit/components/pictureinpicture/PictureInPicture-sys-mjs.patch` | Auto-PiP when switching tabs |
+| `src/toolkit/components/pictureinpicture/PictureInPicture-sys-mjs.patch` | Auto-PiP when switching tabs, inter-workspace unpip, Meet state routing |
+| `src/zen/media/ZenMediaController.sys.mjs` | Sidebar media card; reads `respect-disablePictureInPicture` for its own PiP button |
+| `src/zen/settings/panes/advanced.inc.xhtml` | Settings toggle for the auto-PiP pref |
 | `src/toolkit/components/pictureinpicture/content/player-js.patch` | Builds the buttons, sends commands, renders state |
 | `src/toolkit/components/pictureinpicture/content/player-xhtml.patch` | Container markup and stylesheet link |
 | `src/toolkit/themes/shared/pictureinpicture/player-css.patch` | Button layout and the glass treatment |
@@ -21,12 +23,17 @@ mute, camera and hangup buttons that act on the real meeting page.
 ## Prefs
 
 ```yaml
-media.videocontrols.picture-in-picture.enable-when-switching-tabs.enabled: true
-media.videocontrols.picture-in-picture.respect-disablePictureInPicture: false
+# prefs/firefox/pip.yaml, upstream default
+media.videocontrols.picture-in-picture.enable-when-switching-tabs.enabled: false
+# Read by src/zen/media/ZenMediaController.sys.mjs, default true
+media.videocontrols.picture-in-picture.respect-disablePictureInPicture: true
 ```
 
-The second pref is off so a site that opts out of PiP still gets the automatic
-transition on tab switch. That is deliberate for Meet, which does not opt in.
+Auto-PiP is off by default. The user turns it on with the "open PiP when
+switching tabs" toggle in Settings > Advanced, which writes
+`enable-when-switching-tabs.enabled`. Nothing in this fork forces
+`respect-disablePictureInPicture` off; the sidebar media card reads it to decide
+whether to offer its PiP button, and the launcher still honours it.
 
 ## Detection
 
@@ -48,10 +55,13 @@ The patch:
 2. Sorts them by width times height, largest first.
 3. Returns the largest. That is the active speaker, a presentation, or a screen
    share, never the small self view.
-4. Treats a muted video as playable when the document is Meet.
+4. Treats a muted video as playable when the document is Meet, both in the
+   auto-PiP path and in the eligibility check.
 5. Skips the duration check for Meet.
 
-If no video passes the size and playing filter, the default picker runs.
+If no video passes the size and playing filter, the default picker runs. The
+auto-PiP path also skips a browser whose audio is muted, so a muted tab does not
+pop out a card.
 
 ## Reading meeting state
 
@@ -69,24 +79,28 @@ Otherwise an `aria-label` that mentions turning the device on means the device i
 currently off. The state object carries a mic flag and a camera flag.
 
 The child actor watches the meeting document with a `MutationObserver` on
-attributes and child nodes. It also sends state at 300ms, 800ms and 1500ms after
-setup, because Meet paints its toolbar progressively. Each change sends
-`PictureInPicture:MeetState`.
+attributes only (`data-is-muted`, `aria-label`, `class`, `style`) with `subtree`
+set; it does not observe child list changes. It sends state once immediately, then
+again at 300ms, 800ms and 1500ms after setup, because Meet paints its toolbar
+progressively. Each change sends `PictureInPicture:MeetState`.
 
 ## Commands
 
-The player sends one of three messages to the child actor. The actor clicks the
-matching page button, waits 250ms, then sends fresh state. The button therefore
-follows the page, not the click.
+The player sends one of three messages to the child actor. For mic and camera the
+actor clicks the matching page button, waits 150ms, then sends fresh state, so the
+button follows the page rather than the click. When the button cannot be found it
+dispatches Meet's own shortcut instead (`Cmd+D` for the mic, `Cmd+E` for the
+camera). Leave only clicks; it sends no state back.
 
 | Message | Effect |
 | --- | --- |
 | `PictureInPicture:MeetToggleMic` | Click the mic button |
 | `PictureInPicture:MeetToggleCam` | Click the camera button |
-| `PictureInPicture:MeetLeaveCall` | Click leave, then report final state |
+| `PictureInPicture:MeetLeaveCall` | Click leave. No state is sent back |
 
-If a button is missing, the actor sends the current state and does nothing. A
-call that has already ended has no leave button, so the message is a no-op.
+A call that has already ended has no leave button, so the message is a no-op. The
+mic and camera messages still report state after their 150ms wait, even when the
+shortcut fallback ran.
 
 ## Player UI
 
@@ -113,13 +127,15 @@ swipe or pinch, and restored when it ends.
 | --- | --- |
 | Screen share plus speaker tiles | The largest playing video wins, which is normally the share |
 | Audio-only call | No video passes the filter, so PiP does not open |
-| Meet changes markup | Several selector forms are tried. Unknown markup shows the last known state and buttons become no-ops |
-| Call ends in the tab | Observer clears the buttons' state source. The card keeps its last icons until closed |
+| Meet changes markup | Several selector forms are tried. Mic and camera fall back to `Cmd+D` and `Cmd+E`; unknown markup leaves the last known state on screen |
+| Call ends in the tab | Observer disconnects on close. The card keeps its last icons until closed |
 | Two Meet tabs | Each player window holds its own child actor and its own observer |
 | Non-English UI | `data-is-muted` still works. Leave falls back to a `data-tooltip` match, which may miss |
 
 ## Known limits
 
+- Auto-PiP is gated on a pref that ships off. Without it the Meet stream still
+  opens when the user asks for PiP, but switching tabs does nothing.
 - Meet's DOM is not an API. A redesign can break the selectors. The state path
   degrades to no-ops rather than wrong actions.
 - The camera icon mirrors the page's mute flag, not the actual track state. If
@@ -129,11 +145,13 @@ swipe or pinch, and restored when it ends.
 
 ## Verification
 
-1. Join a Meet call with a camera and a second participant.
+1. Join a Meet call with a camera and a second participant. Turn on the auto-PiP
+   toggle in Settings > Advanced if it is off.
 2. Switch to another tab. The call opens in PiP showing the other participant.
 3. Press the mic button in PiP. The tab's mic button changes and the PiP icon
    changes within about 300ms.
 4. Repeat for the camera.
-5. Press hangup. The call ends in the tab and the card closes.
+5. Press hangup. The call ends in the tab and the card closes. No state message
+   follows the click.
 6. Toggle mute in the tab. The PiP icon follows.
 7. Start a screen share. The PiP card switches to the shared screen.

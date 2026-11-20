@@ -83,8 +83,9 @@ pulls it into a corner when its center is in that corner's quadrant.
 
 A release outside the screen's visible frame, or past its edge, calls
 `stashAt:`. The card slides so that `kPeek` points remain visible. The handle is
-a 28 by 28 point view inset 12 points, shown only while stashed. Clicking it
-calls `unstash`, which returns the card to `kReturnMargin` from the edge.
+a 28 point wide strip along the card's inner edge, as tall as the card, with a
+chevron; it is shown only while stashed. Clicking it calls `unstash`, which
+returns the card to `kReturnMargin` from the edge.
 
 A stashed card still remembers its screen. If the display disconnects,
 `rescueIfLost` moves the card to the screen with the largest overlap.
@@ -97,7 +98,7 @@ Two inputs share one path.
 | --- | --- |
 | Precise scroll with Command | `exp(0.004 * deltaY)` per event |
 | Line scroll with Command | `exp(0.08 * deltaY)` per event |
-| Magnify | `max(0.05, 1 + magnification)` |
+| Magnify | `max(0.05, 1 + magnification)` per event, then each step is clamped to 0.90 to 1.10 in `ZenPiPZoom.mm` so trackpad spikes cannot jump the size |
 
 Rules:
 
@@ -116,6 +117,10 @@ Rules:
 - At the end, `KeepOnScreen` clamps the frame into the visible area. A card
   within 56 points of a corner slot on each axis is pulled into that slot, which
   keeps a docked card docked after a resize.
+- Reaching the minimum or maximum width plays one alignment haptic per limit,
+  latched so the buzz does not repeat while the gesture stays pinned. This path
+  calls the haptic performer directly and is not gated by
+  `zen.haptic-feedback.enabled`.
 
 ## Focus
 
@@ -139,9 +144,10 @@ it the tap is absent and local events still work.
 
 ## Keyboard
 
-A local key monitor routes keys to the key card. Escape and Command+W answer
-whenever the pointer is over the card; the letter shortcuts only while the card
-itself has the keyboard, so they cannot eat ordinary typing in the browser.
+A local key monitor routes keys to the card. Command+W is always consumed;
+Escape answers from the pointer and falls through to the page while the card is
+key. The letter shortcuts (A, M) only apply while the card itself has the
+keyboard, so they cannot eat ordinary typing in the browser.
 
 | Key | Action |
 | --- | --- |

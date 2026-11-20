@@ -31,7 +31,7 @@ Split the work.
 
 - `src/zen/gesture/ZenSwipeController.mm` installs a scroll monitor on each
   browser window. It tracks horizontal travel, confirms the gesture, drives the
-  capsule and plays one haptic.
+  capsule.
 - `browser-gestureSupport.js` keeps the swipe state, the navigation, the sheet
   contents and the row selection.
 - The two layers share one integer pref, `zen.widget.macos.back-gesture-phase`.

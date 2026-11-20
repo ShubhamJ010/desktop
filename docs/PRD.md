@@ -38,8 +38,8 @@ Zen inherits Firefox's gesture handling on macOS.
 
 ## Goals
 
-1. Back/forward navigation feels native. Capsule, rubber band, haptic, and a
-   destination picker on hold.
+1. Back/forward navigation feels native. Capsule, rubber band, and a destination
+   picker on hold.
 2. The PiP card behaves like a desktop window. Snap, stash, fling, zoom, and
    keyboard control from any app.
 3. A Meet call is usable while the tab is in the background.
@@ -72,12 +72,12 @@ Identifiers map to the detailed spec in the same row.
 | ID | Requirement |
 | --- | --- |
 | FR-SWIPE-01 | A horizontal two-finger sweep draws a capsule that follows the finger with rubber band resistance. |
-| FR-SWIPE-02 | Crossing the confirmation threshold fires one haptic and grows the capsule. Releasing past the threshold navigates. |
+| FR-SWIPE-02 | Crossing the confirmation threshold grows the capsule and brightens its chevron. Releasing past the threshold navigates. |
 | FR-SWIPE-03 | Holding past the threshold for 300ms opens a sheet listing recent session history destinations. Moving vertically selects a row. |
 | FR-SWIPE-04 | Pulling back after browsing cancels the sheet and the navigation. Vertical drift never cancels it. |
 | FR-SWIPE-05 | Vertical page scrolling is not intercepted. |
 
-Details: [swipe/spec.md](swipe/spec.md).
+Details: [swipe/spec.md](specs/swipe/spec.md).
 
 ### Picture in Picture
 
@@ -90,29 +90,29 @@ Details: [swipe/spec.md](swipe/spec.md).
 | FR-PIP-05 | The card accepts keyboard focus while another app is frontmost, without bringing the browser window forward. |
 | FR-PIP-06 | The card always stays reachable. At least 60 points of width, or 40 percent of its height, remains on a visible screen area. |
 
-Details: [pip/spec.md](pip/spec.md).
+Details: [pip/spec.md](specs/pip/spec.md).
 
 ### Meet in PiP
 
 | ID | Requirement |
 | --- | --- |
-| FR-MEET-01 | Switching away from a Meet tab opens the call in PiP. |
+| FR-MEET-01 | With auto-PiP enabled, switching away from a Meet tab opens the call in PiP. The toggle ships off. |
 | FR-MEET-02 | The PiP window shows the largest playing participant or presentation stream, not the self view. |
 | FR-MEET-03 | The card shows mic, camera and hangup buttons that mirror the meeting state within 300ms of a DOM change. |
 | FR-MEET-04 | Each button acts on the real meeting controls in the page and refreshes its icon from the result. |
 
-Details: [pip/spec-meet.md](pip/spec-meet.md).
+Details: [pip/spec-meet.md](specs/pip/spec-meet.md).
 
 ### Tab switching
 
 | ID | Requirement |
 | --- | --- |
 | FR-CT-01 | Releasing Ctrl within 140ms of Ctrl+Tab switches to the next tab without drawing the card. |
-| FR-CT-02 | The card lists up to 9 tabs of the active space, most recently used first. |
+| FR-CT-02 | The card lists up to `zen.ctrlTab.max-previews` tabs of the active space (9 by default), most recently used first. |
 | FR-CT-03 | W closes the selected tab. Pinned and essential tabs unload instead of closing. Q empties the space. |
 | FR-CT-04 | 1 to 9 switch to that space while the card is open. |
 
-Details: [ctrl-tab/spec.md](ctrl-tab/spec.md).
+Details: [ctrl-tab/spec.md](specs/ctrl-tab/spec.md).
 
 ### Per-space extensions
 
@@ -124,7 +124,7 @@ Details: [ctrl-tab/spec.md](ctrl-tab/spec.md).
 | FR-EXT-04 | Context menus, keyboard shortcuts and background tab access are blocked for that space. |
 | FR-EXT-05 | The site data panel shows a stack card for hidden extensions, and one click enables one again. |
 
-Details: [spaces/spec-extensions.md](spaces/spec-extensions.md).
+Details: [spaces/spec-extensions.md](specs/spaces/spec-extensions.md).
 
 ### Space haptics
 
@@ -134,7 +134,7 @@ Details: [spaces/spec-extensions.md](spaces/spec-extensions.md).
 | FR-HAP-02 | No detent fires at a space boundary, or when wrap is off. |
 | FR-HAP-03 | Switching space does not fire a second feedback when the gesture ends. |
 
-Details: [spaces/spec-swipe-haptics.md](spaces/spec-swipe-haptics.md).
+Details: [spaces/spec-swipe-haptics.md](specs/spaces/spec-swipe-haptics.md).
 
 ## Constraints
 
@@ -168,8 +168,8 @@ No counters are added. These are reviewed by hand on Twilight builds.
 ## Rollout
 
 The work ships in the Twilight dev build and in the release channel built on
-`zen-enh-main`. Chrome-side changes can be tested with `python3 hotpatch.py`.
-Native changes need a CI build. Every feature has a pref, listed in its spec, so
+`zen-enh-main`. Chrome-side changes can be patched into a built app for a quick
+check. Native changes need a CI build. Every feature has a pref, listed in its spec, so
 a bad behavior can be turned off without a new build.
 
 ## Open questions
