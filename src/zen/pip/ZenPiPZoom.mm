@@ -108,8 +108,9 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
 
 // Two resize kinds. A trackpad scroll is offered to the swipe handler first and
 // resizes only while Command is held; a mouse wheel always resizes. A magnify
-// always resizes. `gZoomGesture` keeps the window for one continuous gesture,
-// including the momentum phase that ends it.
+// always resizes. `gZoomGesture` keeps the window for one continuous gesture: the
+// pointer can leave the card mid-pinch and the remaining events, including the
+// momentum phase that ends it, still belong to it.
 + (BOOL)route:(NSEvent *)event {
   if (event.type == NSEventTypeMagnify) return [self routeMagnify:event];
   if (event.type == NSEventTypeScrollWheel) return [self routeScroll:event];

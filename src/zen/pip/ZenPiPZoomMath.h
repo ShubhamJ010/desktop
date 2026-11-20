@@ -120,8 +120,9 @@ inline double SnapToPixel(double v, double quantum) {
 
 // Resize around the grabbed point from a fixed base frame, so rounding cannot
 // accumulate into jitter. Edges that would leave the visible frame are pinned to it,
-// which redirects a docked card's expansion towards the middle of the screen. The
-// pin is continuous in `scale`, so it cannot jitter.
+// which redirects a docked card's expansion towards the middle of the screen;
+// without it the overflow stuttered and tore, and the KeepOnScreen pullback at
+// gesture end jumped the card. The pin is continuous in `scale`, so it cannot jitter.
 inline Result ResizeFromBase(Rect baseFrame, double aspect, double scale, double anchorX, double anchorY,
                              Point pointer, Rect visible, Size minSize, Size maxSize, double quantum) {
   double low, high;

@@ -644,7 +644,7 @@ body,
 /* The chevron fades out as the list fades in (Ardia multiplies the icon by the
    inverse of the list's appear value). Later in the file than `will-navigate`
    wins the same specificity. No !important: reverse tracking fades the chevron
-   back in with an inline opacity. */
+   back in with an inline opacity (see `_trackSheetReverse`). */
 .zen-swipe-capsule.has-list .zen-swipe-chevron,
 #historySwipeAnimationPreviousArrow.has-list .zen-swipe-chevron,
 #historySwipeAnimationNextArrow.has-list .zen-swipe-chevron {
@@ -662,7 +662,8 @@ body,
   flex: none;
   padding: 8px 0; /* Ardia LIST_PAD = space.m */
   box-sizing: border-box;
-  /* Ardia SWIPE_MOTION.list: 250ms fade with a 0.9 -> 1 scale. */
+  /* Ardia SWIPE_MOTION.list: duration.slow (250ms), curve.fade, plus a 0.9 -> 1
+     scale (`DestinationList` appear). */
   animation: zen-swipe-list-in 250ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 

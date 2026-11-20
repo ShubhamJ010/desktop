@@ -85,7 +85,7 @@ index dfa666a..57cc11a 100644
      let strId = this.isFullscreen
        ? `pictureinpicture-exit-fullscreen-btn2`
        : `pictureinpicture-fullscreen-btn2`;
-@@ -422,16 +482,275 @@ let Player = {
+@@ -422,16 +482,276 @@ let Player = {
        document.documentElement.classList.add("seethrough-mode");
      }
  
@@ -199,8 +199,9 @@ index dfa666a..57cc11a 100644
 +  // The picture lives in the remote <browser> child, one process away, so a
 +  // resize travels window -> shell reflow -> IPC -> child reflow -> child paint
 +  // and a 120 Hz gesture outruns it: the child's bottom edge arrives late and
-+  // leaves a black band. While shrinking, the old picture is simply clipped by
-+  // the window, so pin and scale only when enlarging past the base size.
++  // leaves a black band. While shrinking (w <= baseW) the larger old picture is
++  // simply clipped by the window, so pin and scale only when enlarging past the
++  // base size; shrinking tracks down with no transform.
 +  _pinChildViewport() {
 +    if (this._contentFreeze) return;
 +    let browser = document.getElementById("browser");
@@ -361,7 +362,7 @@ index dfa666a..57cc11a 100644
    setupTooltip(elId, l10nId, shortcutId) {
      const el = document.getElementById(elId);
      const shortcut = document.getElementById(shortcutId);
-@@ -441,6 +760,24 @@ let Player = {
+@@ -441,6 +761,24 @@ let Player = {
      document.l10n.setAttributes(el, l10nId, l10nObj);
    },
  
@@ -386,7 +387,7 @@ index dfa666a..57cc11a 100644
    handleEvent(event) {
      switch (event.type) {
        case "click": {
-@@ -468,11 +805,6 @@ let Player = {
+@@ -468,11 +806,6 @@ let Player = {
          break;
        }
  
@@ -398,7 +399,7 @@ index dfa666a..57cc11a 100644
        case "keydown": {
          if (event.keyCode == KeyEvent.DOM_VK_TAB) {
            this.controls.setAttribute(KEYING_ATTRIBUTE, true);
-@@ -525,8 +857,9 @@ let Player = {
+@@ -525,8 +858,9 @@ let Player = {
              // We handle the ESC key, in fullscreen modus as intent to leave only the fullscreen mode
              document.exitFullscreen();
            } else {
@@ -410,7 +411,7 @@ index dfa666a..57cc11a 100644
            }
          } else if (
            (event.key == "<" || event.key == ">") &&
-@@ -534,6 +867,25 @@ let Player = {
+@@ -534,6 +868,25 @@ let Player = {
          ) {
            // Same playback speed shortcuts as the YouTube player.
            this.cyclePlaybackRate(event.key == ">" ? 1 : -1);
@@ -436,7 +437,7 @@ index dfa666a..57cc11a 100644
          } else if (
            Services.prefs.getBoolPref(KEYBOARD_CONTROLS_ENABLED_PREF, false) &&
            (event.key != " " || !event.target.closest(".control-button, .panel"))
-@@ -902,15 +1254,17 @@ let Player = {
+@@ -902,15 +1255,17 @@ let Player = {
      PictureInPicture.closeSinglePipWindow({ reason, actorRef: this.actor });
    },
  
@@ -460,7 +461,7 @@ index dfa666a..57cc11a 100644
        case "audio": {
          this.toggleMute();
          break;
-@@ -921,6 +1275,33 @@ let Player = {
+@@ -921,6 +1276,33 @@ let Player = {
          break;
        }
  
@@ -494,7 +495,7 @@ index dfa666a..57cc11a 100644
        case "playpause": {
          if (!this.isPlaying) {
            this.actor.sendAsyncMessage("PictureInPicture:Play");
-@@ -954,7 +1335,7 @@ let Player = {
+@@ -954,7 +1336,7 @@ let Player = {
        }
  
        case "unpip": {
@@ -503,7 +504,7 @@ index dfa666a..57cc11a 100644
          break;
        }
  
-@@ -1083,6 +1464,25 @@ let Player = {
+@@ -1083,6 +1465,25 @@ let Player = {
      }
    },
  
@@ -529,7 +530,7 @@ index dfa666a..57cc11a 100644
    onKeyDown(event) {
      // We don't want to send a keydown event if the event target was one of the
      // font sizes in the settings panel or a control in the playback speed panel
-@@ -1432,8 +1832,17 @@ let Player = {
+@@ -1432,8 +1833,17 @@ let Player = {
     *  Event context data object
     */
    onResize() {
@@ -547,7 +548,7 @@ index dfa666a..57cc11a 100644
      this.resizeDebouncer.disarm();
      this.resizeDebouncer.arm();
    },
-@@ -1626,8 +2035,7 @@ let Player = {
+@@ -1626,8 +2036,7 @@ let Player = {
      let strId = isMuted
        ? `pictureinpicture-unmute-btn`
        : `pictureinpicture-mute-btn`;

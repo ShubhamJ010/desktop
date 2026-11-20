@@ -42,9 +42,12 @@ enum class GestureState {
 // Vertical side channel for the history sheet
 //
 // Gecko's APZ owns the swipe and browser-gestureSupport.js draws the capsule from
-// the horizontal delta, but nothing forwards the vertical component that picks an
-// entry in the sheet. This controller runs a passive local scroll monitor and
-// mirrors Ardia's accumulator: dy += scrollingDeltaY, reset when a gesture begins.
+// the horizontal delta it forwards through MozSwipeGestureUpdate, but nothing
+// forwards the vertical component that picks an entry in the sheet. This
+// controller runs a passive local scroll monitor and mirrors Ardia's accumulator
+// (ArdiaSwipe.mm): dy += scrollingDeltaY, reset when a gesture begins. All of it
+// runs on the main thread, one gesture at a time, since the trackpad gesture
+// belongs to one window.
 //
 // chrome JS sets zen.widget.macos.back-gesture-phase:
 //   0 = idle (no accumulation), 1 = tracking (accumulate only),
@@ -150,8 +153,9 @@ void ZenSwipeDebugLog(NSString *format, ...) {
  * accumulates and publishes. The event is always returned unchanged.
  *
  * The phase pref is the only gate. Requiring an attached controller threw every
- * sample away: a local monitor runs before AppKit dispatches to a window, so
- * [event window] is nil even when windowNumber is set.
+ * sample away: a local monitor runs inside -[NSApplication sendEvent:], before
+ * AppKit dispatches to a window, so [event window] is nil even when windowNumber
+ * is set.
  */
 + (NSEvent *)handleVerticalScroll:(NSEvent *)event {
   ZenSwipeDebugLog(@"ZenSwipeMonitorEntry: type=%u phase=%u momentumPhase=%u windowNumber=%ld scrollingDeltaY=%.3f deltaY=%.3f scrollingDeltaX=%.3f deltaX=%.3f",

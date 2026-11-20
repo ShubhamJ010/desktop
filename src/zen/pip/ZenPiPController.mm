@@ -143,8 +143,9 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
   ZenPiPController *controller = [[[ZenPiPController alloc] initWithWindow:window] autorelease];
   // Clicking or gesturing the card fronts the window, not the app.
   [window _setPreventsActivation:YES];
-  // Live resize (pinch/scroll) only works on a resizable window. The aspect ratio
-  // stays locked, so this only allows a resize the card was already taking.
+  // Live resize (pinch/scroll) only works on a resizable window. Page-created PiP
+  // windows may not declare themselves resizable. The aspect ratio stays locked,
+  // so this only allows a resize the card was already taking.
   window.styleMask |= NSWindowStyleMaskResizable;
   // Follow the user across Spaces, including another app's full-screen space.
   window.collectionBehavior |= NSWindowCollectionBehaviorCanJoinAllSpaces |
@@ -322,7 +323,8 @@ static void NotifyPiPGestureActive(bool active) {
 
 // Gesture over, controls hidden: tell Gecko the pointer is over the card. It waits
 // for a DOM mousemove, which never reaches an inactive app, but tracking areas and
-// the global mouse monitor do fire.
+// the global mouse monitor do fire. Sent on every enter and move; Gecko early-outs
+// when nothing is pending.
 static void NotifyPiPGestureHover() {
 #if __has_include("mozilla/Services.h")
   if (!NSThread.isMainThread) {
