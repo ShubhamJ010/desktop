@@ -2,7 +2,7 @@ diff --git a/toolkit/themes/shared/pictureinpicture/player.css b/toolkit/themes/
 index c808890..0ef696b 100644
 --- a/toolkit/themes/shared/pictureinpicture/player.css
 +++ b/toolkit/themes/shared/pictureinpicture/player.css
-@@ -810,3 +810,194 @@ body:not(:fullscreen) #fullscreen {
+@@ -810,3 +810,192 @@ body:not(:fullscreen) #fullscreen {
      justify-self: center;
    }
  }
@@ -101,10 +101,8 @@ index c808890..0ef696b 100644
 +  pointer-events: auto !important;
 +}
 +
-+/* The call controls float over the video, so they use the same Ardia frosted
-+   glass as the swipe capsule (chrome://browser/content/zen-styles/
-+   zen-ardia-glass.css, linked from player.xhtml): they blur the frame behind
-+   them instead of painting a flat grey disc on top of it. */
++/* The call controls float over video, so they use the Ardia frosted glass
++   (zen-ardia-glass.css, linked from player.xhtml) instead of a flat grey disc. */
 +.meet-btn {
 +  display: flex !important;
 +  align-items: center !important;
@@ -180,9 +178,9 @@ index c808890..0ef696b 100644
 +
 +/*
 + * Diagnostic frame for the resize pipeline, enabled with the `zen.pip.debug`
-+ * pref. Red traces the window; lime traces the remote <browser> element that
-+ * holds the video. A black band inside the lime box belongs to the child, a band
-+ * between the two borders to this document.
++ * pref. Red traces the window; lime traces the remote <browser> holding the
++ * video: a black band inside lime belongs to the child, one between the two
++ * borders to this document.
 + */
 +body.pip-debug::after {
 +  content: "";

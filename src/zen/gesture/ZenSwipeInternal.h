@@ -9,7 +9,7 @@
 #import <Cocoa/Cocoa.h>
 
 /**
- * Direction of horizontal edge swipe gesture.
+ * Direction of a horizontal edge swipe.
  */
 typedef NS_ENUM(NSInteger, ZenSwipeDirection) {
   ZenSwipeDirectionBack = 1,     // Swiping left-to-right (navigates back)
@@ -19,17 +19,12 @@ typedef NS_ENUM(NSInteger, ZenSwipeDirection) {
 namespace zen_swipe {
 
 /**
- * Attaches the back/forward trackpad swipe gesture monitor and overlay to a browser window.
- *
- * @param window The target NSWindow representing a top-level browser window.
- * @return YES if successfully attached, NO otherwise.
+ * Attach the swipe monitor and overlay to a browser window.
  */
 BOOL Attach(NSWindow *window);
 
 /**
- * Detaches the gesture monitor and removes overlays from a browser window.
- *
- * @param window The target NSWindow.
+ * Detach the monitor and remove the overlays.
  */
 void Detach(NSWindow *window);
 

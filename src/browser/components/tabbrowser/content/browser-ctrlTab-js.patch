@@ -198,7 +198,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      }
  
      if (host.tabToSelect) {
-@@ -192,82 +71,204 @@ var tabPreviewPanelHelper = {
+@@ -192,82 +71,202 @@ var tabPreviewPanelHelper = {
        );
        host.tabToSelect = null;
      }
@@ -313,10 +313,9 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Tabs of `spaceId`, most recently used first.
-+   *
-+   * `gates: false` skips the pending and pin filters, so the card can tell an
-+   * empty space from an empty filtered list.
++   * Tabs of `spaceId`, most recently used first. `gates: false` skips the
++   * pending and pin filters, so the card can tell an empty space from an empty
++   * filtered list.
 +   */
 +  _buildList(spaceId, { gates = true } = {}) {
 +    let workspaces = null;
@@ -376,8 +375,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -  get tabList() {
 -    return this._recentlyUsedTabs;
 +  /**
-+   * Rows to paint for `spaceId`, and whether they come from the fallback. Used
-+   * before a switch and again after it, so both paints agree.
++   * Rows to paint for `spaceId`, and whether they are the fallback.
 +   */
 +  _listForSpace(spaceId) {
 +    let list = this._buildList(spaceId);
@@ -391,8 +389,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Whether two lists paint the same rows. Compares only the rows the card can
-+   * show, so changes past the row cap never cause a repaint.
++   * Whether two lists paint the same rows. Compares only what the card shows, so
++   * changes past the row cap never repaint.
 +   */
 +  _sameTabs(a, b) {
 +    let cap = this.maxTabPreviews;
@@ -416,8 +414,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Space the card shows: the active space, or the target of a switch started
-+   * from inside the card until that switch lands.
++   * Space shown: the active one, or the target of a switch started from inside
++   * the card until it lands.
 +   */
 +  get currentSpaceId() {
 +    return this._spaceOverride || window.gZenWorkspaces?.activeWorkspace || "";
@@ -450,7 +448,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      if (!this._recentlyUsedTabs) {
        this._initRecentlyUsedTabs();
        this._init(true);
-@@ -275,6 +276,9 @@ var ctrlTab = {
+@@ -275,6 +274,9 @@ var ctrlTab = {
    },
  
    uninit: function ctrlTab_uninit() {
@@ -460,7 +458,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      if (this._recentlyUsedTabs) {
        this._recentlyUsedTabs = null;
        this._init(false);
-@@ -294,8 +298,11 @@ var ctrlTab = {
+@@ -294,8 +296,11 @@ var ctrlTab = {
    },
  
    readPref: function ctrlTab_readPref() {
@@ -473,7 +471,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
        !Services.prefs.getBoolPref(
          "browser.ctrlTab.disallowForScreenReaders",
          false
-@@ -307,146 +314,621 @@ var ctrlTab = {
+@@ -307,146 +312,619 @@ var ctrlTab = {
        this.uninit();
      }
    },
@@ -483,7 +481,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    },
  
 +  /**
-+   * Builds the card UI inside #ctrlTab-panel.
++   * Build the card UI inside #ctrlTab-panel.
 +   */
    _buildPreviews() {
 -    this.previewsContainer.replaceChildren();
@@ -684,14 +682,13 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -    canvas.className = "ctrlTab-canvas";
 -    previewInner.appendChild(canvas);
 +  /**
-+   * Paints the card.
++   * Paint the card.
 +   *
 +   * @param {object} [opts]
 +   * @param {Array} [opts.list] Snapshot to paint; defaults to the live list.
 +   * @param {boolean} [opts.animate] Play the list swap.
 +   * @param {string} [opts.direction] "next" | "prev", the swap axis.
-+   * @param {boolean} [opts.fallback] Tabs shown only because the space would
-+   *   otherwise look empty.
++   * @param {boolean} [opts.fallback] Rows shown because the space looks empty.
 +   */
 +  updatePreviews: function ctrlTab_updatePreviews(opts = {}) {
 +    let tabs = opts.list || this.tabList;
@@ -725,7 +722,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Keeps the empty label and selection pill in sync with the painted rows.
++   * Keep the empty label and selection pill in sync with the painted rows.
 +   */
 +  _syncCardState(count) {
 +    if (!this._card) {
@@ -963,7 +960,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Starts a session and shows the card after SHOW_AFTER_MS.
++   * Start a session and show the card after SHOW_AFTER_MS.
 +   */
 +  open: function ctrlTab_open(aBackward = false) {
 +    this._spaceOverride = null;
@@ -1002,10 +999,9 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 +  },
 +
 +  /**
-+   * Shows the card, centered horizontally and 40px above the window center.
-+   *
-+   * The popup gets SHADOW_MARGIN of transparent padding so the card's shadow is
-+   * not clipped; the margin is subtracted again when centering.
++   * Show the card, centred horizontally and 40px above the window centre. The
++   * popup's SHADOW_MARGIN padding keeps the shadow from being clipped and is
++   * subtracted when centring.
 +   */
 +  _openPanel: function ctrlTab_openPanel() {
 +    this.updateSpaceHeader();
@@ -1044,7 +1040,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -      "tabbrowser-ctrl-tab-list-all-tabs",
 -      { tabCount: this.tabCount }
 +  /**
-+   * Places the card, or repositions it after a space switch changed the row count.
++   * Place the card, or reposition it after a space switch changed the row count.
 +   * Constants mirror ctrlTab.css.
 +   */
 +  _positionPanel(rowCount = this.tabPreviewCount) {
@@ -1200,7 +1196,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      }
  
      if (this._timer) {
-@@ -454,102 +936,86 @@ var ctrlTab = {
+@@ -454,102 +932,86 @@ var ctrlTab = {
        this._timer = null;
        this._openPanel();
      }
@@ -1358,7 +1354,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      if (!this.isOpen) {
        return;
      }
-@@ -557,126 +1023,173 @@ var ctrlTab = {
+@@ -557,126 +1019,173 @@ var ctrlTab = {
      if (this._timer) {
        clearTimeout(this._timer);
        this._timer = null;
@@ -1472,8 +1468,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -          gBrowser.TabMetrics.METRIC_SOURCE.CTRL_TAB
 -        )
 -      );
-+    // The target space's tabs carry its id, so the list can be built before the
-+    // switch: the empty label never flashes while Zen reloads the space.
++    // The target space's tabs carry its id, so the list is built before the
++    // switch and the empty label never flashes.
 +    let { list: targetList, fallback } = this._listForSpace(targetWorkspace.uuid);
 +    let targetRows = Math.min(this.maxTabPreviews, targetList.length);
 +
@@ -1517,8 +1513,8 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
 -    if (event.keyCode == event.DOM_VK_DELETE) {
 -      this.remove(this.selected);
 -      return;
-+    // Zen may have changed tabs during the switch. Repaint only if the rows
-+    // differ, and without animating again.
++    // Zen may have changed tabs during the switch; repaint only if the rows
++    // differ, without animating.
 +    let { list: settled, fallback: settledFallback } = this._listForSpace(
 +      this.currentSpaceId
 +    );
@@ -1616,7 +1612,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
      }
    },
  
-@@ -686,8 +1199,6 @@ var ctrlTab = {
+@@ -686,8 +1195,6 @@ var ctrlTab = {
          this._initRecentlyUsedTabs();
          break;
        case "TabAttrModified":
@@ -1625,7 +1621,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
          if (
            event.detail.changed.some(elem =>
              ["label", "busy", "image"].includes(elem)
-@@ -705,11 +1216,10 @@ var ctrlTab = {
+@@ -705,11 +1212,10 @@ var ctrlTab = {
          }
          break;
        case "TabSelect": {
@@ -1639,7 +1635,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
            this.detachTab(previousTab);
          }
          break;
-@@ -734,76 +1244,231 @@ var ctrlTab = {
+@@ -734,76 +1240,231 @@ var ctrlTab = {
          this.onKeyDown(event);
          break;
        case "keypress":
@@ -1907,7 +1903,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    },
  
    _init: function ctrlTab__init(enable) {
-@@ -812,6 +1477,7 @@ var ctrlTab = {
+@@ -812,6 +1473,7 @@ var ctrlTab = {
        : "removeEventListener";
  
      window[toggleEventListener]("SSWindowRestored", this);
@@ -1915,7 +1911,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
  
      var tabContainer = gBrowser.tabContainer;
      tabContainer[toggleEventListener]("TabOpen", this);
-@@ -828,19 +1494,6 @@ var ctrlTab = {
+@@ -828,19 +1490,6 @@ var ctrlTab = {
      }
      document[toggleEventListener]("keypress", this);
      gBrowser.tabbox.handleCtrlTab = !enable;
@@ -1935,7 +1931,7 @@ diff --git a/browser/components/tabbrowser/content/browser-ctrlTab.js b/browser/
    },
  };
  
-@@ -851,8 +1504,11 @@ ChromeUtils.defineESModuleGetters(ctrlTab, {
+@@ -851,8 +1500,11 @@ ChromeUtils.defineESModuleGetters(ctrlTab, {
  XPCOMUtils.defineLazyPreferenceGetter(
    ctrlTab,
    "maxTabPreviews",

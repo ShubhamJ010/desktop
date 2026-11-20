@@ -10,8 +10,7 @@
 #import "ZenSwipeInternal.h"
 
 /**
- * Floating circular frosted glass pill indicating a back/forward swipe gesture.
- * Directly replicates Ardia's SwipeOverlay design and physics.
+ * Frosted glass pill shown during a back/forward swipe (Ardia's SwipeOverlay).
  */
 @interface ZenSwipeCapsuleView : NSView
 
@@ -21,22 +20,15 @@
 - (instancetype)initWithDirection:(ZenSwipeDirection)direction;
 
 /**
- * Updates the capsule position, size, and appearance according to swipe progress.
- *
- * @param progress Normalized gesture progress (0.0 to >1.0).
- * @param confirmed Whether the gesture has exceeded the threshold to navigate.
- * @param bounds Bounds of the containing browser window content view.
+ * Update position, size and appearance from swipe progress (0.0 to >1.0).
  */
 - (void)updateWithProgress:(CGFloat)progress
                  confirmed:(BOOL)confirmed
             inWindowBounds:(NSRect)bounds;
 
 /**
- * Dismisses the capsule view.
- *
- * @param success If YES, animates a confirmation pulse/fade before removal.
- *                If NO, springs/slides back into the window edge before removal.
- * @param completion Block invoked once animation completes and view is removed.
+ * Remove the view. Success plays a confirmation pulse; otherwise it springs back
+ * into the window edge.
  */
 - (void)dismissWithSuccess:(BOOL)success
                 completion:(void (^)(void))completion;

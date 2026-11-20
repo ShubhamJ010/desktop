@@ -16,15 +16,11 @@ ChromeUtils.defineESModuleGetters(lazy, {
   gZenBoostsManager: "resource:///modules/zen/boosts/ZenBoostsManager.sys.mjs",
 });
 
-// --- Workspace Disabled Extensions Architecture (SOLID / DRY) ---
+// --- Per-space disabled extensions ---
 
 /**
- * Manages per-workspace extension disabled states and lifecycle events.
- *
- * Responsibilities (SRP):
- * - Persists and retrieves disabled extension IDs per workspace in preferences.
- * - Emits observer notifications and callback events for UI and behavioral hooks.
- * - Decouples state storage from presentation logic.
+ * Per-workspace disabled extension state: persistence, observer notifications
+ * and change listeners.
  */
 export class ZenSpaceExtensionsManager {
   static PREF_DISABLED_EXTENSIONS = "zen.workspaces.disabled-extensions";
@@ -35,10 +31,7 @@ export class ZenSpaceExtensionsManager {
   static #watchedWindows = new WeakSet();
 
   /**
-   * Get all disabled extension IDs for a given workspace.
-   *
-   * @param {string} spaceId
-   * @returns {string[]}
+   * Disabled extension IDs for a workspace.
    */
   static getDisabled(spaceId) {
     if (!spaceId) {
@@ -57,11 +50,7 @@ export class ZenSpaceExtensionsManager {
   }
 
   /**
-   * Check if an extension is disabled in a given workspace.
-   *
-   * @param {string} spaceId
-   * @param {string} extId
-   * @returns {boolean}
+   * Whether `extId` is disabled in `spaceId`.
    */
   static isDisabled(spaceId, extId) {
     if (!spaceId || !extId) {
@@ -71,10 +60,7 @@ export class ZenSpaceExtensionsManager {
   }
 
   /**
-   * Set disabled extension IDs for a workspace.
-   *
-   * @param {string} spaceId
-   * @param {string[]} list
+   * Replace the disabled extension IDs for a workspace.
    */
   static setDisabled(spaceId, list) {
     if (!spaceId) {
@@ -107,9 +93,7 @@ export class ZenSpaceExtensionsManager {
   static PREF_BROWSER_DISABLED = "zen.workspaces.browser-disabled-extensions";
 
   /**
-   * Get the entire disabled mapping object { [spaceId]: string[] }.
-   *
-   * @returns {Record<string, string[]>}
+   * The whole mapping, { [spaceId]: string[] }.
    */
   static getAllDisabled() {
     try {
@@ -124,10 +108,7 @@ export class ZenSpaceExtensionsManager {
   }
 
   /**
-   * Resolve an extension ID from a DOM element (toolbarbutton, item, etc.).
-   *
-   * @param {Element} el
-   * @returns {string|null}
+   * Resolve an extension ID from a toolbar button or menu item.
    */
   static getExtIdFromElement(el) {
     if (!el) {
@@ -173,10 +154,7 @@ export class ZenSpaceExtensionsManager {
   }
 
   /**
-   * Update visibility of toolbar buttons and unified extension items in a window
-   * according to the active workspace's disabled extensions list.
-   *
-   * @param {DOMWindow} win
+   * Apply the active workspace's disabled list to a window's toolbar.
    */
   static updateToolbarVisibility(win) {
     if (!win || win.closed) {
@@ -226,8 +204,9 @@ export class ZenSpaceExtensionsManager {
   }
 
   /**
-   * Synchronize browser tabs to the `zen.workspaces.browser-disabled-extensions` pref
-   * so child/content processes can immediately enforce script/style isolation.
+   * Mirror the per-tab disabled map into
+   * `zen.workspaces.browser-disabled-extensions` so content processes can
+   * suppress scripts and styles.
    */
   static syncBrowserSpaces() {
     try {
@@ -262,7 +241,7 @@ export class ZenSpaceExtensionsManager {
   }
 
   /**
-   * Update all browser windows and synchronize process state.
+   * Update every window and resync process state.
    */
   static updateAllWindows() {
     this.syncBrowserSpaces();
@@ -272,11 +251,7 @@ export class ZenSpaceExtensionsManager {
   }
 
   /**
-   * Resolve the workspace a tab belongs to.
-   *
-   * @param {Window} win
-   * @param {MozTabbrowserTab} tab
-   * @returns {string|null}
+   * Workspace a tab belongs to.
    */
   static #tabSpaceId(win, tab) {
     return (
@@ -287,9 +262,7 @@ export class ZenSpaceExtensionsManager {
   }
 
   /**
-   * Reload one tab so the updated per-space isolation map takes effect.
-   *
-   * @param {MozTabbrowserTab} tab
+   * Reload one tab so the new isolation map takes effect.
    */
   static #reloadTab(tab) {
     const browser = tab.linkedBrowser;
@@ -302,9 +275,7 @@ export class ZenSpaceExtensionsManager {
   }
 
   /**
-   * Attach a single lazy-reload TabSelect handler to a browser window.
-   *
-   * @param {Window} win
+   * Attach one lazy-reload TabSelect handler per window.
    */
   static #watchTabSelect(win) {
     if (this.#watchedWindows.has(win)) {
@@ -322,11 +293,8 @@ export class ZenSpaceExtensionsManager {
   }
 
   /**
-   * Reload the frontmost tab of a changed space now. Other open tabs in that
-   * space are marked and reload when they are selected, so isolation stays
-   * correct without reloading every tab at once.
-   *
-   * @param {string} spaceId
+   * Reload the frontmost tab of a changed space now; other tabs are marked and
+   * reload when selected.
    */
   static #reloadSpaceTabs(spaceId) {
     if (!spaceId) {
@@ -357,9 +325,6 @@ export class ZenSpaceExtensionsManager {
 
   /**
    * Disable an extension in a workspace.
-   *
-   * @param {string} spaceId
-   * @param {string} extId
    */
   static disable(spaceId, extId) {
     if (!spaceId || !extId) {
@@ -374,9 +339,6 @@ export class ZenSpaceExtensionsManager {
 
   /**
    * Enable an extension in a workspace.
-   *
-   * @param {string} spaceId
-   * @param {string} extId
    */
   static enable(spaceId, extId) {
     if (!spaceId || !extId) {
@@ -390,7 +352,7 @@ export class ZenSpaceExtensionsManager {
   }
 
   /**
-   * Subscribe to changes in disabled extensions.
+   * Subscribe to disabled-extension changes.
    *
    * @param {Function} callback (spaceId: string) => void
    * @returns {Function} unsubscribe function
@@ -419,12 +381,8 @@ export class ZenSpaceExtensionsManager {
 }
 
 /**
- * Presenter for the 3-card stack representation of disabled extensions.
- *
- * Responsibilities (SRP & Open/Closed):
- * - Deterministically calculates visual slot mappings.
- * - Handles placeholder slots when fewer than 3 extensions are disabled.
- * - Updates DOM attributes, images, tooltips, and accessibility attributes.
+ * Renders the 3-card stack of disabled extensions: slot layout, placeholders,
+ * icons, tooltips and accessibility attributes.
  */
 export class ZenDisabledStackRenderer {
   static PLACEHOLDER_ICON =
@@ -449,8 +407,8 @@ export class ZenDisabledStackRenderer {
   ];
 
   /**
-   * Calculate slot configurations for a given array of icon URLs.
-   * Guarantees all 3 visual cards are present, using placeholders as needed.
+   * Slot layout for `disabledIcons`. Always yields 3 cards, using placeholders
+   * as needed.
    *
    * @param {string[]} disabledIcons
    * @param {number} totalCount
@@ -511,7 +469,7 @@ export class ZenDisabledStackRenderer {
   }
 
   /**
-   * Render the stack button cards and tooltip.
+   * Render the stack cards and tooltip.
    *
    * @param {Element} stackBtn
    * @param {string[]} disabledIcons
@@ -714,8 +672,7 @@ export class nsZenSiteDataPanel {
   }
 
   #initCopyUrlButton() {
-    // This function is a bit out of place, but it's related enough to the panel
-    // that it's easier to do it here than in a separate module.
+    // Slightly out of place, but close enough to the panel to keep it here.
     const container = this.document.getElementById("page-action-buttons");
     const fragment = this.window.MozXULElement.parseXULToFragment(`
       <hbox id="zen-copy-url-button"
@@ -1003,10 +960,10 @@ export class nsZenSiteDataPanel {
   }
 
   /**
-   * Determines whether the copy URL button should be hidden for the given URI.
+   * Whether the copy URL button is hidden for `uri`.
    *
-   * @param {nsIURI} uri - The URI to check.
-   * @returns {boolean} True if the button should be hidden, false otherwise.
+   * @param {nsIURI} uri
+   * @returns {boolean}
    */
   #canCopyUrl(uri) {
     if (!uri) {

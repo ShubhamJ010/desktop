@@ -93,11 +93,11 @@ static NSImage *GetChevronImage(ZenSwipeDirection direction, BOOL confirmed) {
     _confirmed = NO;
     _dismissing = NO;
 
-    // Outer view hosts drop shadow without clipping
+    // Outer view hosts the drop shadow without clipping.
     self.wantsLayer = YES;
     self.layer.masksToBounds = NO;
 
-    // Ardia SHADOWS.swipe: { color: black, opacity: 0.25, radius: 8, offset: [0, 2] }
+    // Ardia SHADOWS.swipe: black, opacity 0.25, radius 8, offset [0, 2].
     self.layer.shadowColor = [NSColor blackColor].CGColor;
     self.layer.shadowOpacity = 0.25;
     self.layer.shadowRadius = 8.0;
@@ -107,7 +107,7 @@ static NSImage *GetChevronImage(ZenSwipeDirection direction, BOOL confirmed) {
     self.layer.shadowPath = shadowPath;
     CGPathRelease(shadowPath);
 
-    // Inner pill container strictly clips all content into a circle
+    // Inner pill clips content into a circle.
     _pillView = [[NSView alloc] initWithFrame:initialFrame];
     _pillView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     _pillView.wantsLayer = YES;
@@ -116,12 +116,12 @@ static NSImage *GetChevronImage(ZenSwipeDirection direction, BOOL confirmed) {
     if (@available(macOS 10.15, *)) {
       _pillView.layer.cornerCurve = kCACornerCurveContinuous;
     }
-    // Subtle white rim matching Ardia swipeRim: rgba(255,255,255,0.15)
+    // White rim, Ardia swipeRim rgba(255,255,255,0.15).
     _pillView.layer.borderWidth = 1.0;
     _pillView.layer.borderColor = [NSColor colorWithCalibratedWhite:1.0 alpha:0.18].CGColor;
     [self addSubview:_pillView];
 
-    // Translucent frosted glass matching Ardia: VisualEffect material="popover" blendingMode="withinWindow"
+    // Frosted glass, Ardia: material=popover, blendingMode=withinWindow.
     _blurView = [[NSVisualEffectView alloc] initWithFrame:_pillView.bounds];
     _blurView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     _blurView.material = NSVisualEffectMaterialPopover;
@@ -136,7 +136,7 @@ static NSImage *GetChevronImage(ZenSwipeDirection direction, BOOL confirmed) {
     _blurView.maskImage = CreateCircleMaskImage(_currentDiameter);
     [_pillView addSubview:_blurView];
 
-    // Confirmed wash matching Ardia: SWIPE_CONFIRMED_WASH rgba(255,255,255,0.4)
+    // Confirmed wash, Ardia SWIPE_CONFIRMED_WASH rgba(255,255,255,0.4).
     _washView = [[NSView alloc] initWithFrame:_pillView.bounds];
     _washView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     _washView.wantsLayer = YES;
@@ -144,7 +144,7 @@ static NSImage *GetChevronImage(ZenSwipeDirection direction, BOOL confirmed) {
     _washView.alphaValue = 0.0;
     [_pillView addSubview:_washView];
 
-    // Centered chevron icon matching Ardia: Symbol chevron, opacity 0.50 idle, 1.0 confirmed
+    // Chevron icon, Ardia: opacity 0.5 idle, 1.0 confirmed.
     _iconView = [[NSImageView alloc] initWithFrame:_pillView.bounds];
     _iconView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     _iconView.imageScaling = NSImageScaleProportionallyDown;

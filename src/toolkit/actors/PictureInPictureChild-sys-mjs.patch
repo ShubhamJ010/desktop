@@ -2,14 +2,12 @@ diff --git a/toolkit/actors/PictureInPictureChild.sys.mjs b/toolkit/actors/Pictu
 index 0328219..7b76c74 100644
 --- a/toolkit/actors/PictureInPictureChild.sys.mjs
 +++ b/toolkit/actors/PictureInPictureChild.sys.mjs
-@@ -323,6 +323,23 @@ export class PictureInPictureLauncherChild extends JSWindowActorChild {
+@@ -323,6 +323,21 @@ export class PictureInPictureLauncherChild extends JSWindowActorChild {
    findVideoToPiP(doc) {
      let video = doc.activeElement;
      if (!HTMLVideoElement.isInstance(video)) {
-+      // For Google Meet (meet.google.com), participant streams and screen shares
-+      // are WebRTC MediaStreams with NaN duration. Pick the largest active visible
-+      // video element (e.g. presentation screen-share or main active speaker)
-+      // rather than a small self-view thumbnail.
++      // Google Meet WebRTC streams have NaN duration. Pick the largest active
++      // visible video (screen share or active speaker) over a self-view.
 +      const isGoogleMeet = doc?.location?.hostname?.endsWith("meet.google.com");
 +      if (isGoogleMeet) {
 +        let meetVideos = [...doc.querySelectorAll("video")].filter(
@@ -26,14 +24,13 @@ index 0328219..7b76c74 100644
        let listOfVideos = [...doc.querySelectorAll("video")].filter(
          v => !isNaN(v.duration)
        );
-@@ -343,9 +360,16 @@ export class PictureInPictureLauncherChild extends JSWindowActorChild {
+@@ -343,9 +358,15 @@ export class PictureInPictureLauncherChild extends JSWindowActorChild {
      let doc = this.document;
      if (doc) {
        let video = this.findVideoToPiP(doc);
-+      // Google Meet sets participant <video> tags to muted to prevent local audio
-+      // feedback/loopback (audio is handled via separate WebAudio / AudioContext).
-+      // Allow muted videos specifically for Google Meet while maintaining the
-+      // !video.muted check for standard websites to avoid popping out muted ads.
++      // Google Meet mutes its participant <video> tags (audio goes through
++      // WebAudio). Allow muted videos there, but keep the !video.muted check
++      // elsewhere so muted ads do not pop out.
 +      const isGoogleMeet =
 +        video?.ownerDocument?.location?.hostname?.endsWith("meet.google.com");
        if (
@@ -43,7 +40,7 @@ index 0328219..7b76c74 100644
          PictureInPictureChild.videoIsPiPEligible(video)
        ) {
          this.togglePictureInPicture({ video, reason: "AutoPip" }, false);
-@@ -1982,6 +2006,93 @@ export class PictureInPictureChild extends JSWindowActorChild {
+@@ -1982,6 +2003,93 @@ export class PictureInPictureChild extends JSWindowActorChild {
      return null;
    }
  
@@ -137,12 +134,12 @@ index 0328219..7b76c74 100644
    /**
     * Returns a reference to the inner window of the about:blank document that is
     * cloning the originating <video> in the always-on-top player <xul:browser>.
-@@ -2035,6 +2146,18 @@ export class PictureInPictureChild extends JSWindowActorChild {
+@@ -2035,6 +2143,18 @@ export class PictureInPictureChild extends JSWindowActorChild {
        return true;
      }
  
-+    // Google Meet WebRTC streams have NaN duration and no direct audio track on
-+    // the <video> element (audio is handled via separate WebAudio context).
++    // Google Meet WebRTC streams have NaN duration and no audio track on the
++    // <video> element (audio goes through WebAudio).
 +    const isGoogleMeet =
 +      video?.ownerDocument?.location?.hostname?.endsWith("meet.google.com");
 +    if (isGoogleMeet) {
@@ -156,7 +153,7 @@ index 0328219..7b76c74 100644
      if (isNaN(video.duration) || video.duration < lazy.MIN_VIDEO_LENGTH) {
        return false;
      }
-@@ -2197,6 +2320,10 @@ export class PictureInPictureChild extends JSWindowActorChild {
+@@ -2197,6 +2317,10 @@ export class PictureInPictureChild extends JSWindowActorChild {
     *   Resolves once the pre-existing Picture-in-Picture window has unloaded.
     */
    async closePictureInPicture({ reason }) {
@@ -167,7 +164,7 @@ index 0328219..7b76c74 100644
      let video = this.getWeakVideo();
      if (video) {
        gOriginatingVideoMap.delete(video);
-@@ -2259,6 +2386,62 @@ export class PictureInPictureChild extends JSWindowActorChild {
+@@ -2259,6 +2383,62 @@ export class PictureInPictureChild extends JSWindowActorChild {
          const { videoRef, isPipApiRequest, initDimension } = message.data;
          return await this.setupPlayer(videoRef, isPipApiRequest, initDimension);
        }
@@ -230,7 +227,7 @@ index 0328219..7b76c74 100644
        case "PictureInPicture:Play": {
          this.play();
          break;
-@@ -2564,6 +2747,8 @@ export class PictureInPictureChild extends JSWindowActorChild {
+@@ -2564,6 +2744,8 @@ export class PictureInPictureChild extends JSWindowActorChild {
      // Now we can lookup this actor, using `video` element, which lives in the web content window
      gOriginatingVideoMap.set(video, this);
  

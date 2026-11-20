@@ -1,30 +1,25 @@
 diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/shared/tabbrowser/ctrlTab.css
 --- a/browser/themes/shared/tabbrowser/ctrlTab.css
 +++ b/browser/themes/shared/tabbrowser/ctrlTab.css
-@@ -2,118 +2,508 @@
+@@ -2,118 +2,499 @@
   * License, v. 2.0. If a copy of the MPL was not distributed with this
   * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
  
 -/* Ctrl-Tab */
 +/*
-+ * Zen "Recent Tabs" switcher for Ctrl+Tab. Port of Ardia's TabSwitcher,
-+ * SectionLabel and Favicon components.
++ * Zen "Recent Tabs" switcher for Ctrl+Tab, ported from Ardia's TabSwitcher.
 + *
 + * Layout constants, shared with browser-ctrlTab.js:
-+ *   WIDTH           400  (TabSwitcher WIDTH)
-+ *   ROW              40  (TabSwitcher ROW)
-+ *   SWITCHER_RADIUS  16  (radius.sheet)
-+ *   SWITCHER_PAD      8  (space.m)
-+ *   ROW_RADIUS        8  (concentric(SWITCHER_RADIUS, SWITCHER_PAD))
-+ *   MAX_ROWS          9  (TabSwitcher MAX_ROWS)
++ *   WIDTH 400, ROW 40, SWITCHER_RADIUS 16, SWITCHER_PAD 8,
++ *   ROW_RADIUS 8, MAX_ROWS 9
 + *
-+ * Colours follow Ardia's tokens. The panel fill is denser: a popup window has no
-+ * page behind it.
++ * Colours follow Ardia's tokens; the panel fill is denser because a popup window
++ * has no page behind it.
 + */
  
-+/* Popup reset. #ctrlTab-panel is a native <panel>: strip its chrome so only the
-+ * card shows. The padding leaves room for the card shadow, which a popup window
-+ * would otherwise clip (browser-ctrlTab.js subtracts this margin). */
++/* Popup reset: strip the native <panel> chrome so only the card shows. The
++ * padding leaves room for the shadow, which a popup window would clip
++ * (browser-ctrlTab.js subtracts this margin). */
  #ctrlTab-panel {
 +  --ctrl-tab-shadow-margin: 24px;
 +
@@ -55,17 +50,15 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  box-shadow: none !important;
 +  padding: 0 !important;
 +
-+  /* popup.css clips ::part(content) and clamps its width to keep menu content
-+   * inside the native rounded background. That cuts the card's corner and
-+   * shadow, which the card paints itself, so keep this box unclipped. */
++  /* popup.css clips ::part(content) and clamps its width for menu content, which
++   * cuts the card's corner and shadow. Keep this box unclipped. */
 +  margin: 0 !important;
 +  overflow: visible !important;
 +  max-width: none !important;
 +  max-height: none !important;
 +}
 +
-+/* Card. The shared Ardia glass recipe (zen-ardia-glass.css) is the same
-+ * material as the swipe capsule and PiP controls. */
++/* Card, using the shared Ardia glass recipe (zen-ardia-glass.css). */
 +.ctrlTab-card {
 +  display: flex;
 +  flex-direction: column;
@@ -222,13 +215,13 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  opacity: 0.96;
 +}
 +
-+/* List. Rows are back to back with no gap, MAX_ROWS * ROW = 360px. */
++/* List: rows are back to back, MAX_ROWS * ROW = 360px. */
 +.ctrlTab-list {
 +  position: relative;
 +  display: flex;
 +  flex-direction: column;
-+  /* Height comes from the row count, set once per paint by the controller, so a
-+   * row entering or leaving never resizes the card mid-animation. */
++  /* Height comes from the row count, set once per paint, so a row entering or
++   * leaving never resizes the card mid-animation. */
 +  height: calc(var(--ctrl-tab-rows, 0) * 40px);
 +  max-height: 360px;
 +  overflow: hidden;
@@ -303,9 +296,8 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 +  color: light-dark(rgba(0, 0, 0, 0.45), rgba(255, 255, 255, 0.45));
 +}
 +
-+/* Gecko treats `hidden` as a presentation attribute, which the `display` rules
-+ * above beat, so hidden rows kept painting. The controller toggles the
-+ * attribute, so force it to win. */
++/* `hidden` is a presentation attribute that the `display` rules above beat, so
++ * hidden rows kept painting. */
 +.ctrlTab-preview[hidden],
 +.ctrlTab-empty[hidden],
 +.ctrlTab-dots[hidden] {
@@ -396,9 +388,8 @@ diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/share
 -  box-shadow: 1px 1px 2px hsl(0, 0%, 12%);
 -  margin-bottom: 8px;
 -  min-width: 0;
-+/* Selected or focused row. The pill paints the fill, the row keeps a hairline
-+ * ring so keyboard focus stays visible. Hover selects through the controller,
-+ * so no :hover rule is needed. */
++/* Selected or focused row: the pill paints the fill, the row keeps a hairline
++ * ring for keyboard focus. Hover selects in JS, so no :hover rule. */
 +.ctrlTab-preview[selected="true"],
 +.ctrlTab-preview:focus {
 +  background-color: transparent;
