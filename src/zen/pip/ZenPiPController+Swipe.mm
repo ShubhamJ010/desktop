@@ -19,7 +19,7 @@ static __unsafe_unretained NSWindow *gSwipeMomentum = nil;
 }
 
 + (ZenPiPController *)swipeTargetFor:(NSEvent *)event {
-  return [self controllerUnderPointer];
+  return [self controllerUnderPointerAllowingOccluded:YES];
 }
 
 + (BOOL)handleSwipe:(NSEvent *)event {

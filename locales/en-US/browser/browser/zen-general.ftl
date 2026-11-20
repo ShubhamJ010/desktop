@@ -47,7 +47,11 @@ zen-disable = Disable
 
 pictureinpicture-minimize-btn =
   .aria-label = Minimize
-  .tooltip = Minimize
+  .tooltip = Minimize ({ $shortcut })
+
+pictureinpicture-unpip-btn =
+  .aria-label = Back to tab
+  .tooltip = Back to tab ({ $shortcut })
 
 zen-panel-ui-gradient-generator-custom-color = Custom Color
 

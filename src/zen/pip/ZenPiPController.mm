@@ -358,6 +358,25 @@ static void NotifyPiPGestureHover() {
 #endif
 }
 
+// A command for the player document. The controller owns the window, so it is
+// the only place that sees a key pressed while the browser window or another
+// app has focus, and the only place that sees a double click on the picture.
+// Playback, the tab and the window's own size all live in the player document,
+// so the key travels there as a command instead of being acted on twice.
+static void NotifyPiPCommand(const char16_t *command) {
+#if __has_include("mozilla/Services.h")
+  if (!NSThread.isMainThread) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      NotifyPiPCommand(command);
+    });
+    return;
+  }
+  if (nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService()) {
+    obs->NotifyObservers(nullptr, "zen-pip-command", command);
+  }
+#endif
+}
+
 - (void)setOverlayVisible:(BOOL)visible animated:(BOOL)animated {
   if (!_overlay) return;
   if (!animated) {
@@ -739,7 +758,9 @@ static void NotifyPiPGestureHover() {
 - (void)backToTabFromMenu:(id)sender { [self backToTab]; }
 
 - (void)backToTab {
-  [_window performClose:nil];
+  // Selecting the originating tab is the player's job: it owns the browser
+  // lookup and the workspace switch. Closing here would leave the tab unselected.
+  NotifyPiPCommand(u"unpip");
 }
 
 - (void)screenChanged {
@@ -1070,6 +1091,7 @@ static void NotifyPiPGestureHover() {
         [self armUIRestoreOnMouseMove];
       }
       [self showCursorIfNeeded];
+      [self focusPiP];
       return;
     }
 
@@ -1122,6 +1144,7 @@ static void NotifyPiPGestureHover() {
         [self armUIRestoreOnMouseMove];
       }
       [self showCursorIfNeeded];
+      [self focusPiP];
       return;
     }
 
@@ -1248,6 +1271,8 @@ static void NotifyPiPGestureHover() {
   _swipeStart = _window.frame;
   _swipeHome = (_armed && _armedHome) ? _armedHome : [self gestureHome];
   [self disarmSwipe];
+  [self frontForGesture];
+  [self focusPiP];
 
   CGPoint point = CGEventGetLocation(event.CGEvent);
   NSPoint pointer = NSMakePoint(point.x, NSMaxY(NSScreen.screens.firstObject.frame) - point.y);
@@ -1284,6 +1309,10 @@ static void NotifyPiPGestureHover() {
 // of that app's windows above it, in which case the pointer is not over the
 // card at all.
 + (ZenPiPController *)controllerUnderPointer {
+  return [self controllerUnderPointerAllowingOccluded:NO];
+}
+
++ (ZenPiPController *)controllerUnderPointerAllowingOccluded:(BOOL)allowOccluded {
   const NSPoint mouse = NSEvent.mouseLocation;
   const NSInteger windowNumber = [NSWindow windowNumberAtPoint:mouse belowWindowWithWindowNumber:0];
   if (windowNumber > 0) {
@@ -1294,20 +1323,17 @@ static void NotifyPiPGestureHover() {
       window = window.parentWindow;
     }
     ZenPiPController *controller = window ? [self forWindow:window] : nil;
-    // Whatever is on top is not ours, so the pointer is over another app's
-    // window. Never fall through to a frame test: it would claim the card is
-    // hovering while it is actually behind that window.
-    return (controller && controller.window.isVisible) ? controller : nil;
+    if (controller && controller.window.isVisible) return controller;
+    if (!allowOccluded) return nil;
   }
 
-  // No window under the pointer at all (a gap between windows, or the desktop).
-  // A frame test over our own windows is close enough to tell which card, if
-  // any, the pointer is over.
+  // No window under the pointer at all (a gap between windows, or the desktop),
+  // or an occluded PiP card when explicitly allowed for user gestures.
   for (NSWindow *candidate in NSApp.windows) {
     if (!candidate.visible) continue;
     if (!NSPointInRect(mouse, candidate.frame)) continue;
     ZenPiPController *controller = [self forWindow:candidate];
-    if (controller) return controller;
+    if (controller && controller.window.isVisible) return controller;
   }
   return nil;
 }
@@ -1341,6 +1367,7 @@ static void NotifyPiPGestureHover() {
 - (void)beginGestureChrome:(ZenPiPGesture)kind chained:(BOOL)chained {
   _awaitingMouseMoveToShowUI = NO;
   [self frontForGesture];
+  [self focusPiP];
   const uint64_t generation = ++_gestureGeneration;
   [self retain];
   dispatch_async(dispatch_get_main_queue(), ^{
@@ -1359,6 +1386,7 @@ static void NotifyPiPGestureHover() {
   // Window, not app: ordering the card front puts it above the other app without
   // dragging Zen's browser window forward.
   [self frontForGesture];
+  [self focusPiP];
   [self setPiPUIVisible:NO];
   if (kind == ZenPiPGesturePinch) {
     // A resize is a sustained 120 Hz gesture: drop the big soft shadow for its
@@ -1583,6 +1611,7 @@ static void NotifyPiPGestureHover() {
   _startedUnderOtherApp = !NSApp.isActive;
   _awaitingMouseMoveToShowUI = NO;
   [self frontForGesture];
+  [self focusPiP];
   // Announce the gesture now, not one main-loop turn later with the chrome: the
   // page freezes the remote video viewport from this notification, and it must
   // already be frozen when the first size change lands.
@@ -1647,6 +1676,7 @@ static void NotifyPiPGestureHover() {
   [self animateTo:targetRect];
 }
 
+// The trackpad's double tap zooms the card in and out of its 1.75x frame.
 - (void)toggleSmartMagnify {
   [self stopMotion];
   [_window orderFrontRegardless];
@@ -1700,32 +1730,73 @@ static void NotifyPiPGestureHover() {
   }
 }
 
-// Keyboard control while the pointer is over the card. Returns YES when the
-// event was consumed and must not reach the browser.
+// Keyboard control while the pointer is over the card, or while the card has
+// the keyboard. Returns YES when the event was consumed and must not reach the
+// browser.
+//
+// Everything that touches playback or the tab is routed to the player document
+// as a command: that is where the media and the tab lookup live, so the meaning
+// of each key is written down once. The transport keys are the exception - the
+// page only reacts to a key event if its window is key, so those still have to
+// be sent as events.
 - (BOOL)handleKeyDown:(NSEvent *)event {
   const unsigned short code = event.keyCode;
-  // Close the card. This is also the only way out of a PiP that has the
-  // keyboard while the pointer is parked over it.
-  if (code == kKeyEscape || ((event.modifierFlags & NSEventModifierFlagCommand) && code == kKeyW)) {
-    [_window performClose:nil];
-    return YES;
-  }
-  // Everything else is the unmodified transport set below; a shortcut with
-  // Command, Control or Option belongs to the browser or the system.
   const NSEventModifierFlags mods = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
-  if (mods & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption)) {
+  // A card under the pointer answers keys without owning the keyboard, which is
+  // what lets Escape and Command+W reach it from the browser window. The letter
+  // shortcuts are different: they are ordinary typing keys, so they only mean
+  // anything while the card itself has the keyboard.
+  const BOOL cardIsKey = (event.window == _window);
+
+  // Command+W closes the card the way the close button does: pause, then close.
+  // Every other Command shortcut belongs to the browser or the system.
+  if (mods & NSEventModifierFlagCommand) {
+    if (code == kKeyW) {
+      NotifyPiPCommand(u"close-pause");
+      return YES;
+    }
     return NO;
   }
-  // Space (play/pause), Left (seek -5s), Right (seek +5s), Down (vol -), Up (vol +), M (mute)
-  if (code == kKeySpace || code == kKeyLeftArrow || code == kKeyRightArrow ||
-      code == kKeyDownArrow || code == kKeyUpArrow || code == kKeyM) {
-    // The page only reacts to a key event if its window is key, so this is the
-    // one shortcut path that activates the app.
-    [self focusPiP];
-    [_window sendEvent:event];
-    return YES;
+  if (mods & (NSEventModifierFlagControl | NSEventModifierFlagOption)) {
+    return NO;
   }
-  return NO;
+  // Shift+letter is not a card shortcut, and the player matches the letter
+  // keys without modifiers too.
+  if (mods & NSEventModifierFlagShift) {
+    return NO;
+  }
+
+  switch (code) {
+    case kKeyEscape:
+      // While the card has the keyboard the page handles Escape, so a settings
+      // panel or fullscreen closes before the card itself goes away.
+      if (cardIsKey) return NO;
+      // With the pointer only over the card, this is back to tab: the video
+      // returns to its page at its own size, still playing.
+      NotifyPiPCommand(u"unpip");
+      return YES;
+    case kKeyA:
+      // Dismiss the card and keep the audio running, like minimize.
+      if (!cardIsKey) return NO;
+      NotifyPiPCommand(u"close");
+      return YES;
+    case kKeyM:
+      if (!cardIsKey) return NO;
+      NotifyPiPCommand(u"mute");
+      return YES;
+    case kKeySpace:
+    case kKeyLeftArrow:
+    case kKeyRightArrow:
+    case kKeyDownArrow:
+    case kKeyUpArrow:
+      // The page only reacts to a key event if its window is key, so this is
+      // the one shortcut path that activates the app.
+      [self focusPiP];
+      [_window sendEvent:event];
+      return YES;
+    default:
+      return NO;
+  }
 }
 
 - (NSDictionary *)throwInfo {
@@ -1870,9 +1941,10 @@ void InstallMonitors() {
     [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMagnify
                                            handler:^(NSEvent *event) {
       if (NSApp.isActive) return;
-      ZenPiPController *controller = [ZenPiPController controllerUnderPointer];
+      ZenPiPController *controller = [ZenPiPController controllerUnderPointerAllowingOccluded:YES];
       if (!controller || ![ZenPiPZoom zooms:controller.window]) return;
       [controller frontForGesture];
+      [controller focusPiP];
       if (GestureTimingEnabled()) {
         NSLog(@"[pip-gesture] pinch (global) key=%d prevents=%d", controller.window.isKeyWindow,
               [controller.window _preventsActivation]);
@@ -1900,11 +1972,16 @@ void InstallMonitors() {
 
     [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                           handler:^NSEvent *(NSEvent *event) {
-      ZenPiPController *controller = [ZenPiPController controllerUnderPointer];
-      if (controller) {
-        if ([controller handleKeyDown:event]) {
-          return nil;
-        }
+      // The card is the target when it has the keyboard, and when the pointer
+      // rests over it. Both matter: a card keeps the keyboard after a click
+      // even if the pointer moves away, and a card under the pointer answers
+      // keys without stealing focus from the browser window.
+      ZenPiPController *controller = [ZenPiPController forWindow:event.window];
+      if (!controller) {
+        controller = [ZenPiPController controllerUnderPointer];
+      }
+      if (controller && [controller handleKeyDown:event]) {
+        return nil;
       }
       return event;
     }];

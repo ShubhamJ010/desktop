@@ -593,7 +593,7 @@ jobs:
           cd tap
           CASK="Casks/zen-browser-sj.rb"
           if [ -f "$CASK" ]; then
-            python3 -c "import os, re; from pathlib import Path; p = Path('$CASK'); c = p.read_text(); c = re.sub(r'version\\s+\\\"[^\\\"]+\\\"', f'version \\\"{os.environ[\\\"VERSION\\\"]}\\\"', c, count=1); c = re.sub(r'sha256\\s+\\\"[^\\\"]+\\\"', f'sha256 \\\"{os.environ[\\\"SHA256\\\"]}\\\"', c, count=1); c = re.sub(r'sha256\\s+:no_check', f'sha256 \\\"{os.environ[\\\"SHA256\\\"]}\\\"', c, count=1); p.write_text(c)"
+            python3 -c 'import re, sys, pathlib; p = pathlib.Path(sys.argv[1]); c = p.read_text(); c = re.sub(r"version\s+\"[^\"]+\"", f"version \"{sys.argv[2]}\"", c, count=1); c = re.sub(r"sha256\s+(\"[^\"]+\"|:no_check)", f"sha256 \"{sys.argv[3]}\"", c, count=1); p.write_text(c)' "$CASK" "$VERSION" "$SHA256"
             git add "$CASK"
             if ! git diff --cached --quiet; then
               git commit -m "chore(cask): bump zen-browser-sj to $VERSION"

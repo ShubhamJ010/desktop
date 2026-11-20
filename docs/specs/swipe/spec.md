@@ -87,19 +87,33 @@ monitor consumes it and JS cancels the wheel default.
 
 ## Cancellation
 
-Cancellation has to survive two different mistakes.
+Cancellation has to survive two different mistakes:
 
-- Vertical drift while picking rows must not cancel. The tracker treats the
-  sheet as browsing for 180ms after each vertical sample and re-anchors the
-  reversal baseline to the finger at that point.
-- A real pull-back after browsing must cancel. A leaky reverse-travel bucket
-  accumulates opposite travel. It leaks over 600ms (`ZEN_SWIPE_CANCEL_LEAK_MS`),
-  and a pull-back of 22 percent of the unit (`ZEN_SWIPE_CANCEL_TRAVEL`) with at
-  least 50 percent release progress (`ZEN_SWIPE_CANCEL_RELEASE`) selects cancel.
+- **Vertical drift while picking rows must not cancel.** When native vertical
+  samples arrive (`zen-swipe-vertical`), the tracker records the vertical activity
+  timestamp and marks vertical browsing as active for 250ms. Small horizontal trackpad
+  jitter (delta step < 0.03) during this window is ignored so scrolling through
+  history rows does not accidentally trigger cancellation.
+- **A real pull-back after browsing must cancel.** A leaky reverse-travel bucket
+  accumulates opposite horizontal travel over 600ms (`ZEN_SWIPE_CANCEL_LEAK_MS`).
+  Moving forward again immediately drains accumulated travel. A deliberate pull-back
+  of 18 percent of the unit (`ZEN_SWIPE_CANCEL_TRAVEL = 0.18`) triggers cancellation.
+  On finger lift, 40 percent release progress (`ZEN_SWIPE_CANCEL_RELEASE = 0.40`)
+  cancels the gesture instead of navigating.
+- **Edge cancellation.** Returning fingers all the way back to the bezel/edge
+  (`pos <= 0.04` in-flight or `<= 0.05` upon finger release, when vertical browsing
+  is not active) triggers an instant cancel.
 
-On cancel the sheet fades and scales out in 120ms with a compositor-only
-animation. The earlier version resized the blurred capsule on every sample,
-which forced a relayout and re-blur per frame.
+### Visual feedback on cancel
+
+- **History sheet feedback:** As reverse travel accumulates towards cancellation,
+  the sheet shifts back horizontally towards the screen edge by up to 28px
+  (`translateX(±28px * progress)`) and subtly dims (`opacity: 1 - 0.35 * progress`),
+  making it clear that the gesture is being reversed.
+- **Capsule cancel exit:** When a partial or unconfirmed swipe is cancelled, the
+  capsule slides back into the window edge (`translateX(±72px)`) with zero delay,
+  avoiding mid-air shrinkage or flicker. Only when confirmed and navigating does
+  the capsule fade and shrink in place after the 120ms dismiss beat.
 
 `ZEN_SWIPE_CONFIRM_DELTA` is 0.25. Release above it navigates to the selected
 row. Release below it returns to the page.

@@ -31,6 +31,7 @@ constexpr CGFloat kButtonMargin = 12, kButtonSize = 28;
 constexpr CFTimeInterval kCornerBendDuration = 0.2;
 
 // Virtual key codes for keyboard control.
+constexpr unsigned short kKeyA = 0;
 constexpr unsigned short kKeyW = 13;
 constexpr unsigned short kKeyEscape = 53;
 constexpr unsigned short kKeySpace = 49;
@@ -237,6 +238,7 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (void)armSwipe;
 - (void)disarmSwipe;
 + (ZenPiPController *)controllerUnderPointer;
++ (ZenPiPController *)controllerUnderPointerAllowingOccluded:(BOOL)allowOccluded;
 - (void)swipeBegan:(NSEvent *)event;
 - (void)beginGestureChrome:(ZenPiPGesture)kind chained:(BOOL)chained;
 - (void)applyGestureChrome:(ZenPiPGesture)kind chained:(BOOL)chained;
