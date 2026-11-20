@@ -1,13 +1,10 @@
 # Spec: floating PiP card
 
-Platform: macOS (Cocoa). Applies to every Picture-in-Picture window opened by
-Gecko.
+Platform: macOS (Cocoa). Applies to every Picture-in-Picture window Gecko opens.
 
 ## Purpose
 
-Turn the PiP window into a card that behaves like a desktop window. It moves
-with a swipe, snaps to corners, hides at a screen edge, resizes around the
-cursor, and takes keyboard input while another app is frontmost.
+Make the PiP window behave like a desktop window: move with a swipe, snap to corners, hide at a screen edge, resize around the cursor, and take keys while another app is frontmost.
 
 ## Files
 
@@ -19,7 +16,7 @@ cursor, and takes keyboard input while another app is frontmost.
 | `ZenPiPThrowMath.h` | Movement, corner picking, screen fitting, spring |
 | `ZenPiPZoomMath.h` | Width limits, cursor anchoring, pixel rounding |
 | `ZenPiPOverlay.mm`, `ZenPiPHandle.mm`, `ZenPiPControl.mm` | Stash handle and buttons |
-| `src/toolkit/components/pictureinpicture/content/player-js.patch` | Reacts to gesture notifications and mirrors the card UI |
+| `src/toolkit/components/pictureinpicture/content/player-js.patch` | Reacts to gesture notifications, mirrors the card UI |
 
 ## State
 
@@ -34,60 +31,45 @@ stashed ──click handle──▶ restored at the edge
 stashed ──drag──▶ free
 ```
 
-The card is always either attached to a window that is visible, or detached. A
-detached controller removes its observers, timers and monitors and answers all
-gesture calls with a no-op.
+The card is attached to a visible window or detached. A detached controller drops its observers, timers and monitors, and answers gesture calls with a no-op.
 
 ## Geometry and feel
 
 | Constant | Value | Meaning |
 | --- | --- | --- |
-| `kCornerInset` | 10 pt | Distance from the visible screen edge when snapped |
-| `kBrowserCardInset` | 9 pt | Inset the browser window uses for its own corner cards |
-| `kCornerTolerance` | π/4 | Half-angle of the cone that counts as aiming at a corner |
-| `kResponse`, `kDampingRatio` | 0.9, 0.9 | Spring used for every snap and throw |
-| `kResolve` | 0.2 | Offset and velocity below which the spring is considered settled |
-| `kDragFlingSpeed` | 350 pt/s | Release speed that flings the card |
-| `kSwipeFlingDelta` | 6 pt | Last scroll delta that counts as a fling |
-| `kSwipeEventsPerSecond` | 90 | Assumed event rate when converting a scroll delta to velocity |
-| `kPeek` | 28 pt | Width left visible when stashed |
-| `kReturnMargin` | 16 pt | Gap between a restored card and the edge |
-| `kCornerBendDuration` | 0.2 s | Corner radius animation time |
-| `kFreeRadius`, `kSnappedRadius` | 6 pt, 9 pt | Corner radius when free and when docked |
+| `kCornerInset` | 10 pt | Edge distance when snapped |
+| `kBrowserCardInset` | 9 pt | The browser's own corner card inset |
+| `kCornerTolerance` | π/4 | Half-angle of the corner cone |
+| `kResponse`, `kDampingRatio` | 0.9, 0.9 | Spring for every snap and throw |
+| `kResolve` | 0.2 | Offset and velocity counted as settled |
+| `kDragFlingSpeed` | 350 pt/s | Release speed that flings |
+| `kSwipeFlingDelta` | 6 pt | Last scroll delta counted as a fling |
+| `kSwipeEventsPerSecond` | 90 | Assumed rate for delta to velocity |
+| `kPeek` | 28 pt | Width visible when stashed |
+| `kReturnMargin` | 16 pt | Gap from the edge after unstash |
+| `kCornerBendDuration` | 0.2 s | Corner radius animation |
+| `kFreeRadius`, `kSnappedRadius` | 6 pt, 9 pt | Radius free and docked |
 
-The corner radius follows the same visual language as Zen's browser cards. A
-snapped card uses 9 points so it lines up with the 10 point corner inset and the
-9 point browser card inset.
+The snapped radius matches Zen's browser cards: 9 points lines up with the 10 point inset and the 9 point card inset.
 
 ## Drag and throw
 
-A drag records samples. On release the controller takes the samples from the
-last 100ms (`kVelocityWindow`). If the newest sample is older than 50ms
-(`kVelocityStale`), velocity is zero, so a pause before release drops the card
-where it is.
+A drag records samples. On release the controller takes the last 100ms (`kVelocityWindow`); if the newest sample is older than 50ms (`kVelocityStale`), velocity is zero, so a pause drops the card where it is.
 
 With velocity:
 
-1. `PickCorner` computes the release heading and picks the corner within 45
-   degrees of it. No corner in range means no throw.
-2. `throwTo` runs the spring from the release frame to the corner frame.
-3. Ticks come from a `CADisplayLink` with a preferred rate range of 60 to 120 Hz
-   on macOS 14, or a timer otherwise.
-4. A throw that has not resolved after the watchdog window is ended by
-   `rescueIfLost`, which keeps the card on screen.
+1. `PickCorner` picks the corner within 45 degrees of the release heading. None in range means no throw.
+2. `throwTo` springs from the release frame to the corner frame.
+3. Ticks come from a `CADisplayLink` (preferred 60 to 120 Hz on macOS 14) or a timer.
+4. An unresolved throw is ended by `rescueIfLost` after the watchdog window, keeping the card on screen.
 
-Without velocity the card stays where it was released, then `snapToNearestCorner`
-pulls it into a corner when its center is in that corner's quadrant.
+Without velocity the card stays put; `snapToNearestCorner` pulls it in when its center sits in a corner's quadrant.
 
 ## Stash
 
-A release outside the screen's visible frame, or past its edge, calls
-`stashAt:`. The card slides so that `kPeek` points remain visible. The handle is
-a 28 by 28 point view inset 12 points, shown only while stashed. Clicking it
-calls `unstash`, which returns the card to `kReturnMargin` from the edge.
+A release outside the visible frame, or past its edge, calls `stashAt:`. The card slides so `kPeek` points stay visible. The handle is a 28 point wide strip on the inner edge, card height, with a chevron, shown only while stashed. Clicking calls `unstash`, which returns the card `kReturnMargin` from the edge.
 
-A stashed card still remembers its screen. If the display disconnects,
-`rescueIfLost` moves the card to the screen with the largest overlap.
+A stashed card remembers its screen. If the display disconnects, `rescueIfLost` moves it to the screen with the largest overlap.
 
 ## Zoom
 
@@ -95,80 +77,53 @@ Two inputs share one path.
 
 | Input | Factor |
 | --- | --- |
-| Precise scroll with Command | `exp(0.004 * deltaY)` per event |
-| Line scroll with Command | `exp(0.08 * deltaY)` per event |
-| Magnify | `max(0.05, 1 + magnification)` |
+| Command+precise scroll | `exp(0.004 * deltaY)` per event |
+| Command+line scroll | `exp(0.08 * deltaY)` per event |
+| Magnify | `max(0.05, 1 + magnification)` per event, each step clamped to 0.90 to 1.10 in `ZenPiPZoom.mm` so trackpad spikes cannot jump the size |
 
 Rules:
 
-- The gesture captures `baseFrame` and the grabbed fraction of the frame once.
-  Every frame is computed from that base, so rounding cannot accumulate.
-- Width stays within a dynamic range. The visible width of the screen is
-  normalised for ultrawide displays, then clamped to 260 to 360 points minimum
-  and 540 to 960 points maximum. Height cannot exceed 75 percent of the screen,
-  and a portrait video cannot exceed 90 percent of screen height.
-- Frames snap to whole device pixels. A 2x display then moves one pixel at a
-  time instead of two.
-- While the gesture runs, the controller calls `_startLiveResize` on the window.
-  AppKit scales the last composited frame, so Gecko does not relayout the video
-  on every tick. `_endLiveResize` runs when the gesture ends, or from the
-  watchdog if it never reports an end.
-- At the end, `KeepOnScreen` clamps the frame into the visible area. A card
-  within 56 points of a corner slot on each axis is pulled into that slot, which
-  keeps a docked card docked after a resize.
+- Capture `baseFrame` and the grabbed fraction once. Every frame derives from that base, so rounding cannot accumulate.
+- Width follows a dynamic range: the visible width, normalized for ultrawide displays, clamped to 260 to 360 points minimum and 540 to 960 maximum. Height stays under 75 percent of the screen; a portrait video under 90 percent of screen height.
+- Frames snap to whole device pixels, so a 2x display moves one pixel per step.
+- The gesture runs inside `_startLiveResize`. AppKit scales the last composited frame, so Gecko does not relayout the video every tick. `_endLiveResize` runs at gesture end or from the watchdog.
+- `KeepOnScreen` clamps at the end. A card within 56 points of a corner slot on each axis is pulled in, keeping a docked card docked after a resize.
+- Hitting the min or max width plays one alignment haptic per limit, latched. This path calls the performer directly and ignores `zen.haptic-feedback.enabled`.
 
 ## Focus
 
-The card belongs to Zen, so focusing it must not raise the browser window.
+Focusing the card must not raise the browser.
 
-- `focusPiP` keys the card in place when Zen is already active.
-- When another app is frontmost, it activates Zen, lowers
-  `preventsActivation` until activation settles, then demotes every other Zen
-  window.
-- `preventsActivation` stays lowered until `finishPiPFocus`, which is what makes
-  AppKit key the card instead of the main window.
-- A click, a transport key, a finished swipe or an enabled hover all call
-  `focusPiP`.
+- `focusPiP` keys the card in place when Zen is active.
+- When another app is frontmost, it activates Zen, lowers `preventsActivation` until activation settles, then demotes every other Zen window.
+- `preventsActivation` stays lowered until `finishPiPFocus`, which makes AppKit key the card instead of the main window.
+- A click, a transport key, a finished swipe or an enabled hover calls `focusPiP`.
 
-Hover focus is opt-in from the context menu, delayed by 250ms, cancelled when
-the pointer leaves, and skipped while a gesture owns the card. The hover check
-uses the window server stacking order, so a card covered by another app is not
-treated as hovered. A session scroll tap routes scrolls aimed at the card while
-another app is frontmost. That tap needs Input Monitoring permission. Without
-it the tap is absent and local events still work.
+Hover focus is opt-in from the context menu, delayed 250ms, cancelled on pointer exit, skipped while a gesture owns the card. It uses the window server stacking order, so a card covered by another app is not hovered. A session scroll tap routes scrolls aimed at the card while another app is frontmost; it needs Input Monitoring. Without it the tap is absent and local events still work.
 
 ## Keyboard
 
-A local key monitor routes keys to the key card. Escape and Command+W answer
-whenever the pointer is over the card; the letter shortcuts only while the card
-itself has the keyboard, so they cannot eat ordinary typing in the browser.
+A local key monitor routes keys to the card. Command+W is always consumed. Escape answers from the pointer and falls through to the page while the card is key. Letter shortcuts (A, M) apply only while the card has the keyboard, so they cannot eat browser typing.
 
 | Key | Action |
 | --- | --- |
-| Escape | Back to the tab: the card closes and the video plays inline again |
-| Command+W | Pause, then close the card |
-| A | Close the card and keep playing |
+| Escape | Back to the tab: card closes, video plays inline |
+| Command+W | Pause, then close |
+| A | Close and keep playing |
 | Space | Play or pause |
 | Left, Right | Seek back or forward |
 | Up, Down | Volume |
 | M | Mute or unmute |
 
-Escape and Command+W match the close and back-to-tab buttons. While the card has
-the keyboard, Escape still reaches the page first so an open settings panel or
-fullscreen closes before the card does.
+Escape and Command+W match the close and back-to-tab buttons. While the card is key, Escape reaches the page first, so an open settings panel or fullscreen closes before the card.
 
-The controller does not act on those keys itself. It posts a `zen-pip-command`
-notification and the player document performs it, because playback and the
-originating tab are reachable only from there. That also means the context
-menu's Back to Tab and the player's own key handler use the same code path.
-
-Other modified keys pass through untouched.
+The controller posts `zen-pip-command` and the player document performs it, because playback and the originating tab are reachable only there. The menu's Back to Tab and the player's key handler share that path. Other modified keys pass through.
 
 ## Context menu
 
 | Item | Effect |
 | --- | --- |
-| Back to Tab | Close the card and select the originating tab |
+| Back to Tab | Close the card, select the originating tab |
 | Keep Window on Top | Toggle `NSFloatingWindowLevel`. Stored in user defaults |
 | Focus on Hover | Toggle delayed hover focus |
 
@@ -176,45 +131,32 @@ Other modified keys pass through untouched.
 
 Movement never leaves the card unreachable.
 
-- `Mover` limits each step. A step that would increase the shortfall is reduced
-  until it does not.
-- `Shortfall` measures how far the card is from having 60 points of width, or 40
-  percent of its height, inside some visible screen area.
-- A card larger than the screen is boxed inside that screen instead.
-- `Rescue` clamps a frame that has no reachable position.
+- `Mover` limits each step; a step that would increase the shortfall is reduced.
+- `Shortfall` measures the gap from 60 points of width, or 40 percent of height, inside a visible screen area.
+- A card larger than the screen is boxed inside it.
+- `Rescue` clamps a frame with no reachable position.
 
-Displays that touch an edge of the current display contribute their full frame,
-not their visible frame, so a card can cross the menu bar gap between screens.
+Displays touching an edge of the current display contribute their full frame, not their visible frame, so a card can cross the menu bar gap between screens.
 
 ## Notifications to the player
 
-The controller posts `zen-pip-gesture-begin`, `zen-pip-gesture-end` and
-`zen-pip-gesture-hover` through `Services.obs`. The PiP player uses them to hide
-controls during a gesture and to scale the frozen child frame.
+`Services.obs` carries `zen-pip-gesture-begin`, `zen-pip-gesture-end` and `zen-pip-gesture-hover`. The player hides controls during a gesture and scales the frozen child frame.
 
-It also posts `zen-pip-command` with one of `close-pause`, `close`, `unpip` or
-`mute`. Keys arrive that way, and the player decides what they mean.
+`zen-pip-command` carries one of `close-pause`, `close`, `unpip` or `mute`. The player decides what each means.
 
 ## Known limits
 
 - Menu titles and haptic-free movement are not localized.
-- The stash handle sits outside the card frame; a screen recorder that captures
-  only the window will miss it.
-- Hover focus from another app needs the accessibility-backed mouse monitor. The
-  menu item still works locally without it.
-- A live resize started by the controller is ended by the watchdog if AppKit
-  never delivers the phase end.
+- The stash handle sits outside the card frame; a window-only screen recording misses it.
+- Hover focus from another app needs the accessibility-backed mouse monitor. The menu item still works locally.
+- If AppKit never delivers the phase end, the watchdog ends the live resize.
 
 ## Verification
 
-1. Drag the card to each corner and release inside the cone. It snaps with one
-   spring and no overshoot past the menu bar.
-2. Fling the card at a corner. It lands in that corner and stays on screen.
-3. Push it past the right edge. It stashes with 28 points visible. Click the
-   handle. It returns.
-4. Pinch to grow and shrink. The picture does not tear or stair-step. The card
-   that was docked stays docked.
-5. Put another app in front. Click the card. The card becomes key and the Zen
-   window stays behind.
-6. Press Space, arrows and M. Playback follows.
+1. Drag to each corner and release inside the cone. One spring, no overshoot past the menu bar.
+2. Fling at a corner. It lands there and stays on screen.
+3. Push past the right edge. It stashes with 28 points visible. Click the handle. It returns.
+4. Pinch to grow and shrink. No tearing or stair-stepping. A docked card stays docked.
+5. Put another app in front. Click the card. It becomes key; the Zen window stays behind.
+6. Press Space, arrows, M. Playback follows.
 7. Disconnect a display. The card moves to a screen that still exists.
