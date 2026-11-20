@@ -1,11 +1,8 @@
 # macOS enhancement specs
 
-Specs for the native macOS work merged through
-[PR #5](https://github.com/ShubhamJ010/desktop/pull/5) on `zen-enh-main`.
+Specs for the native macOS work merged through [PR #5](https://github.com/ShubhamJ010/desktop/pull/5) on `zen-enh-main`.
 
-Each folder holds the behavior contract for one feature. The "why" lives in
-`docs/decisions/` as an ADR. The product summary lives in [PRD.md](../PRD.md).
-
+Each folder holds one feature's behavior contract. The "why" lives in `docs/decisions/` as an ADR. The product summary lives in [PRD.md](../PRD.md).
 
 ## Index
 
@@ -19,11 +16,6 @@ Each folder holds the behavior contract for one feature. The "why" lives in
 | [spaces/spec-swipe-haptics.md](spaces/spec-swipe-haptics.md) | Trackpad detent feedback while swiping between spaces | `src/zen/spaces/ZenSpacesSwipe.mjs`, `src/zen/spaces/ZenSpaceManager.mjs` |
 | [glass/spec.md](glass/spec.md) | Shared frosted glass tokens for new chrome surfaces | `src/zen/common/styles/zen-ardia-glass.css` |
 
-
 ## How to read a spec
 
-Each spec lists the prefs it reads, the constants that define its feel, the
-state machine, the failure modes the code already handles, and the places that
-must change together. When a spec and the code disagree, the code is right and
-the spec needs a fix.
-
+Each spec lists its prefs, its feel constants, its state machine, the failure modes the code handles, and the files that must change together. When a spec and the code disagree, the code is right and the spec needs a fix.
