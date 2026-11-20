@@ -18,31 +18,25 @@ using namespace zen_pip;
 
 namespace {
 
-// The card whose window the pointer last entered. Hover is window-global rather
-// than per controller: the pointer can cross from one PiP to another and only
-// one of them may be in the hovered state at a time. Held unretained; the owning
-// controller clears it in -detach, before the window can go away.
+// Card whose window the pointer last entered. Window-global, since only one card
+// can be hovered. Unretained; the owning controller clears it in -detach.
 __unsafe_unretained NSWindow *sHoveredWindow = nil;
-// Session-wide scroll tap (see PiPScrollTapCallback). NULL when the process is
-// not trusted for Input Monitoring; every user of it checks first.
+// Session-wide scroll tap (see PiPScrollTapCallback). NULL without Input
+// Monitoring trust; every user checks first.
 CFMachPortRef sEventTap = NULL;
 CFRunLoopSourceRef sEventTapSource = NULL;
 
 NSString *const kKeepOnTopDefault = @"ZenPictureInPictureKeepOnTop";
 NSString *const kGestureTimingDefault = @"ZenPictureInPictureGestureTiming";
 NSString *const kHoverFocusDefault = @"ZenPictureInPictureHoverFocus";
-// A resize has to stay visible over whatever app is frontmost. Floating level
-// beats another app's normal windows, but not its panels or sheets, so the card
-// is lifted for the gesture only. Modal-panel level is still below the menu bar,
-// which keeps the card from drawing over it.
+// A resize must stay above the frontmost app but below the menu bar, so the card
+// is lifted to modal-panel level for the gesture.
 constexpr NSInteger kGestureFrontLevel = NSModalPanelWindowLevel;
-// How long the pointer has to rest over the card before hover focus may take
-// the keyboard. Long enough that crossing the card on the way elsewhere never
-// activates Zen, short enough to feel like a hover rather than a click.
+// Rest time before hover focus may take the keyboard: long enough to cross the
+// card on the way elsewhere without activating Zen.
 constexpr NSTimeInterval kHoverFocusDelay = 0.25;
-// Upper bound on waiting for an activation to settle. AppKit posts the
-// activation notification within a loop turn or two; this only covers the case
-// where it never arrives (activation refused, or already in progress).
+// Cap on waiting for activation to settle. AppKit posts the notification within a
+// loop turn or two; this covers the case where it never arrives.
 constexpr NSTimeInterval kFocusSettleTimeout = 1.0;
 const void *const kControllerKey = &kControllerKey;
 
@@ -55,16 +49,15 @@ os_log_t PiPGestureLog() {
   return log;
 }
 
-// Opt-in, off by default: hover focus activates Zen, so it must never be a
-// surprise. Read on every use instead of cached, because the context-menu
-// toggle has to affect a request that is already in flight.
+// Opt-in and off by default, because hover focus activates Zen. Read on every use
+// so the context-menu toggle affects a request already in flight.
 BOOL HoverFocusEnabled() {
   id value = [NSUserDefaults.standardUserDefaults objectForKey:kHoverFocusDefault];
   return value ? [value boolValue] : NO;
 }
 
 // Gated probe: `defaults write app.zen-browser.zen-custom ZenPictureInPictureGestureTiming -bool YES`
-// or `ZEN_PIP_GESTURE_TIMING=1`. Read once; restart the app to toggle.
+// or `ZEN_PIP_GESTURE_TIMING=1`. Read once; restart to toggle.
 BOOL GestureTimingEnabled() {
   static BOOL enabled;
   static dispatch_once_t once;
@@ -148,16 +141,12 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
   ZenPiPController *existing = [self forWindow:window];
   if (existing) return YES;
   ZenPiPController *controller = [[[ZenPiPController alloc] initWithWindow:window] autorelease];
-  // Clicking or gesturing the PiP must front the window, not the whole app.
+  // Clicking or gesturing the card fronts the window, not the app.
   [window _setPreventsActivation:YES];
-  // The pinch/scroll paths resize through AppKit's own live-resize machinery,
-  // which only works on a resizable window. Page-created PiP windows may not
-  // declare themselves resizable; the aspect ratio is locked either way, so the
-  // only thing this allows is a resize the card was already taking.
+  // Live resize (pinch/scroll) only works on a resizable window. The aspect ratio
+  // stays locked, so this only allows a resize the card was already taking.
   window.styleMask |= NSWindowStyleMaskResizable;
-  // The card follows the user across Spaces, including another app's full-screen
-  // space: a PiP that disappears when the frontmost app goes full screen cannot
-  // be resized at all.
+  // Follow the user across Spaces, including another app's full-screen space.
   window.collectionBehavior |= NSWindowCollectionBehaviorCanJoinAllSpaces |
                                NSWindowCollectionBehaviorFullScreenAuxiliary;
   [controller roundCorners];
@@ -195,12 +184,9 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
                                               object:window
                                                queue:nil
                                           usingBlock:^(NSNotification *) {
-                                            // A resize gesture owns the frame for its whole
-                                            // duration; rebuilding the corner radius and layer
-                                            // state on every tick is pure per-frame cost and makes
-                                            // the picture stutter. All of it is applied once when
-                                            // the gesture ends, and the shadow is off for the
-                                            // duration, so there is nothing to track here.
+                                            // A gesture owns the frame for its duration; rebuilding the
+                                            // radius and layer state per tick stutters the picture. Applied
+                                            // once at gesture end.
                                             if (weakSelf->_liveResizing || weakSelf->_isPinching) return;
                                             [weakSelf roundCorners];
                                           }]];
@@ -220,24 +206,20 @@ std::vector<zen_pip_throw::Screen> ThrowScreens() {
                                               object:window
                                                queue:nil
                                           usingBlock:^(NSNotification *) {
-                                            // A live resize this code started (pinch/scroll)
-                                            // belongs to the pinch path: chrome, cursor and
-                                            // elevation are already set from there.
+                                            // An owned live resize belongs to the pinch path, which already
+                                            // set chrome, cursor and elevation.
                                             if (weakSelf->_ownLiveResize) return;
                                             [weakSelf frontForGesture];
                                             weakSelf->_awaitingMouseMoveToShowUI = NO;
                                             [weakSelf cancelMotion];
                                             [weakSelf showCursorIfNeeded];
                                             weakSelf->_carrying = NO;
-                                            // Old `stopMotion` parity: a live resize must not inherit a
-                                            // half-finished swipe, or the chrome pass at the end would be
-                                            // skipped as "owned by the swipe".
+                                            // A live resize must not inherit a half-finished swipe, or the
+                                            // chrome pass at the end would be skipped.
                                             weakSelf->_swiping = NO;
                                             weakSelf->_liveResizing = YES;
-                                            // Matching chrome for a mouse resize: no controls over
-                                            // the picture, no soft shadow to rasterise per tick.
-                                            // The cursor stays visible because the user is dragging
-                                            // an edge with it.
+                                            // Mouse resize chrome: no controls over the picture, no shadow to
+                                            // rasterise per tick. The cursor stays visible for the drag.
                                             [weakSelf setPiPUIVisible:NO];
                                             [weakSelf hideShadowForResize];
                                           }]];
@@ -338,12 +320,9 @@ static void NotifyPiPGestureActive(bool active) {
 #endif
 }
 
-// The pointer is over the card again after a gesture hid the controls. Gecko
-// waits for a DOM mousemove to show them, and mouse-moved events are not
-// delivered to an inactive app - so while another app is frontmost it would
-// never see the hover end. The tracking areas and the global mouse-moved
-// monitor do fire in that state, so this is how Gecko learns it is hovered.
-// Sent on every enter and move; Gecko early-outs when nothing is pending.
+// Gesture over, controls hidden: tell Gecko the pointer is over the card. It waits
+// for a DOM mousemove, which never reaches an inactive app, but tracking areas and
+// the global mouse monitor do fire.
 static void NotifyPiPGestureHover() {
 #if __has_include("mozilla/Services.h")
   if (!NSThread.isMainThread) {
@@ -358,11 +337,8 @@ static void NotifyPiPGestureHover() {
 #endif
 }
 
-// A command for the player document. The controller owns the window, so it is
-// the only place that sees a key pressed while the browser window or another
-// app has focus, and the only place that sees a double click on the picture.
-// Playback, the tab and the window's own size all live in the player document,
-// so the key travels there as a command instead of being acted on twice.
+// Send a command to the player document, which owns playback, the tab and the
+// window size. Keys and double clicks travel there instead of being acted on twice.
 static void NotifyPiPCommand(const char16_t *command) {
 #if __has_include("mozilla/Services.h")
   if (!NSThread.isMainThread) {
@@ -441,11 +417,9 @@ static void NotifyPiPCommand(const char16_t *command) {
   [CATransaction commit];
 }
 
-// A resize gesture must stay at 120 Hz. The drop shadow is a large blurred
-// rounded rect whose path changes with every tick, and rasterising it per frame
-// is the most expensive thing on this path; meanwhile the window server already
-// scales the whole card - shadow included - during the live resize. So it is
-// switched off for the gesture and rebuilt once from the final frame.
+// The drop shadow is the most expensive thing to rasterise per frame, and the
+// window server already scales it during a live resize. Off for the gesture,
+// rebuilt from the final frame.
 - (void)hideShadowForResize {
   if (!_window) return;
   CALayer *layer = _window.contentView.layer;
@@ -476,22 +450,19 @@ static void NotifyPiPCommand(const char16_t *command) {
 
 - (void)beginOwnedLiveResize {
   if (_ownLiveResize || !_window || _window.inLiveResize) return;
-  // Private, but present on every macOS that ships -inLiveResize; a system that
-  // ever dropped it must degrade to a plain resize, not crash.
+  // Private, but present on every macOS that ships -inLiveResize; fall back to a
+  // plain resize if a system ever drops it.
   if (![_window respondsToSelector:@selector(_startLiveResize)]) return;
   _ownLiveResize = YES;
-  // AppKit now treats this exactly like the user dragging an edge with the
-  // mouse: Gecko's live-resize notification suppresses the displayport, so the
-  // last composited frame is stretched with the window instead of the picture
-  // being laid out and resampled again on every tick. That per-tick re-layout
-  // is what made the video lag and shimmer behind the card.
+  // Treated exactly like a user edge drag: Gecko suppresses the displayport, so the
+  // last composited frame is stretched instead of laid out again on every tick.
   [_window _startLiveResize];
 }
 
 - (void)endOwnedLiveResize {
   if (!_ownLiveResize) return;
   // Cleared first: AppKit posts the matching notification from inside
-  // -endLiveResize, and it belongs to this session, not to a user drag.
+  // -endLiveResize, and it belongs to this session.
   _ownLiveResize = NO;
   _ownLiveResizeForAnimation = NO;
   if (_window && [_window respondsToSelector:@selector(_endLiveResize)]) {
@@ -501,8 +472,7 @@ static void NotifyPiPCommand(const char16_t *command) {
 
 - (void)roundCorners {
   if (!_window) return;
-  // During a snap/resize animation the layer setup is already in place; rebuilding
-  // the shadow path on every resize tick is pure per-frame cost.
+  // The snap animation already set up the layer; skip per-tick shadow rebuilds.
   if (_animating) return;
   NSView *content = _window.contentView;
   content.wantsLayer = YES;
@@ -513,10 +483,8 @@ static void NotifyPiPCommand(const char16_t *command) {
   }
   CALayer *rim = _overlay.layer;
   rim.cornerCurve = kCACornerCurveCircular;
-  // No hairline stroke. A 1 px translucent white border read as a light frame
-  // around the picture - brightest against dark video and most obvious while the
-  // card is being resized. The edge is defined by the rounded clip and the drop
-  // shadow alone.
+  // No hairline stroke: a light border read as a frame around the picture. The
+  // rounded clip and the shadow define the edge.
   rim.borderWidth = 0;
   rim.borderColor = NULL;
   [self fitCorners:NO];
@@ -588,21 +556,20 @@ static void NotifyPiPCommand(const char16_t *command) {
 - (void)setKeepOnTop:(BOOL)keepOnTop {
   _keepOnTop = keepOnTop;
   _window.level = keepOnTop ? NSFloatingWindowLevel : NSNormalWindowLevel;
-  // Remember what the card should go back to once a gesture ends.
+  // Level to restore once a gesture ends.
   if (!_frontedForGesture) _restingLevel = _window.level;
 }
 
-// Window, not app. A gesture started over another app must show the card above
-// that app, so it is ordered front and lifted to a level that beats the other
-// app's own panels. Nothing here activates Zen or touches the browser window.
+// Window, not app: a gesture started over another app must show the card above it
+// without activating Zen or touching the browser window.
 - (void)frontForGesture {
   if (!_window) return;
   if (!_frontedForGesture) {
     _frontedForGesture = YES;
     _restingLevel = _window.level;
   }
-  // Re-asserted on every gesture tick: Gecko owns the window too, and a level it
-  // writes back mid-resize would drop the card behind the frontmost app again.
+  // Re-asserted on every tick: Gecko also writes the level and would drop the card
+  // behind the frontmost app mid-resize.
   if (_window.level < kGestureFrontLevel) {
     _window.level = static_cast<NSWindowLevel>(kGestureFrontLevel);
   }
@@ -620,19 +587,10 @@ static void NotifyPiPCommand(const char16_t *command) {
 // ---------------------------------------------------------------------------
 // Focus
 //
-// The card lives in Zen's process but, most of the time, another app is
-// frontmost. Getting keyboard input into it (transport keys, click to drag,
-// optional hover focus) therefore means activating Zen, and activation is the
-// one thing a floating PiP must do as quietly as possible. Three rules:
-//
-//   1. Only the card comes forward. Activation raises the app's main window
-//      too, so every other window is demoted again afterwards.
-//   2. Only when asked. Hover focus is opt-in and delayed; key presses, clicks
-//      and a completed swipe are explicit requests.
-//   3. `preventsActivation` goes back up. That flag is what makes a plain click
-//      on the card front the window instead of activating Zen; it has to be
-//      lowered while the app activates, or AppKit keys the browser window
-//      rather than the card.
+// Another app is usually frontmost, so keyboard input means activating Zen. Three
+// rules: only the card comes forward; only when asked (hover focus is opt-in and
+// delayed, keys and clicks are explicit); and `preventsActivation` goes back up,
+// since it is what makes a plain click front the window instead of the app.
 // ---------------------------------------------------------------------------
 
 - (void)focusPiP {
@@ -644,8 +602,7 @@ static void NotifyPiPCommand(const char16_t *command) {
   [self activateAppForPiPFocus];
 }
 
-// Zen is already frontmost: keying the card cannot disturb any other app, so
-// `preventsActivation` is lifted and restored around the single call.
+// Zen is already frontmost: lift preventsActivation around the single call.
 - (void)keyPiPWithoutActivating {
   if (!_window || _window.isKeyWindow) return;
   const BOOL prevented = [_window _preventsActivation];
@@ -655,10 +612,8 @@ static void NotifyPiPCommand(const char16_t *command) {
   if (prevented) [_window _setPreventsActivation:YES];
 }
 
-// Another app is frontmost. Activation is asynchronous and AppKit keys the
-// app's main window on the way in, so the card is keyed once more when
-// activation settles (-appBecameActive), and `preventsActivation` stays lowered
-// until then.
+// Another app is frontmost. Activation also keys the main window, so the card is
+// keyed again in -appBecameActive, and preventsActivation stays lowered until then.
 - (void)activateAppForPiPFocus {
   _focusingPiP = YES;
   [_window _setPreventsActivation:NO];
@@ -667,9 +622,8 @@ static void NotifyPiPCommand(const char16_t *command) {
   [self sendOtherWindowsBack];
   [NSRunningApplication.currentApplication activateWithOptions:0];
 
-  // Safety net for an activation that never reports back (refused, or already
-  // in progress): the card must not stay focus-stealing. Retained explicitly
-  // because the block holds a raw pointer in this (non-ARC) translation unit.
+  // Safety net for an activation that never reports back. Retained explicitly
+  // because the block holds a raw pointer in this non-ARC translation unit.
   [self retain];
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kFocusSettleTimeout * NSEC_PER_SEC)),
                  dispatch_get_main_queue(), ^{
@@ -678,25 +632,22 @@ static void NotifyPiPCommand(const char16_t *command) {
                  });
 }
 
-// The focus session is over: hand the card its click-through behaviour back.
-// Idempotent, so both the activation notification and the safety-net timer can
-// call it.
+// Focus session over: give the card its click-through behaviour back. Idempotent,
+// since the activation notification and the timer both call it.
 - (void)finishPiPFocus {
   if (!_focusingPiP) return;
   _focusingPiP = NO;
   if (_window) [_window _setPreventsActivation:YES];
 }
 
-// A gesture that began while another app was frontmost keeps Zen's other
-// windows out of the way for its whole duration, and only for that case: a
-// gesture the user started inside already-active Zen needs no demotion.
+// A gesture that began under another app keeps Zen's windows back for its whole
+// duration. One started in active Zen needs no demotion.
 - (BOOL)gestureStartedUnderOtherApp {
   return _startedUnderOtherApp && (_isPinching || _liveResizing || _swiping || _animating);
 }
 
-// AppKit can activate Zen as a side effect of a resize or a focus request. The
-// notification arrives before the app's windows have finished being raised, so
-// the demotion is applied twice: now, and once more on the next loop turn.
+// AppKit can activate Zen as a side effect of a resize or a focus request. Demote
+// now and once more next loop turn, before the windows finish being raised.
 - (void)appBecameActive {
   if (!_window) return;
   if (!_focusingPiP && ![self gestureStartedUnderOtherApp]) return;
@@ -719,8 +670,7 @@ static void NotifyPiPCommand(const char16_t *command) {
   if (!_window || !_window.isVisible) return;
   for (NSWindow *win in NSApp.windows) {
     if (win == _window || !win.isVisible) continue;
-    // Other PiP cards are peers, not the browser window: demoting them would
-    // reorder one card behind another every time either one is focused.
+    // Other PiP cards are peers; demoting them would reorder cards on every focus.
     if ([ZenPiPController forWindow:win]) continue;
     [win orderBack:nil];
   }
@@ -732,8 +682,8 @@ static void NotifyPiPCommand(const char16_t *command) {
   [NSUserDefaults.standardUserDefaults setBool:_keepOnTop forKey:kKeepOnTopDefault];
 }
 
-// Menu toggle. The preference is read when a request fires, so switching it off
-// also has to cancel a request that is already pending.
+// The preference is read when a request fires, so switching it off also has to
+// cancel a request that is already pending.
 - (void)toggleHoverFocus:(id)sender {
   const BOOL enabled = !HoverFocusEnabled();
   [NSUserDefaults.standardUserDefaults setBool:enabled forKey:kHoverFocusDefault];
@@ -748,7 +698,7 @@ static void NotifyPiPCommand(const char16_t *command) {
   NSMenuItem *top = [menu addItemWithTitle:@"Keep Window on Top" action:@selector(toggleKeepOnTop:) keyEquivalent:@""];
   top.target = self;
   top.state = _keepOnTop ? NSControlStateValueOn : NSControlStateValueOff;
-  // Off by default: see kHoverFocusDelay for why the hover is delayed.
+  // Off by default; see kHoverFocusDelay for the delay.
   NSMenuItem *hover = [menu addItemWithTitle:@"Focus on Hover" action:@selector(toggleHoverFocus:) keyEquivalent:@""];
   hover.target = self;
   hover.state = HoverFocusEnabled() ? NSControlStateValueOn : NSControlStateValueOff;
@@ -758,13 +708,13 @@ static void NotifyPiPCommand(const char16_t *command) {
 - (void)backToTabFromMenu:(id)sender { [self backToTab]; }
 
 - (void)backToTab {
-  // Selecting the originating tab is the player's job: it owns the browser
-  // lookup and the workspace switch. Closing here would leave the tab unselected.
+  // Selecting the originating tab is the player's job: it owns the browser lookup
+  // and the workspace switch.
   NotifyPiPCommand(u"unpip");
 }
 
 - (void)screenChanged {
-  // A cached hover screen may no longer exist after a display reconfiguration.
+  // A cached screen may no longer exist after a display reconfiguration.
   [self disarmSwipe];
   NSScreen *screen = [self homeScreen];
   if (_animating || _swiping || _isPinching || _liveResizing) return;
@@ -778,16 +728,15 @@ static void NotifyPiPCommand(const char16_t *command) {
 }
 
 - (void)liveResizeEnded {
-  // Programmatic resizes run their own ending: chrome, snap and the content
-  // repaint all come from pinchEndedAtFrame:. Only a real edge drag lands here,
-  // and it is the only one that ever set _liveResizing.
+  // Programmatic resizes end in pinchEndedAtFrame:. Only a real edge drag reaches
+  // here, and it is the only caller that sets _liveResizing.
   if (!_liveResizing || _ownLiveResize) return;
   _liveResizing = NO;
   if (!_window) return;
-  // One chrome pass for the whole gesture: controls, cursor, elevation, corner
-  // radius and shadow are restored from the final frame, never per resize tick.
+  // One chrome pass for the gesture: controls, cursor, elevation, radius and shadow
+  // restored from the final frame.
   [self endGestureChrome:NO];
-  // A live resize that comes to rest next to a screen corner docks into it.
+  // A live resize that stops next to a screen corner docks into it.
   NSScreen *screen = [self homeScreen];
   zen_pip_throw::Rect visible = ThrowRect(screen.visibleFrame);
   NSRect frame = _window.frame;
@@ -807,14 +756,12 @@ static void NotifyPiPCommand(const char16_t *command) {
 }
 
 - (void)windowMoved {
-  // Watchdog: a missed gesture end must not leave the window permanently frozen.
-  // This is a timestamp compare, not chrome work.
+  // Watchdog: a missed gesture end must not freeze the window.
   if (_swiping && NSProcessInfo.processInfo.systemUptime - _swipeLastAt > 1.0) {
     [self abandonSwipe];
   }
-  // Chrome is frozen for the whole gesture: no screen lookups, no corner bends and
-  // no shadow invalidation may run inside a per-frame `setFrameOrigin:`. Everything
-  // is applied once when the motion settles.
+  // Chrome is frozen for the gesture: no screen lookups, corner bends or shadow
+  // invalidation inside a per-frame setFrameOrigin:.
   if (_swiping || _animating || _isPinching || _liveResizing) return;
   [self homeScreen];
   [self fitCorners:YES];
@@ -907,7 +854,7 @@ static void NotifyPiPCommand(const char16_t *command) {
       }];
 }
 
-// Motion only: stop the spring/timer but leave cursor, PiP UI and elevation alone.
+// Motion only: stop the spring or timer, leaving cursor, PiP UI and elevation alone.
 // Safe to call synchronously on the gesture-start path.
 - (void)cancelMotion {
   if (_slide) {
@@ -916,8 +863,8 @@ static void NotifyPiPCommand(const char16_t *command) {
     _slide = nil;
   }
   if (_displayLink) {
-    // The ivar is `id` because the class is built for macOS 11; invalidate only
-    // on systems where CADisplayLink exists.
+    // The ivar is `id` because the class targets macOS 11; invalidate only where
+    // CADisplayLink exists.
     if (@available(macOS 14.0, *)) {
       [(CADisplayLink *)_displayLink invalidate];
     }
@@ -933,10 +880,8 @@ static void NotifyPiPCommand(const char16_t *command) {
   }
   _animating = NO;
   _throwActive = NO;
-  // A snap animation that resized the card runs inside a live resize; leaving
-  // the mode here repaints the picture at the final size. A pinch/scroll session
-  // is untouched: it calls this on every wheel event and owns its live resize
-  // for the whole gesture.
+  // A snap animation's live resize ends here so the picture repaints at its final
+  // size. A pinch session is untouched: it calls this per wheel event.
   if (_ownLiveResizeForAnimation) {
     [self endOwnedLiveResize];
   }
@@ -946,12 +891,12 @@ static void NotifyPiPCommand(const char16_t *command) {
   [self cancelMotion];
   _carrying = NO;
   _swiping = NO;
-  // Safety net: a gesture that ended through some other path must not leave the
-  // card lifted above the menu bar's neighbours forever.
+  // Safety net: a gesture that ended through another path must not leave the card
+  // lifted.
   if (!_isPinching && !_liveResizing && !_animating) [self standDownAfterGesture];
   [self showCursorIfNeeded];
-  // Safety net: a shadow suppressed for a gesture that was taken over by
-  // something else (a swipe, a close) is restored here.
+  // Safety net: restore a shadow suppressed for a gesture that something else
+  // took over.
   [self restoreShadowForResizeEnd];
   if (!_awaitingMouseMoveToShowUI && !_isPinching && !_liveResizing) {
     [self setPiPUIVisible:YES];
@@ -966,22 +911,19 @@ static void NotifyPiPCommand(const char16_t *command) {
 
 - (void)restoreUIOnMouseMove {
   if (!_awaitingMouseMoveToShowUI) {
-    // The local and global mouse-moved monitors call this on every move over
-    // the card, active app or not, so this is also how Gecko hears about plain
-    // hovering while Zen is inactive.
+    // Called on every move over the card, active app or not, so Gecko also hears
+    // about plain hovering while Zen is inactive.
     NotifyPiPGestureHover();
     return;
   }
-  // A pinch can grow the card under a stationary pointer, which makes AppKit
-  // post mouse-entered events; those must not end the deferred-UI state.
+  // A pinch can grow the card under a still pointer and post enters; those must not
+  // end the deferred-UI state.
   if (_isPinching || _liveResizing || _animating) return;
   _awaitingMouseMoveToShowUI = NO;
   [self setPiPUIVisible:YES];
   [self showCursorIfNeeded];
-  // setPiPUIVisible above re-armed Gecko's "wait for the mouse" state with the
-  // end notification; this one says the pointer is right here, so the controls
-  // come back immediately instead of waiting for a mousemove that may never
-  // arrive (another app can be frontmost).
+  // setPiPUIVisible re-armed Gecko's wait-for-mouse state; report the pointer so the
+  // controls return now instead of waiting for a move that may never arrive.
   NotifyPiPGestureHover();
 }
 
@@ -1017,11 +959,8 @@ static void NotifyPiPCommand(const char16_t *command) {
   const double initialDistH = NSHeight(from) - NSHeight(target);
   _animateSizeChanges = (fabs(initialDistW) > 0.5 || fabs(initialDistH) > 0.5);
   if (_animateSizeChanges) {
-    // The magnetic snap changes the size too. Freeze the picture and drop the
-    // shadow for its ~250 ms, so it flies into the corner with the content
-    // scaled by the window server instead of the video re-laying-out under it.
-    // Both are restored when the animation lands (cancelMotion + the branch
-    // below).
+    // The snap changes size too, so freeze the picture and drop the shadow for its
+    // ~250 ms. Both are restored in cancelMotion or below.
     [self hideShadowForResize];
     [self beginOwnedLiveResize];
     _ownLiveResizeForAnimation = _ownLiveResize;
@@ -1079,7 +1018,7 @@ static void NotifyPiPCommand(const char16_t *command) {
       const BOOL shouldRestore = _animateRestoreUI;
       [self cancelMotion];
       [self standDownAfterGesture];
-      // The card is at its final size now: rebuild the resting shadow.
+      // Card at its final size: rebuild the resting shadow.
       [self restoreShadowForResizeEnd];
       _sawDrag = NO;
       [self fitCorners:YES];
@@ -1132,7 +1071,7 @@ static void NotifyPiPCommand(const char16_t *command) {
       const BOOL shouldRestore = _animateRestoreUI;
       [self cancelMotion];
       [self standDownAfterGesture];
-      // The card is at its final size now: rebuild the resting shadow.
+      // Card at its final size: rebuild the resting shadow.
       [self restoreShadowForResizeEnd];
       _sawDrag = NO;
       [self fitCorners:YES];
@@ -1178,8 +1117,8 @@ static void NotifyPiPCommand(const char16_t *command) {
   if (_stashedEdge != ZenPiPEdgeNone) [self setStashedEdge:ZenPiPEdgeNone];
   [self setOverlayVisible:NO animated:YES];
 
-  // Keep the throw on the instance so a chained swipe can read the spring's
-  // velocity instead of killing it outright.
+  // Kept on the instance so a chained swipe can read the spring's velocity instead
+  // of killing it.
   _throwFrom = _window.frame;
   _throwTarget = target;
   _throwVelocity = velocity;
@@ -1196,7 +1135,7 @@ static void NotifyPiPCommand(const char16_t *command) {
     return;
   }
 
-  // Fallback for pre-14 macOS: timer, still origin-only and never display:YES.
+  // Fallback for pre-14 macOS: timer, origin only, never display:YES.
   __unsafe_unretained ZenPiPController *weakSelf = self;
   _slide = [[NSTimer scheduledTimerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *timer) {
     [weakSelf throwTick:timer];
@@ -1242,9 +1181,8 @@ static void NotifyPiPCommand(const char16_t *command) {
 }
 
 - (void)swipeBegan:(NSEvent *)event {
-  // A throw still in flight means this is a chained flick ("flick to the next
-  // corner"): read the spring's current velocity before cancelling it so the
-  // window keeps moving instead of stopping dead.
+  // A throw in flight means a chained flick: read the spring velocity before
+  // cancelling so the window keeps moving.
   const BOOL chainedSwipe = _throwActive;
   const NSPoint carry = chainedSwipe ? [self throwVelocityAt:CACurrentMediaTime()] : NSZeroPoint;
 
@@ -1255,18 +1193,16 @@ static void NotifyPiPCommand(const char16_t *command) {
   _gestureFirstMoveAt = 0;
   gGestureSignpost = os_signpost_id_generate(PiPGestureLog());
 
-  // A pinch cannot stay active under a swipe; its end timer would otherwise snap
-  // the window mid-flick.
+  // A pinch cannot stay active under a swipe; its end timer would snap the window
+  // mid-flick.
   _isPinching = NO;
 
-  // Motion-critical part only. Activation, window reordering, Gecko observers,
-  // elevation, cursor and PiP-UI changes are all deferred (see beginGestureChrome).
+  // Motion-critical part only. Chrome is deferred to beginGestureChrome.
   [self cancelMotion];
   _swiping = YES;
   _startedUnderOtherApp = !NSApp.isActive;
-  // Any pinch still in flight loses: its idle timer would otherwise snap the window
-  // in the middle of this flick. Safe here because endGestureChrome no-ops while
-  // `_swiping` is set.
+  // A pinch in flight loses: its idle timer would snap the window mid-flick. Safe
+  // because endGestureChrome no-ops while `_swiping` is set.
   [ZenPiPZoom abandonZoomOn:_window];
   _swipeStart = _window.frame;
   _swipeHome = (_armed && _armedHome) ? _armedHome : [self gestureHome];
@@ -1290,7 +1226,7 @@ static void NotifyPiPCommand(const char16_t *command) {
     _carrying = NO;
   }
 
-  // Move first: this is the only thing the user can see on frame one.
+  // Move first: this is the only visible response on frame one.
   [self swipeMoved:event];
   [self beginGestureChrome:ZenPiPGestureSwipe chained:chainedSwipe];
 }
@@ -1303,11 +1239,9 @@ static void NotifyPiPCommand(const char16_t *command) {
   return NSMakePoint(x.velocity, y.velocity);
 }
 
-// The PiP card under the pointer, or nil. Uses the window server's stacking
-// order rather than a frame test over Zen's own windows: the card routinely
-// sits under the pointer while another app is frontmost, and possibly with one
-// of that app's windows above it, in which case the pointer is not over the
-// card at all.
+// Card under the pointer, or nil. Uses the window server's stacking order: the card
+// usually sits under the pointer while another app is frontmost, possibly with one
+// of that app's windows above it.
 + (ZenPiPController *)controllerUnderPointer {
   return [self controllerUnderPointerAllowingOccluded:NO];
 }
@@ -1317,8 +1251,7 @@ static void NotifyPiPCommand(const char16_t *command) {
   const NSInteger windowNumber = [NSWindow windowNumberAtPoint:mouse belowWindowWithWindowNumber:0];
   if (windowNumber > 0) {
     NSWindow *window = [NSApp windowWithWindowNumber:windowNumber];
-    // A PiP card can own child panels; resolve up to the window that has a
-    // controller.
+    // Cards can own child panels; resolve up to the window with a controller.
     while (window && ![self forWindow:window] && window.parentWindow) {
       window = window.parentWindow;
     }
@@ -1327,8 +1260,8 @@ static void NotifyPiPCommand(const char16_t *command) {
     if (!allowOccluded) return nil;
   }
 
-  // No window under the pointer at all (a gap between windows, or the desktop),
-  // or an occluded PiP card when explicitly allowed for user gestures.
+  // Nothing under the pointer (a gap or the desktop), or an occluded card when
+  // explicitly allowed for user gestures.
   for (NSWindow *candidate in NSApp.windows) {
     if (!candidate.visible) continue;
     if (!NSPointInRect(mouse, candidate.frame)) continue;
@@ -1338,11 +1271,9 @@ static void NotifyPiPCommand(const char16_t *command) {
   return nil;
 }
 
-// Enter/exit bookkeeping for the card under the pointer, driven by the mouse
-// monitors. Both a local and a global monitor call it, because Zen's own
-// monitors see nothing while another app is frontmost - which is the state the
-// hover behaviour exists for. Idempotent per controller (see _isMouseOver), so
-// the duplicate calls this causes are cheap.
+// Hover bookkeeping for the card under the pointer, driven by the mouse monitors.
+// Both monitors call it, since local ones see nothing while another app is
+// frontmost. Idempotent per controller, so duplicate calls are cheap.
 + (void)updateHoverState {
   ZenPiPController *current = [self controllerUnderPointer];
   NSWindow *currentWindow = (current && current.window.isVisible) ? current.window : nil;
@@ -1361,9 +1292,8 @@ static void NotifyPiPCommand(const char16_t *command) {
   }
 }
 
-// Chrome for both gesture kinds: activate, front the window, hide the PiP UI, the
-// cursor and raise the shadow. Always runs one main-loop turn after the first moved
-// frame, and is dropped if that gesture is already over.
+// Chrome for both gesture kinds, applied one loop turn after the first moved frame
+// and dropped if the gesture is already over.
 - (void)beginGestureChrome:(ZenPiPGesture)kind chained:(BOOL)chained {
   _awaitingMouseMoveToShowUI = NO;
   [self frontForGesture];
@@ -1383,14 +1313,13 @@ static void NotifyPiPCommand(const char16_t *command) {
 
 - (void)applyGestureChrome:(ZenPiPGesture)kind chained:(BOOL)chained {
   if (!_window) return;
-  // Window, not app: ordering the card front puts it above the other app without
-  // dragging Zen's browser window forward.
+  // Window, not app: fronting the card does not drag the browser window forward.
   [self frontForGesture];
   [self focusPiP];
   [self setPiPUIVisible:NO];
   if (kind == ZenPiPGesturePinch) {
-    // A resize is a sustained 120 Hz gesture: drop the big soft shadow for its
-    // duration instead of re-rasterising it on every tick.
+    // A resize is a sustained gesture: drop the shadow for its duration instead of
+    // re-rasterising per tick.
     [self hideShadowForResize];
   } else {
     [self setElevated:YES animated:YES];
@@ -1407,22 +1336,22 @@ static void NotifyPiPCommand(const char16_t *command) {
   }
 }
 
-// Shared tail: controls and shadow back on, corner radius unfrozen, cursor back.
-// Idempotent, and a no-op while a swipe still owns the window. `restoreUI:NO` is for
-// when another animation (the pinch snap) is about to own the controls itself.
+// Shared tail: controls and shadow back, radius unfrozen, cursor back. Idempotent,
+// and a no-op while a swipe owns the window. `restoreUI:NO` when the pinch snap is
+// about to restore the controls itself.
 - (void)endGestureChrome:(BOOL)restoreUI {
   if (!_window || _swiping) return;
   _startedUnderOtherApp = NO;
   [self showCursorIfNeeded];
   if (restoreUI) [self setPiPUIVisible:YES];
-  // Rebuild the resting shadow once, from the final frame.
+  // Rebuild the resting shadow once from the final frame.
   [self restoreShadowForResizeEnd];
   [self setElevated:NO animated:YES];
   if (!_animating) {
     [self standDownAfterGesture];
     [self fitCorners:YES];
-    // The shadow path was deliberately left alone during the gesture; rebuild it
-    // once for the final size so it never lags the resized picture.
+    // The shadow path was left alone during the gesture; rebuild it for the final
+    // size.
     [ZenPiPController updateShadowPathForWindow:_window size:_window.contentView.bounds.size radius:[self cornerRadius]];
   }
 }
@@ -1430,8 +1359,8 @@ static void NotifyPiPCommand(const char16_t *command) {
 - (void)armSwipe {
   if (!_window || _swiping || _animating || _isPinching) return;
   _armed = YES;
-  // Resolve the target screen while the pointer is merely hovering, so gesture
-  // start never has to walk the screen list.
+  // Resolve the target screen on hover, so gesture start never walks the screen
+  // list.
   _armedHome = [self gestureHome];
 }
 
@@ -1488,16 +1417,16 @@ static void NotifyPiPCommand(const char16_t *command) {
 
 - (void)swipeEnded:(NSEvent *)event cancelled:(BOOL)cancelled {
   [self moveBy:zen_pip_throw::FingerDelta(event.scrollingDeltaX, event.scrollingDeltaY, event.isDirectionInvertedFromDevice)];
-  // No 80 ms debounce: the throw starts on this event. A fast re-touch is handled
-  // by swipeBegan carrying the spring velocity instead of dropping the frame.
+  // No debounce: the throw starts on this event. swipeBegan carries the spring
+  // velocity for a fast re-touch.
   [self completeSwipeEnded:event cancelled:cancelled];
 }
 
 - (void)completeSwipeEnded:(NSEvent *)event cancelled:(BOOL)cancelled {
   _swiping = NO;
   _carrying = NO;
-  // Fingers are off the trackpad: the cursor comes back now, even if the window
-  // keeps gliding into a corner. Only the PiP controls stay hidden until settle.
+  // Fingers off the trackpad: show the cursor now, even if the window keeps
+  // gliding. Controls stay hidden until settle.
   [self showCursorIfNeeded];
   const NSPoint last = _swipeLastDelta;
   const BOOL fresh = NSProcessInfo.processInfo.systemUptime - _swipeLastAt <= zen_pip_throw::kVelocityWindow;
@@ -1517,14 +1446,11 @@ static void NotifyPiPCommand(const char16_t *command) {
     thrown = flings && [self throwFrom:grab velocity:NSMakePoint(velocity.x, velocity.y)];
   }
   if (thrown || edge != ZenPiPEdgeNone) {
-    // Motion owns the chrome: the throw/snap restores it when it settles. The cursor
-    // already returned on lift.
+    // Motion owns the chrome; the throw or snap restores it when it settles.
   } else {
     [self endGestureChrome:YES];
-    // A swipe that came to rest over the card leaves the pointer there with the
-    // keyboard still in the app it was taken from. Hand it to the card: the user
-    // just interacted with it, and the gesture suppressed the hover request that
-    // would otherwise have done this.
+    // A swipe that settles over the card hands it the keyboard: the user just
+    // interacted with it, and the gesture suppressed the hover request.
     [self focusPiP];
   }
   os_signpost_event_emit(PiPGestureLog(), gGestureSignpost, "end");
@@ -1549,18 +1475,16 @@ static void NotifyPiPCommand(const char16_t *command) {
 - (void)mouseEnteredWindow {
   if (!_window || _isMouseOver) return;
   _isMouseOver = YES;
-  // Scheduled before the gesture guards below: a pointer that comes to rest on
-  // the card while it is being pinched, swiped or animated has still asked for
-  // hover focus, and the request has to survive until the gesture is done.
+  // Scheduled before the guards: a pointer resting on the card during a gesture
+  // still asked for hover focus, and the request must survive until it ends.
   [self scheduleHoverFocus];
   // Freeze hover while the window is already moving.
   if (_swiping || _animating) return;
-  // Growing the card during a resize makes AppKit post enters under a pointer
-  // that never moved. Those are not a request to bring the controls back.
+  // Growing the card posts enters under a still pointer; those are not a request
+  // for the controls.
   if (_isPinching || _liveResizing) return;
-  // Tracking areas fire even when Zen is inactive, so this is the only hover
-  // signal that survives another app being frontmost. The awaiting path
-  // reports it itself (after its end notification, see restoreUIOnMouseMove).
+  // Tracking areas fire while Zen is inactive, so this is the only hover signal
+  // that survives another app being frontmost. The awaiting path reports it itself.
   if (_awaitingMouseMoveToShowUI) {
     [self restoreUIOnMouseMove];
   } else {
@@ -1576,9 +1500,8 @@ static void NotifyPiPCommand(const char16_t *command) {
   [self disarmSwipe];
 }
 
-// Hover focus is a delayed, cancellable request: the pointer has to rest over
-// the card, and leaving cancels it, so a pointer merely crossing the card never
-// takes the keyboard away from the frontmost app.
+// Hover focus is a delayed, cancellable request: crossing the card never takes the
+// keyboard from the frontmost app.
 - (void)scheduleHoverFocus {
   [self cancelHoverFocus];
   if (!HoverFocusEnabled()) return;
@@ -1589,16 +1512,13 @@ static void NotifyPiPCommand(const char16_t *command) {
   [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(hoverFocusFired) object:nil];
 }
 
-// Everything can change while a hover request waits: the pointer may have left,
-// the preference may have been switched off, a gesture may have started. All of
-// it is re-checked here instead of being trusted from enter time.
+// Everything can change while a hover request waits, so all of it is re-checked at
+// fire time instead of trusted from enter time.
 - (void)hoverFocusFired {
   if (!HoverFocusEnabled() || !_isMouseOver) return;
   if (_swiping || _isPinching || _liveResizing || _animating) {
-    // A gesture owns the card: neither stealing the keyboard mid-gesture nor
-    // dropping the request is right, so it is deferred by one more delay. This
-    // stops as soon as the pointer leaves (mouseExitedWindow cancels) or the
-    // gesture ends, and a gesture cannot last forever.
+    // A gesture owns the card: defer by one more delay rather than dropping the
+    // request. Leaving cancels it.
     [self performSelector:@selector(hoverFocusFired) withObject:nil afterDelay:kHoverFocusDelay];
     return;
   }
@@ -1612,14 +1532,13 @@ static void NotifyPiPCommand(const char16_t *command) {
   _awaitingMouseMoveToShowUI = NO;
   [self frontForGesture];
   [self focusPiP];
-  // Announce the gesture now, not one main-loop turn later with the chrome: the
-  // page freezes the remote video viewport from this notification, and it must
-  // already be frozen when the first size change lands.
+  // Announce now, not with the chrome: the page freezes the remote video viewport
+  // from this notification, before the first size change lands.
   NotifyPiPGestureActive(YES);
   _gestureEventAt = _gestureHandlerAt = CACurrentMediaTime();
   _gestureFirstMoveAt = 0;
-  // Same lifecycle as a swipe: kill any spring, then let the resize land before the
-  // chrome (activation, UI hide, cursor hide, elevation) is applied.
+  // Same lifecycle as a swipe: kill any spring, then apply chrome after the resize
+  // lands.
   [self cancelMotion];
   [self beginGestureChrome:ZenPiPGesturePinch chained:NO];
 }
@@ -1628,19 +1547,16 @@ static void NotifyPiPCommand(const char16_t *command) {
   [self pinchEndedAtFrame:NSZeroRect];
 }
 
-// A resize ends. With a `target` (a screen corner slot) the picture settles into
-// it; with an empty rect it stays exactly where the cursor left it, pulled back
-// on screen if the gesture overflowed an edge while following the pointer.
+// A resize ends. With a target it settles into that corner slot; with an empty
+// rect it stays where the cursor left it, pulled back on screen if it overflowed.
 - (void)pinchEndedAtFrame:(NSRect)target {
   _isPinching = NO;
   _startedUnderOtherApp = NO;
   _isSmartMagnified = NO;  // Next double-tap scales from the new frame
-  // The page holds the video's remote viewport frozen for the gesture; this is
-  // its cue to let it settle. It waits for the window to stop changing size, so
-  // a following snap animation is covered too. Sent on every ending, including
-  // the cancel one, or the page would stay frozen forever.
+  // Cue for the page to unfreeze the remote video viewport. Sent on every ending,
+  // including cancel, or the page stays frozen.
   NotifyPiPGestureActive(NO);
-  // A swipe that started meanwhile owns the window now; do not snap under it.
+  // A swipe that started meanwhile owns the window; do not snap under it.
   if (_swiping) return;
   if (NSIsEmptyRect(target)) {
     [self clampToScreen];
@@ -1652,9 +1568,8 @@ static void NotifyPiPCommand(const char16_t *command) {
   [self animateTo:target restoreUI:NO];
 }
 
-// Fit the window back inside its screen without changing its size. A resize
-// follows the cursor in every direction, which can push an edge past the
-// visible frame; this is the only place that gets undone.
+// Fit the window back on screen without changing its size. A cursor-following
+// resize can push an edge past the visible frame.
 - (void)clampToScreen {
   if (!_window) return;
   NSRect visible = [self homeScreen].visibleFrame;
@@ -1676,7 +1591,7 @@ static void NotifyPiPCommand(const char16_t *command) {
   [self animateTo:targetRect];
 }
 
-// The trackpad's double tap zooms the card in and out of its 1.75x frame.
+// Trackpad double tap zooms the card in and out of its 1.75x frame.
 - (void)toggleSmartMagnify {
   [self stopMotion];
   [_window orderFrontRegardless];
@@ -1691,11 +1606,11 @@ static void NotifyPiPCommand(const char16_t *command) {
     if (NSIsEmptyRect(target) || NSWidth(target) < 100 || NSHeight(target) < 60) {
       target = NSMakeRect(current.origin.x, current.origin.y, current.size.width / 1.75, current.size.height / 1.75);
     }
-    // Strictly preserve aspect ratio on unmagnify
+    // Preserve the aspect ratio on unmagnify.
     target.size.width = round(target.size.width);
     target.size.height = round(target.size.width / aspect);
 
-    // Anchor unmagnify to the current screen quadrant so pinned corners do not jump
+    // Anchor unmagnify to the current screen quadrant so pinned corners do not jump.
     if (NSMidX(current) > NSMidX(visible)) {
       target.origin.x = NSMaxX(current) - target.size.width;
     } else {
@@ -1730,26 +1645,22 @@ static void NotifyPiPCommand(const char16_t *command) {
   }
 }
 
-// Keyboard control while the pointer is over the card, or while the card has
-// the keyboard. Returns YES when the event was consumed and must not reach the
-// browser.
+// Keyboard control while the pointer is over the card or the card has the
+// keyboard. Returns YES when consumed.
 //
-// Everything that touches playback or the tab is routed to the player document
-// as a command: that is where the media and the tab lookup live, so the meaning
-// of each key is written down once. The transport keys are the exception - the
-// page only reacts to a key event if its window is key, so those still have to
-// be sent as events.
+// Playback and tab actions are routed to the player document, which owns them.
+// Transport keys are sent as events, since the page only reacts when its window is
+// key.
 - (BOOL)handleKeyDown:(NSEvent *)event {
   const unsigned short code = event.keyCode;
   const NSEventModifierFlags mods = event.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
-  // A card under the pointer answers keys without owning the keyboard, which is
-  // what lets Escape and Command+W reach it from the browser window. The letter
-  // shortcuts are different: they are ordinary typing keys, so they only mean
-  // anything while the card itself has the keyboard.
+  // A card under the pointer answers keys without owning the keyboard, which lets
+  // Escape and Command+W reach it from the browser window. Letters are ordinary
+  // typing keys, so they only count while the card itself is key.
   const BOOL cardIsKey = (event.window == _window);
 
-  // Command+W closes the card the way the close button does: pause, then close.
-  // Every other Command shortcut belongs to the browser or the system.
+  // Command+W closes the card like the close button: pause, then close. Other
+  // Command shortcuts belong to the browser or the system.
   if (mods & NSEventModifierFlagCommand) {
     if (code == kKeyW) {
       NotifyPiPCommand(u"close-pause");
@@ -1760,23 +1671,21 @@ static void NotifyPiPCommand(const char16_t *command) {
   if (mods & (NSEventModifierFlagControl | NSEventModifierFlagOption)) {
     return NO;
   }
-  // Shift+letter is not a card shortcut, and the player matches the letter
-  // keys without modifiers too.
+  // Shift+letter is not a card shortcut; the player matches bare letters.
   if (mods & NSEventModifierFlagShift) {
     return NO;
   }
 
   switch (code) {
     case kKeyEscape:
-      // While the card has the keyboard the page handles Escape, so a settings
-      // panel or fullscreen closes before the card itself goes away.
+      // The page handles Escape while the card is key, so settings or fullscreen
+      // close before the card does.
       if (cardIsKey) return NO;
-      // With the pointer only over the card, this is back to tab: the video
-      // returns to its page at its own size, still playing.
+      // Pointer only: back to tab. The video returns to its page at its own size.
       NotifyPiPCommand(u"unpip");
       return YES;
     case kKeyA:
-      // Dismiss the card and keep the audio running, like minimize.
+      // Dismiss the card, keep the audio running, like minimize.
       if (!cardIsKey) return NO;
       NotifyPiPCommand(u"close");
       return YES;
@@ -1789,8 +1698,8 @@ static void NotifyPiPCommand(const char16_t *command) {
     case kKeyRightArrow:
     case kKeyDownArrow:
     case kKeyUpArrow:
-      // The page only reacts to a key event if its window is key, so this is
-      // the one shortcut path that activates the app.
+      // The page only reacts to a key event when its window is key, so this path
+      // activates the app.
       [self focusPiP];
       [_window sendEvent:event];
       return YES;
@@ -1818,17 +1727,14 @@ static void NotifyPiPCommand(const char16_t *command) {
 
 namespace zen_pip {
 
-// Scroll is routed by the window under the pointer, so an inactive app still
-// receives scrolls aimed at the card - where they would scroll the other app in
-// the background instead of moving or resizing the card. A local monitor only
-// sees Zen's own events, and a global one cannot consume them, so a session
-// event tap is what lets the card take the scroll and swallow it for everyone
-// else. Only the scroll wheel is tapped, and only while another app is
-// frontmost: while Zen is active the local monitor already owns the event.
+// Scroll is routed by the window under the pointer, so an inactive app would scroll
+// in the background instead of moving the card. A local monitor only sees Zen
+// events and a global one cannot consume, hence a session event tap. Only wheels,
+// and only while another app is frontmost; the local monitor owns the rest.
 static CGEventRef PiPScrollTapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef cgEvent,
                                        void *refcon) {
-  // macOS disables a tap whose callback ran too long. Re-enable it, or the card
-  // would silently stop receiving scrolls for the rest of the session.
+  // macOS disables a tap whose callback ran too long; re-enable it or the card
+  // stops receiving scrolls for the session.
   if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
     if (sEventTap) CGEventTapEnable(sEventTap, true);
     return cgEvent;
@@ -1842,9 +1748,8 @@ static CGEventRef PiPScrollTapCallback(CGEventTapProxy proxy, CGEventType type, 
   return ([ZenPiPController handleSwipe:event] || [ZenPiPZoom handle:event]) ? NULL : cgEvent;
 }
 
-// The tap needs the process to be trusted for Accessibility / Input Monitoring.
-// Without it CGEventTapCreate returns NULL and the card simply behaves as it did
-// before: gestures only work while Zen itself is frontmost.
+// Needs Accessibility / Input Monitoring trust. Without it CGEventTapCreate
+// returns NULL and gestures work only while Zen is frontmost.
 static void InstallScrollTap() {
   sEventTap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault,
                                CGEventMaskBit(kCGEventScrollWheel), PiPScrollTapCallback, NULL);
@@ -1933,11 +1838,9 @@ void InstallMonitors() {
       return [ZenPiPController handleSwipe:event] || [ZenPiPZoom handle:event] ? nil : event;
     }];
 
-    // Magnify is delivered to the active app only, so while another app is
-    // frontmost the local monitor never sees the pinch and a pinch could not
-    // front the card. A global monitor does see it, but cannot consume it, so
-    // the other app may also get the first step; one step in, the card is keyed
-    // and the local monitor owns the rest of the gesture.
+    // Magnify reaches the active app only, so a pinch over an inactive Zen needs a
+    // global monitor. It cannot consume, so the other app may get the first step;
+    // once the card is key, the local monitor owns the rest.
     [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMagnify
                                            handler:^(NSEvent *event) {
       if (NSApp.isActive) return;
@@ -1952,10 +1855,9 @@ void InstallMonitors() {
       [ZenPiPZoom handle:event];
     }];
 
-    // Hover tracking. Both monitors are needed: the local one is the only one
-    // that sees moves inside Zen, the global one the only one that sees moves
-    // over the card while another app is frontmost. Drags are tracked as well so
-    // hover state does not freeze when the pointer is held down.
+    // Hover tracking needs both monitors: local for moves inside Zen, global for
+    // moves over the card under another app. Drags are tracked so hover does not
+    // freeze while the pointer is held down.
     const NSEventMask mouseMask = NSEventMaskMouseMoved | NSEventMaskLeftMouseDragged |
                                   NSEventMaskRightMouseDragged | NSEventMaskOtherMouseDragged;
 
@@ -1972,10 +1874,9 @@ void InstallMonitors() {
 
     [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                           handler:^NSEvent *(NSEvent *event) {
-      // The card is the target when it has the keyboard, and when the pointer
-      // rests over it. Both matter: a card keeps the keyboard after a click
-      // even if the pointer moves away, and a card under the pointer answers
-      // keys without stealing focus from the browser window.
+      // The card is the target when it is key and when the pointer rests over it:
+      // it keeps the keyboard after a click, and a card under the pointer answers
+      // keys without stealing focus.
       ZenPiPController *controller = [ZenPiPController forWindow:event.window];
       if (!controller) {
         controller = [ZenPiPController controllerUnderPointer];

@@ -12,9 +12,8 @@
 @class ZenSwipeCapsuleView;
 
 /**
- * Controller managing trackpad swipe-to-navigate gestures and visual indicators.
- * Monitors local scroll wheel events on browser windows, filters for edge swipes,
- * controls the floating capsule indicator, delivers haptic feedback, and invokes navigation.
+ * Handles swipe-to-navigate on a browser window: edge-swipe filtering, the capsule
+ * indicator, haptics and navigation.
  */
 @interface ZenSwipeController : NSObject
 

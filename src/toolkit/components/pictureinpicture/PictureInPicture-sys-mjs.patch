@@ -11,7 +11,7 @@ index 08c6951..34cfb5e 100644
 +          break;
 +        }
 +
-+        // Suppress auto-toggle if this is the immediate docShell deactivation from closing PiP
++        // Skip the auto-toggle for the docShell deactivation that closing PiP causes
          if (
            PictureInPicture.weakAutoPipBrowserClosedDeliberately.has(browser)
          ) {

@@ -16,9 +16,9 @@ struct Screen;
 - (void)_setPreventsActivation:(BOOL)prevents;
 - (BOOL)_preventsActivation;
 - (NSInteger)_resizeDirectionForMouseLocation:(NSPoint)location;
-// The only way into live-resize mode outside AppKit's own resize tracking loop.
-// It runs the same view callbacks (-viewWillStartLiveResize) a user edge drag
-// does, and that is what tells Gecko to stop laying out the picture per tick.
+// The only way into live-resize mode outside AppKit's tracking loop. It runs
+// -viewWillStartLiveResize, which tells Gecko to stop laying out the picture per
+// tick.
 - (void)_startLiveResize;
 - (void)_endLiveResize;
 @end
@@ -45,9 +45,8 @@ constexpr unsigned short kKeyM = 46;
 
 typedef NS_ENUM(NSInteger, ZenPiPEdge) { ZenPiPEdgeNone = 0, ZenPiPEdgeLeft = -1, ZenPiPEdgeRight = 1 };
 
-// Shared gesture lifecycle. Swipe and pinch differ only in what moves; the chrome
-// (activation, window order, cursor, PiP UI, elevation, corner radius) is identical,
-// so it lives in one place and is driven by this kind.
+// Shared gesture lifecycle. Swipe and pinch differ only in what moves; chrome
+// (activation, window order, cursor, PiP UI, elevation, radius) is identical.
 typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGesturePinch = 2 };
 
 @interface ZenPiPControl : NSView
@@ -72,8 +71,8 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 + (instancetype)forWindow:(NSWindow *)window;
 + (BOOL)attachToWindow:(NSWindow *)window;
 + (void)detachFromWindow:(NSWindow *)window;
-// Enter/exit bookkeeping for the card under the pointer. Called by the local and
-// the global mouse monitors; a no-op when the hovered card has not changed.
+// Enter/exit bookkeeping for the card under the pointer; a no-op when the hovered
+// card has not changed.
 + (void)updateHoverState;
 + (void)updateShadowPathForWindow:(NSWindow *)window radius:(CGFloat)radius;
 + (void)updateShadowPathForWindow:(NSWindow *)window size:(CGSize)size radius:(CGFloat)radius;
@@ -93,8 +92,7 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (void)mouseEnteredWindow;
 - (void)mouseExitedWindow;
 // Move the keyboard into the card, activating Zen only when another app is
-// frontmost and demoting every other Zen window so the browser does not come
-// forward with it. Safe to call at any time; does nothing for a closed card.
+// frontmost and demoting other Zen windows. Does nothing for a closed card.
 - (void)focusPiP;
 // Delayed hover-focus request (opt-in, cancellable).
 - (void)scheduleHoverFocus;
@@ -107,14 +105,13 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
 - (void)setElevated:(BOOL)elevated animated:(BOOL)animated;
 - (void)setOverlayVisible:(BOOL)visible animated:(BOOL)animated;
 - (void)setPiPUIVisible:(BOOL)visible;
-// Programmatic live resize for the pinch/scroll session. AppKit treats the
-// gesture exactly like a user dragging an edge, which is what lets the window
-// server scale the last composited frame instead of Gecko re-laying-out the
-// picture on every tick. Both must be paired.
+// Programmatic live resize for the pinch/scroll session, so the window server scales
+// the last composited frame instead of Gecko relaying out the picture. Both calls
+// must be paired.
 - (void)beginOwnedLiveResize;
 - (void)endOwnedLiveResize;
-// Lift the card above the frontmost app for the duration of a gesture, without
-// activating the app or ordering the browser window front. Always paired.
+// Lift the card above the frontmost app for a gesture without activating the app or
+// fronting the browser window. Always paired.
 - (void)frontForGesture;
 - (void)standDownAfterGesture;
 @end
@@ -126,8 +123,7 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
   ZenPiPOverlay *_overlay;
   ZenPiPEdge _stashedEdge;
   BOOL _keepOnTop;
-  // Level the card was lifted from for the current gesture, and whether that
-  // lift is still applied.
+  // Level the card was lifted from, and whether the lift is still applied.
   NSInteger _restingLevel;
   BOOL _frontedForGesture;
   NSMutableArray *_observers;
@@ -154,24 +150,22 @@ typedef NS_ENUM(NSInteger, ZenPiPGesture) { ZenPiPGestureSwipe = 1, ZenPiPGestur
   BOOL _isSmartMagnified;
   NSRect _unmagnifiedFrame;
   BOOL _isPinching;
-  // The current gesture began while another app was frontmost, so activation
-  // during it must not bring Zen's other windows forward.
+  // The gesture began under another app, so activation must not raise Zen's other
+  // windows.
   BOOL _startedUnderOtherApp;
-  // A focus request has activated the app and is waiting for activation to
-  // settle; see -activateAppForPiPFocus.
+  // A focus request activated the app and waits for it to settle; see
+  // -activateAppForPiPFocus.
   BOOL _focusingPiP;
-  // Pointer is over this card. Guards the enter/exit path against the duplicate
-  // events the local and global monitors both deliver.
+  // Pointer is over this card; guards the enter/exit path against duplicates from
+  // the local and global monitors.
   BOOL _isMouseOver;
   BOOL _isElevated;
   BOOL _liveResizing;
-  // A live resize this code started (pinch/scroll), as opposed to the user
-  // dragging an edge. Its notifications are ignored and its chrome is applied
-  // by the pinch path instead.
+  // A live resize this code started (pinch/scroll), as opposed to a user edge drag.
+  // Its notifications are ignored and the pinch path applies its chrome.
   BOOL _ownLiveResize;
-  // The owned live resize belongs to a size-changing snap animation, so ending
-  // motion must leave the mode. A pinch/scroll session owns its own and ends it
-  // from the zoom path, because cancelMotion runs on every wheel event.
+  // The owned live resize belongs to a size-changing snap, so ending motion must
+  // leave the mode. A pinch session ends its own.
   BOOL _ownLiveResizeForAnimation;
   BOOL _shadowSuppressedForResize;
   // Swipe pre-warm (armed while the pointer rests over the window).

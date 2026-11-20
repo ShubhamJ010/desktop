@@ -13,13 +13,11 @@ const void *const kZoomKey = &kZoomKey;
 
 namespace {
 
-// Safety nets for devices that never report a gesture end phase. They must be
-// well behind the rate of a held gesture, or a short pause mid-pinch would end
-// and snap the window while the fingers are still down.
+// Idle timeouts for devices that never send an end phase. They must be well behind
+// a held gesture's event rate, or a pause would snap the window mid-pinch.
 constexpr CFTimeInterval kPinchIdle = 0.45;
 constexpr CFTimeInterval kScrollIdle = 0.35;
-// Time constants for the eased approach to the target scale. The pinch one is
-// short enough to feel 1:1 while smoothing the event cadence; the wheel one is
+// Time constants for the eased approach: pinch short enough to feel 1:1, wheel
 // long enough to read as a glide.
 constexpr double kPinchTau = 0.022;
 constexpr double kScrollTau = 0.055;
@@ -28,8 +26,7 @@ constexpr double kScrollTau = 0.055;
 
 @implementation ZenPiPZoom {
   __unsafe_unretained NSWindow *_window;
-  // Session state. Captured once at gesture start, never mutated, so every
-  // frame is computed from the same reference frame.
+  // Session state: captured once at gesture start, never mutated.
   BOOL _resizing;
   NSRect _baseFrame;
   double _anchorX, _anchorY;
@@ -39,10 +36,10 @@ constexpr double kScrollTau = 0.055;
   double _scaleFloor, _scaleCeiling;
   NSRect _last;  // frame we last wrote, to notice movement from elsewhere
   NSPoint _pointer;
-  // Corner the window was docked in when the gesture began. Only used to decide
-  // where a finished resize snaps back to; it never constrains the resize.
+  // Corner the window was docked in at gesture start. Only decides where a finished
+  // resize snaps; it never constrains the resize.
   zen_pip_zoom::AnchorCorner _startCorner;
-  // Visible frame of the screen the gesture started on, kept for the session.
+  // Visible frame of the gesture's screen, kept for the session.
   zen_pip_zoom::Rect _visible;
   NSTimer *_ease;
   id _easeDisplayLink;  // CADisplayLink on macOS 14+ for 120Hz ProMotion
@@ -55,10 +52,9 @@ constexpr double kScrollTau = 0.055;
   BOOL _hitMaxHaptic;
 }
 
-// A card can be zoomed when it is on screen and not stashed against a screen
-// edge. `styleMask` is deliberately not part of this: the controller makes every
-// PiP window resizable at attach time, and the resize is driven through
-// AppKit's live-resize machinery rather than a drag handle.
+// Zoomable when on screen and not stashed against an edge. `styleMask` is not
+// checked: attach makes every PiP resizable, and the resize runs through AppKit's
+// live-resize machinery rather than a drag handle.
 + (BOOL)zooms:(NSWindow *)window {
   if (!window || ![window isKindOfClass:[NSWindow class]]) return NO;
   if (!window.visible) return NO;
@@ -110,14 +106,10 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   }
 }
 
-// Two event kinds resize the card, gated differently:
-//   - A trackpad scroll is first offered to the swipe handler (repositioning the
-//     card) and is a resize only while Command is held; a mouse wheel, which has
-//     no gesture phases, is always an explicit resize.
-//   - A magnify (pinch) is always a resize.
-// `gZoomGesture` remembers the window for the length of one continuous gesture:
-// the pointer can leave the card mid-pinch and the remaining events still belong
-// to it, including the momentum phase that ends the session.
+// Two resize kinds. A trackpad scroll is offered to the swipe handler first and
+// resizes only while Command is held; a mouse wheel always resizes. A magnify
+// always resizes. `gZoomGesture` keeps the window for one continuous gesture,
+// including the momentum phase that ends it.
 + (BOOL)route:(NSEvent *)event {
   if (event.type == NSEventTypeMagnify) return [self routeMagnify:event];
   if (event.type == NSEventTypeScrollWheel) return [self routeScroll:event];
@@ -128,16 +120,16 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   NSWindow *window = [self windowFor:event];
   const BOOL command = (event.modifierFlags & NSEventModifierFlagCommand) != 0;
   const NSEventPhase phase = event.phase, momentum = event.momentumPhase;
-  // A plain mouse wheel has no phases: every tick is a gesture of its own.
+  // A mouse wheel has no phases: each tick is a gesture of its own.
   const BOOL wheel = phase == NSEventPhaseNone && momentum == NSEventPhaseNone;
   if (wheel || (phase & (NSEventPhaseBegan | NSEventPhaseMayBegin))) gZoomGesture = nil;
   if (gZoomGesture) window = gZoomGesture;
   if (![self zooms:window]) return NO;
-  // Command is the explicit request to resize; without it a scroll only
-  // continues a resize that is already under way.
+  // Command is the explicit resize request; without it a scroll only continues a
+  // resize already under way.
   if (!command && gZoomGesture != window) return NO;
-  // Front once per gesture. A precise trackpad scroll arrives at up to 120 Hz
-  // and an orderFront per event is a WindowServer round trip each time.
+  // Front once per gesture: a precise scroll arrives at up to 120 Hz, and each
+  // orderFront is a WindowServer round trip.
   if (gZoomGesture != window) {
     ZenPiPController *controller = [ZenPiPController forWindow:window];
     if (controller) {
@@ -183,10 +175,8 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   return event.window ? [event.window convertPointToScreen:event.locationInWindow] : NSEvent.mouseLocation;
 }
 
-// The PiP window is created with `lockaspectratio`, so AppKit already knows the
-// video's aspect. Honouring it keeps the picture full-bleed: deriving the aspect
-// from a rounded frame instead would drift by a fraction of a pixel and make the
-// video letterbox (the "picture breaking") as the window expands or shrinks.
+// AppKit knows the video aspect from `lockaspectratio`. Deriving it from a rounded
+// frame would drift and letterbox the picture as the window resizes.
 - (double)lockedAspect {
   NSSize locked = _window ? _window.contentAspectRatio : NSZeroSize;
   if (locked.width > 0 && locked.height > 0) return locked.width / locked.height;
@@ -197,9 +187,8 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
 - (void)beginResizeAt:(NSPoint)pointer {
   NSWindow *window = _window;
   if (!window || _resizing) return;
-  // One front per gesture, before any frame changes: a PiP that sits behind
-  // another app's window or panel must come forward the moment the gesture
-  // starts, and stay above it until the gesture ends, bringing it to front.
+  // One front per gesture, before any frame change, so the card is above another
+  // app's windows for the whole gesture.
   ZenPiPController *controller = [ZenPiPController forWindow:window];
   [controller frontForGesture];
   [controller focusPiP];
@@ -209,9 +198,8 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   _pointer = pointer;
   _baseFrame = window.frame;
   _last = _baseFrame;
-  // The screen is captured once. A cursor-anchored resize may overflow an edge,
-  // and re-resolving the screen per tick could flip onto a neighbouring display
-  // and change the size limits mid-gesture.
+  // The screen is captured once. Re-resolving per tick could flip onto a
+  // neighbouring display and change the size limits mid-gesture.
   const NSRect baseVisible = ScreenFor(_baseFrame).visibleFrame;
   _visible = {NSMinX(baseVisible), NSMinY(baseVisible), NSWidth(baseVisible), NSHeight(baseVisible)};
   _aspect = [self lockedAspect];
@@ -231,26 +219,24 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
 
   _hitMinHaptic = (_scaleFloor >= 1.0 - 0.0005);
   _hitMaxHaptic = (_scaleCeiling <= 1.0 + 0.0005);
-  // Where the window started decides where a finished resize goes: docked pairs
-  // of (corner, frame) are captured from the untouched base frame.
+  // The starting corner decides where a finished resize goes, measured from the
+  // untouched base frame.
   _startCorner = zen_pip_zoom::NearestDockCorner(
       {NSMinX(_baseFrame), NSMinY(_baseFrame), NSWidth(_baseFrame), NSHeight(_baseFrame)}, _visible,
       zen_pip_zoom::kSnapTolerance);
 
   [controller disarmSwipe];
   [controller pinchBegan];
-  // Freeze the picture at its current size for the whole gesture. AppKit then
-  // stretches the last composited frame with the card (the same path a mouse
-  // edge-drag takes), so window and video change size in the same frame instead
-  // of Gecko re-laying-out and re-resampling the video a frame or two behind.
+  // Freeze the picture for the gesture so AppKit stretches the last frame with the
+  // card, instead of Gecko laying out a frame or two behind.
   [controller beginOwnedLiveResize];
 }
 
 - (void)applyScale {
   NSWindow *window = _window;
   if (!window || !_resizing) return;
-  // A gesture that has not changed the scale yet must not nudge the window by a
-  // rounding pixel before it has moved.
+  // A gesture that has not changed scale must not move the window by a rounding
+  // pixel.
   if (_scale == 1.0) return;
 
   const zen_pip_zoom::Result result = zen_pip_zoom::ResizeFromBase(
@@ -259,13 +245,12 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
 
   const NSRect next = NSMakeRect(result.frame.x, result.frame.y, result.frame.w, result.frame.h);
   if (!NSEqualRects(next, window.frame)) {
-    // display:NO is critical: forcing a synchronous redraw at 90-120Hz clogs the
-    // Cocoa runloop and drops frames. WindowServer / compositor handles async presentation smoothly.
+    // display:NO avoids a synchronous redraw at 90-120 Hz; the compositor presents
+    // asynchronously.
     [window setFrame:next display:NO];
   }
-  // No shadow work here. The shadow is switched off for the gesture (it is the
-  // most expensive thing to rasterise per tick) and the live resize scales what
-  // is already on screen with the card. It is rebuilt once from the final frame.
+  // No shadow work here: it is off for the gesture and the live resize scales what
+  // is on screen. Rebuilt once from the final frame.
   _last = window.frame;
 
   CheckBoundaryHaptic(_scale, _scaleFloor, YES, &_hitMinHaptic);
@@ -299,8 +284,8 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
 - (void)resetSession {
   [self stopEase];
   [self stopIdle];
-  // The gesture is over: leave live-resize mode so Gecko repaints the picture at
-  // the final size. Always paired, including on the abandon/cancel paths.
+  // Leave live-resize mode so Gecko repaints at the final size. Always paired,
+  // including the abandon path.
   [[ZenPiPController forWindow:_window] endOwnedLiveResize];
   _resizing = NO;
   _endPending = NO;
@@ -327,8 +312,7 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   [NSRunLoop.currentRunLoop addTimer:_idle forMode:NSRunLoopCommonModes];
 }
 
-// Ask for the gesture to end. If an ease is still running let it land first,
-// otherwise a snap would be calculated from a half-finished size.
+// Let a running ease land first, or the snap is computed from a half-finished size.
 - (void)requestEnd {
   if (!_resizing) return;
   if (_ease || _easeDisplayLink) {
@@ -349,17 +333,15 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   const NSRect frame = window.frame;
   const zen_pip_zoom::Rect current{NSMinX(frame), NSMinY(frame), NSWidth(frame), NSHeight(frame)};
   const zen_pip_zoom::Rect rest = zen_pip_zoom::KeepOnScreen(current, _visible);
-  // A gesture that began docked goes home: the cursor-anchored scaling is the
-  // only thing that moved it away from its corner. A gesture that began free
-  // snaps only when it came to rest next to a corner, and stays put anywhere
-  // else on the screen.
+  // A gesture that began docked goes home; one that began free snaps only when it
+  // stops next to a corner.
   zen_pip_zoom::AnchorCorner snap = _startCorner;
   if (snap == zen_pip_zoom::kAnchorNone) {
     snap = zen_pip_zoom::NearestDockCorner(rest, _visible, zen_pip_zoom::kSnapTolerance);
   }
 
-  // Resolve the corner slot against the screen the gesture started on, never the
-  // one the picture may have drifted onto while it overflowed an edge.
+  // Resolve the corner slot on the gesture's screen, not the one the picture drifted
+  // onto.
   NSRect target = NSZeroRect;
   if (snap != zen_pip_zoom::kAnchorNone) {
     const zen_pip_throw::Rect slot = zen_pip_throw::CornerFrame(
@@ -371,14 +353,13 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
 
   ZenPiPController *controller = [ZenPiPController forWindow:window];
   if (NSIsEmptyRect(target) && (rest.x != current.x || rest.y != current.y)) {
-    // Nothing to dock into: undo any overflow in one step and stay right there.
+    // Nothing to dock into: undo any overflow in one step.
     [window setFrame:NSMakeRect(rest.x, rest.y, rest.w, rest.h) display:NO];
   }
   [controller pinchEndedAtFrame:target];
 }
 
-// Cancellation never snaps: something else (a swipe, a drag, a close) owns the
-// window now.
+// Cancellation never snaps: something else owns the window now.
 - (void)abandon {
   const BOOL wasResizing = _resizing;
   NSWindow *window = _window;
@@ -392,9 +373,8 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   NSWindow *window = _window;
   if (!window) return;
 
-  // A magnify can arrive twice: once through the global monitor while Zen is
-  // inactive, once through the local monitor on the turn it becomes active. Zoom
-  // once per event.
+  // A magnify can arrive twice, from the global and the local monitor, on the turn
+  // Zen activates. Zoom once per event.
   if (event.timestamp <= _lastMagnifyAt) return;
   _lastMagnifyAt = event.timestamp;
 
@@ -407,12 +387,11 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   [self beginResizeAt:pointer];
   _endPending = NO;
 
-  // Prevent trackpad delta spikes by clamping the step factor.
+  // Clamp the step factor against trackpad delta spikes.
   const double stepScale = std::clamp(1.0 + event.magnification, 0.90, 1.10);
   _targetScale = std::clamp(_targetScale * stepScale, _scaleFloor, _scaleCeiling);
-  // The window is moved by a display link instead of once per event: trackpad
-  // magnify events arrive at 60-90 Hz and in bursts, so applying them directly
-  // makes the geometry step unevenly even on a 120 Hz display.
+  // A display link moves the window: magnify events arrive at 60-90 Hz in bursts,
+  // so applying them directly steps unevenly.
   [self startEase:kPinchTau];
   [self restartIdle:kPinchIdle];
 }
@@ -433,8 +412,8 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
     return;
   }
 
-  // A finished gesture lands on its target in one tick. The snap has to be
-  // computed from the size the fingers asked for, never from a half-eased one.
+  // A finished gesture lands on its target in one tick; the snap uses the size the
+  // fingers asked for.
   if (_endPending) {
     _scale = _targetScale;
     [self applyScale];
@@ -450,7 +429,7 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
       if (dl.targetTimestamp > 0) now = dl.targetTimestamp;
     }
   }
-  // Clamp the step: a stalled main thread must not turn one tick into a jump.
+  // Clamp the step so a stalled main thread cannot turn one tick into a jump.
   const double dt = std::clamp(now - _easeLastAt, 1.0 / 240.0, 1.0 / 30.0);
   _easeLastAt = now;
 
@@ -462,15 +441,14 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
     return;
   }
 
-  // Frame-rate independent approach with a fixed time constant, so the glide
-  // feels the same on a 120 Hz ProMotion panel and on an external 60 Hz one.
+  // Frame-rate independent approach, so the glide feels the same at 120 Hz and 60 Hz.
   const double alpha = 1.0 - std::exp(-dt / _easeTau);
   _scale += delta * alpha;
   [self applyScale];
 }
 
-// Drive `_scale` towards `_targetScale` from a display link. One link per
-// gesture: a newly arrived tau only retunes the approach already running.
+// Drive `_scale` towards `_targetScale` from a display link, one per gesture. A
+// newly arrived tau only retunes the approach already running.
 - (void)startEase:(double)tau {
   if (!_resizing) return;
   _easeTau = tau;
@@ -506,9 +484,8 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   _endPending = NO;
 
   if (!ease) {
-    // Precise trackpad scroll: 1:1 with the fingers. Land any glide still in
-    // flight first, so this step is applied to the size actually on screen
-    // (stopEase syncs the target down to the applied scale).
+    // Precise scroll: 1:1 with the fingers. Land any glide first so the step applies
+    // to the size on screen.
     [self stopEase];
     _targetScale = std::clamp(_targetScale * factor, _scaleFloor, _scaleCeiling);
     _scale = _targetScale;
@@ -532,8 +509,7 @@ static void CheckBoundaryHaptic(double value, double limit, BOOL isMin, BOOL *la
   return {size.width > 0 ? size.width : CGFLOAT_MAX, size.height > 0 ? size.height : CGFLOAT_MAX};
 }
 
-// One device pixel in points. A Retina screen gets half-point frames, which is
-// what makes a slow zoom move one pixel at a time instead of two.
+// One device pixel in points, so a slow zoom moves one pixel at a time on Retina.
 - (double)frameQuantum {
   const CGFloat scale = _window ? _window.backingScaleFactor : 1.0;
   return scale > 1.0 ? 1.0 / scale : 1.0;

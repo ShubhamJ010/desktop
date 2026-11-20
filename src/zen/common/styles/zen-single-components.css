@@ -1055,7 +1055,8 @@
   position: fixed;
   top: calc(var(--zen-element-separation) / 2);
 
-  /* Minimum -2px, but if its larger, elemenet separation / -2 will be used as top offset, to avoid overlapping with the notification stack */
+  /* Minimum -2px; a larger element separation wins, so the bar never overlaps
+     the notification stack. */
   :root:is([zen-no-padding="true"], [inDOMFullscreen="true"], :not([zen-single-toolbar="true"])) & {
     top: var(--zen-space-4);
   }
