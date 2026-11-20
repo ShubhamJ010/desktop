@@ -1,24 +1,84 @@
 diff --git a/toolkit/components/pictureinpicture/PictureInPicture.sys.mjs b/toolkit/components/pictureinpicture/PictureInPicture.sys.mjs
-index 08c6951218e325c3facf9ae1a689e1bb9d5c5d48..2f0dc1354d9a152e2241dbfda59534adcd4f6d10 100644
+index 08c6951..34cfb5e 100644
 --- a/toolkit/components/pictureinpicture/PictureInPicture.sys.mjs
 +++ b/toolkit/components/pictureinpicture/PictureInPicture.sys.mjs
-@@ -161,6 +161,10 @@ export class PictureInPictureToggleParent extends JSWindowActorParent {
+@@ -161,13 +161,18 @@
            break;
          }
  
+-        // Suppress auto-toggle if the user deliberately closed this PiP window
 +        if (browser.audioMuted) {
 +          break;
 +        }
 +
-         // Suppress auto-toggle if the user deliberately closed this PiP window
++        // Skip the auto-toggle for the docShell deactivation that closing PiP causes
          if (
            PictureInPicture.weakAutoPipBrowserClosedDeliberately.has(browser)
-@@ -636,7 +640,7 @@ export var PictureInPicture = {
+         ) {
+           PictureInPicture.weakAutoPipBrowserClosedDeliberately.delete(browser);
+           break;
+         }
++
+         let actor = browsingContext.currentWindowGlobal.getActor(
+           "PictureInPictureLauncher"
+         );
+@@ -242,6 +247,13 @@
+         }
+         break;
+       }
++      case "PictureInPicture:MeetState": {
++        let player = PictureInPicture.getWeakPipPlayer(this);
++        if (player) {
++          player.setMeetState(aMessage.data);
++        }
++        break;
++      }
+       case "PictureInPicture:SetTimestampAndScrubberPosition": {
+         let { timestamp, scrubberPosition } = aMessage.data;
+         let player = PictureInPicture.getWeakPipPlayer(this);
+@@ -369,6 +381,11 @@
+       case "TabSelect": {
+         this.unpipAutoPipBrowser(event);
+         this.updatePlayingDurationHistograms();
++        if (event.target?.linkedBrowser) {
++          this.weakAutoPipBrowserClosedDeliberately.delete(
++            event.target.linkedBrowser
++          );
++        }
+         break;
+       }
+       case "sizemodechange":
+@@ -440,6 +457,9 @@
+    * @param browser The browser to decrease PiP count in browserWeakMap
+    */
+   removePiPBrowserFromWeakMap(browser) {
++    if (!browser || !this.browserWeakMap.has(browser)) {
++      return;
++    }
+     let count = this.browserWeakMap.get(browser);
+     if (count <= 1) {
+       this.browserWeakMap.delete(browser);
+@@ -636,6 +656,8 @@
      // focus the tab's window
      tab.documentGlobal.focus();
  
--    gBrowser.selectedTab = tab;
-+    browser?.documentGlobal?.gZenWorkspaces.switchIfNeeded(browser);
++    // The tab can live in another workspace, so switch to it first.
++    await browser?.documentGlobal?.gZenWorkspaces?.switchIfNeeded(browser);
+     gBrowser.selectedTab = tab;
      await this.closeSinglePipWindow({ reason: "Unpip", actorRef: pipActor });
    },
+@@ -1243,6 +1265,14 @@
  
+     let browser = this.weakWinToBrowser.get(window);
+     this.removeOriginatingWinFromWeakMap(browser);
++    if (browser && this.browserWeakMap.has(browser)) {
++      const tabbrowser = browser.getTabBrowser();
++      if (tabbrowser && tabbrowser.selectedBrowser != browser) {
++        this.weakAutoPipBrowserClosedDeliberately.add(browser);
++      }
++      this.removePiPBrowserFromWeakMap(browser);
++      this.weakAutoPipBrowserToParent.delete(browser);
++    }
+ 
+     this.currentPlayerCount -= 1;
+     // Saves the location of the Picture in Picture window

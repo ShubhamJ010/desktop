@@ -30,7 +30,12 @@
   value: 500 # milliseconds
 
 - name: zen.ctrlTab.show-pending-tabs
-  value: false
+  # Tabs of a space that is not loaded yet (restored from the session, unloaded
+  # by hand) are still tabs of that space: hide them only on request.
+  value: true
+
+- name: zen.ctrlTab.max-previews
+  value: 9 # Ardia MAX_ROWS — rows shown in the tab switcher
 
 - name: zen.mediacontrols.enabled
   value: true

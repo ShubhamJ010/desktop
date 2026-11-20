@@ -4,3 +4,7 @@
 
 - name: media.eme.enabled
   value: true
+
+# Picture-in-Picture prefs stay at the upstream defaults from
+# prefs/firefox/pip.yaml. Declaring them here too silently changed the values,
+# because the generated defaults keep whichever definition is written last.

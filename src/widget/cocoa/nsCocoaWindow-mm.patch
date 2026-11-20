@@ -2,7 +2,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
 index cd1cbea4e..478bcb670 100644
 --- a/widget/cocoa/nsCocoaWindow.mm
 +++ b/widget/cocoa/nsCocoaWindow.mm
-@@ -90,9 +90,11 @@
+@@ -90,9 +90,13 @@
  #include "mozilla/StaticPrefs_mozilla.h"
  #include "mozilla/StaticPrefs_ui.h"
  #include "mozilla/StaticPrefs_widget.h"
@@ -11,10 +11,12 @@ index cd1cbea4e..478bcb670 100644
  #include "mozilla/dom/Document.h"
  #include "mozilla/layers/CompositorBridgeChild.h"
 +#include "mozilla/nsZenDragAndDrop.h"
++#import "mozilla/ZenPictureInPictureInternal.h"
++#import "mozilla/ZenSwipeInternal.h"
  #include "mozilla/widget/Screen.h"
  
  #ifdef ACCESSIBILITY
-@@ -1420,6 +1422,115 @@ - (NSRect)_opaqueRectForWindowMoveWhenInTitlebar {
+@@ -1420,6 +1423,121 @@ - (NSRect)_opaqueRectForWindowMoveWhenInTitlebar {
  }
  @end
  
@@ -91,11 +93,17 @@ index cd1cbea4e..478bcb670 100644
 +    mWindow.styleMask |= NSWindowStyleMaskNonactivatingPanel;
 +    return;
 +  }
++  if (mWindow && (aXulWinType.EqualsLiteral("PictureInPicture") ||
++                  aXulWinType.LowerCaseEqualsLiteral("pictureinpicture"))) {
++    zen_pip::Attach(mWindow);
++    return;
++  }
 +  if (mWindowType != WindowType::TopLevel || mIsBrowserWindow ||
 +      !aXulWinType.EqualsLiteral("navigator:browser")) {
 +    return;
 +  }
 +  mIsBrowserWindow = true;
++  zen_swipe::Attach(mWindow);
 +  Preferences::RegisterCallback(ZenWindowVibrancyPrefChanged,
 +                                "zen.widget.macos.window-vibrancy", this);
 +  UpdateWindowMaterial();
@@ -130,7 +138,7 @@ index cd1cbea4e..478bcb670 100644
  void nsCocoaWindow::UpdateWindowDraggingRegion(
      const LayoutDeviceIntRegion& aRegion) {
    // mChildView returns YES from mouseDownCanMoveWindow, so we need to put
-@@ -3990,7 +4101,9 @@ - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+@@ -3990,7 +4103,9 @@ - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
  // NSDraggingDestination
  - (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender {
    MOZ_LOG(sCocoaLog, LogLevel::Info, ("ChildView draggingUpdated: entered\n"));
@@ -141,7 +149,7 @@ index cd1cbea4e..478bcb670 100644
  }
  
  // NSDraggingDestination
-@@ -4006,6 +4119,9 @@ - (void)draggingExited:(id<NSDraggingInfo>)sender {
+@@ -4006,6 +4122,9 @@ - (void)draggingExited:(id<NSDraggingInfo>)sender {
  - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
    nsAutoRetainCocoaObject kungFuDeathGrip(self);
    BOOL handled = [self doDragAction:eDrop sender:sender] != NSDragOperationNone;
@@ -151,10 +159,14 @@ index cd1cbea4e..478bcb670 100644
    NS_IF_RELEASE(mDragService);
    return handled;
  }
-@@ -5060,6 +5176,10 @@ - (BOOL)wantsBestResolutionOpenGLSurface {
+@@ -5060,6 +5179,14 @@ - (BOOL)wantsBestResolutionOpenGLSurface {
  nsCocoaWindow::~nsCocoaWindow() {
    NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
  
++  if (mWindow) {
++    zen_pip::Detach(mWindow);
++    zen_swipe::Detach(mWindow);
++  }
 +  if (mIsBrowserWindow) {
 +    Preferences::UnregisterCallback(ZenWindowVibrancyPrefChanged,
 +                                    "zen.widget.macos.window-vibrancy", this);
@@ -162,18 +174,21 @@ index cd1cbea4e..478bcb670 100644
    RemoveAllChildren();
    if (mWindow && mWindowMadeHere) {
      CancelAllTransitions();
-@@ -5752,7 +5872,9 @@ static void SyncPopoverBounds(NSPopover* aPopover,
+@@ -5752,7 +5879,12 @@ static void SyncPopoverBounds(NSPopover* aPopover,
      } else {
        NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
        EnsureFrameIsOnScreen();
 -      if (mWindowType == WindowType::TopLevel &&
++      if (mWindow && [mWindow level] == NSFloatingWindowLevel && [mWindow.title containsString:@"Picture"]) {
++        zen_pip::Attach(mWindow);
++      }
 +      if ((mWindowType == WindowType::TopLevel ||
 +           (mWindowType == WindowType::Dialog &&
 +            mAnimationType == nsIWidget::eDocumentWindowAnimation)) &&
            [mWindow respondsToSelector:@selector(setAnimationBehavior:)]) {
          NSWindowAnimationBehavior behavior;
          if (mIsAnimationSuppressed) {
-@@ -8316,6 +8438,17 @@ + (NSUInteger)_validateStyleMask:(NSUInteger)aStyleMask {
+@@ -8316,6 +8447,17 @@ + (NSUInteger)_validateStyleMask:(NSUInteger)aStyleMask {
    return [super _validateStyleMask:(aStyleMask & ~keep)] | keep;
  }
  

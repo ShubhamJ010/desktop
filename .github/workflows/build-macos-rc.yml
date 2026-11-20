@@ -1,0 +1,605 @@
+name: RC macOS build
+
+# Release-channel macOS build for this fork.
+# 100% Linux runners (Ubuntu 24.04). No macOS runners needed.
+# Codesigns with rcodesign and publishes to GitHub Releases + Homebrew Tap.
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Upstream release tag to build (default: latest zen-browser/desktop release)"
+        required: false
+        type: string
+      branch:
+        description: "Branch to merge upstream into and build"
+        required: false
+        type: string
+        default: "zen-enh-main"
+      force:
+        description: "Rebuild even if a release with this tag already exists"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: rc-macos
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  ARCH: aarch64
+  FORK_REPO_URL: "https://x-access-token:${{ secrets.DEPLOY_KEY || github.token }}@github.com/${{ github.repository }}.git"
+
+jobs:
+  detect:
+    name: Resolve upstream release
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      upstream_tag: ${{ steps.meta.outputs.upstream_tag }}
+      build_id: ${{ steps.meta.outputs.build_id }}
+      build: ${{ steps.meta.outputs.build }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Resolve version and decide whether to build
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+
+          version="$INPUT_VERSION"
+          if [ -z "$version" ]; then
+            version=$(gh api repos/zen-browser/desktop/releases/latest --jq .tag_name)
+          fi
+          if [ -z "$version" ]; then
+            echo "::error::Could not resolve an upstream release tag"
+            exit 1
+          fi
+
+          # Resolve the upstream base tag: the version itself when it already
+          # is an upstream tag, otherwise strip trailing numeric dot-segments
+          # from fork-local versions ("1.24.3b.1", "1.24.3b.1.2" -> "1.24.3b").
+          # Notes/changelog come from the base tag.
+          tag_exists() {
+            gh api "repos/zen-browser/desktop/git/ref/tags/$1" --jq .ref >/dev/null 2>&1
+          }
+          upstream_tag="$version"
+          until tag_exists "$upstream_tag"; do
+            last="${upstream_tag##*.}"
+            if [[ "$last" =~ ^[0-9]+$ && "$upstream_tag" == *.* ]]; then
+              upstream_tag="${upstream_tag%.*}"
+            else
+              echo "::error::Upstream tag $upstream_tag does not exist (version: $version)"
+              exit 1
+            fi
+          done
+
+          existing=$(gh release list --repo "$GITHUB_REPOSITORY" --json tagName --jq '.[].tagName' 2>/dev/null || true)
+          build=true
+          if printf '%s\n' "$existing" | grep -Fxq "$version"; then
+            if [ "$INPUT_FORCE" != "true" ]; then
+              echo "Release $version already exists in $GITHUB_REPOSITORY; nothing to do"
+              build=false
+            fi
+          elif [ -z "$INPUT_VERSION" ] && [ -n "$existing" ] && printf '%s\n' "$existing" | grep -Eq "^${upstream_tag//./\\.}(\.[0-9]+)?$"; then
+            # Cron only: upstream shipped this base tag but we already released
+            # it (plain or as a fork-local suffix like 1.24.3b.1) — skip so the
+            # cron never overwrites a suffixed release with the plain one.
+            if [ "$INPUT_FORCE" != "true" ]; then
+              echo "A release for upstream $upstream_tag already exists on $GITHUB_REPOSITORY; nothing to do"
+              build=false
+            fi
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "upstream_tag=$upstream_tag" >> "$GITHUB_OUTPUT"
+          echo "build_id=$(date +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "Target: $version (upstream tag: $upstream_tag), build=$build"
+
+  mirror:
+    name: Mirror upstream dev to fork dev
+    # Always runs, even when no build is needed, so fork/dev stays a 1:1
+    # copy of upstream dev between releases.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Push upstream dev to fork dev
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_KEY || github.token }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          rm -rf devmirror && mkdir devmirror && cd devmirror
+          git init -q .
+          git fetch --no-tags https://github.com/zen-browser/desktop.git dev
+          old=$(git ls-remote "$FORK_REPO_URL" refs/heads/dev | cut -f1)
+          git push "$FORK_REPO_URL" "FETCH_HEAD:refs/heads/dev" --force
+          echo "fork/dev: ${old:-none} -> $(git rev-parse FETCH_HEAD)"
+
+  sync:
+    name: Merge fork dev into build branch
+    needs: [detect, mirror]
+    if: ${{ needs.detect.outputs.build == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.merge.outputs.sha }}
+      firefox: ${{ steps.firefox.outputs.version }}
+
+    steps:
+      - name: Checkout build branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.branch || 'zen-enh-main' }}
+          fetch-depth: 0
+          token: ${{ secrets.DEPLOY_KEY || github.token }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge fork dev
+        id: merge
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_KEY || github.token }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags "$FORK_REPO_URL" dev
+          if git merge-base --is-ancestor FETCH_HEAD HEAD; then
+            echo "Build branch already contains fork dev"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            if ! git merge --no-edit FETCH_HEAD; then
+              echo "::error::fork dev merge conflicts. Resolve locally, then rerun:"
+              git diff --name-only --diff-filter=U
+              git merge --abort
+              exit 1
+            fi
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install npm dependencies
+        if: ${{ steps.merge.outputs.changed == 'true' }}
+        run: npm ci
+
+      - name: Download Firefox engine
+        if: ${{ steps.merge.outputs.changed == 'true' }}
+        run: npm run download
+
+      - name: Verify patches apply
+        if: ${{ steps.merge.outputs.changed == 'true' }}
+        run: npm run import
+
+      - name: Drop validation changes
+        if: ${{ steps.merge.outputs.changed == 'true' }}
+        run: git reset --hard HEAD
+
+      - name: Push merged branch
+        if: ${{ steps.merge.outputs.changed == 'true' }}
+        env:
+          BRANCH: ${{ inputs.branch || 'zen-enh-main' }}
+          GH_TOKEN: ${{ secrets.DEPLOY_KEY || github.token }}
+        run: git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${BRANCH}"
+
+      - name: Get Firefox version
+        id: firefox
+        run: |
+          firefox=$(node -p "require('./surfer.json').version.version")
+          echo "version=$firefox" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Release build (macOS arm64)
+    needs: [detect, sync]
+    if: ${{ !failure() && !cancelled() && needs.detect.outputs.build == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@cf1e78c50ca91e757bab3edc229027eebfc07871
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
+      - name: Add swap space
+        run: |
+          set -euo pipefail
+          swap=/swapfile-rc
+          sudo rm -f "$swap"
+          sudo fallocate -l 16G "$swap" \
+            || sudo dd if=/dev/zero of="$swap" bs=1M count=16384 status=none
+          sudo chmod 600 "$swap"
+          sudo mkswap "$swap"
+          sudo swapon "$swap"
+          free -h
+          df -h /
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.sync.outputs.sha }}
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libasound2-dev libcurl4-openssl-dev libdbus-1-dev \
+            libdbus-glib-1-dev libdrm-dev libgtk-3-dev libpulse-dev libx11-xcb-dev \
+            libxt-dev nasm xvfb libx11-dev yasm libegl1-mesa-dev libgl1-mesa-dev \
+            libgles2-mesa-dev libpci-dev clang llvm libclang-dev clang-format \
+            libxcb-shm0-dev libxinerama-dev libxrandr-dev libxcursor-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Load surfer CI setup
+        run: npm run surfer -- ci --brand release --display-version "${{ needs.detect.outputs.version }}"
+
+      - name: Download Firefox engine
+        run: npm run download
+
+      - name: Restore macOS cross toolchain
+        id: cache-mac-cross
+        uses: actions/cache@v4
+        with:
+          path: ~/mac-cross
+          key: mac-cross-linux64
+
+      - name: Setup macOS cross toolchain
+        if: steps.cache-mac-cross.outputs.cache-hit != 'true'
+        run: |
+          set -ex
+          mkdir -p ~/mac-cross
+          cd engine/
+          ./mach artifact toolchain --from-build linux64-cctools-port linux64-libdmg linux64-hfsplus
+          mv cctools dmg hfsplus ~/mac-cross/
+
+      - name: Setup Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          . "$HOME/.cargo/env"
+          rustup target add aarch64-apple-darwin
+
+      - name: Import patches
+        env:
+          SURFER_COMPAT: aarch64
+          SURFER_PLATFORM: darwin
+        run: |
+          set -ex
+          . "$HOME/.cargo/env"
+          npm run import -- --verbose
+
+      - name: Bootstrap
+        env:
+          SURFER_COMPAT: aarch64
+          SURFER_PLATFORM: darwin
+        run: |
+          set -ex
+          . "$HOME/.cargo/env"
+          npm run bootstrap
+
+      - name: Build language packs
+        run: sh scripts/download-language-packs.sh
+
+      - name: Run sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Build release binaries
+        env:
+          SURFER_COMPAT: aarch64
+          SURFER_PLATFORM: darwin
+          ZEN_CROSS_COMPILING: "1"
+          ZEN_RELEASE_BRANCH: release
+          MOZ_BUILD_DATE: ${{ needs.detect.outputs.build_id }}
+          ZEN_GA_DISABLE_PGO: "1"
+        run: |
+          set -xo pipefail
+          bash .github/workflows/src/release-build.sh 2>&1 \
+            | tee "$GITHUB_WORKSPACE/build-release.log"
+
+      - name: Report build log and resource state
+        if: always()
+        run: |
+          set -x
+          free -h || true
+          df -h / || true
+          tail -n 200 "$GITHUB_WORKSPACE/build-release.log" 2>/dev/null || true
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 7
+          if-no-files-found: ignore
+          name: rc-build-log
+          path: build-release.log
+
+      - name: Package app bundle
+        env:
+          SURFER_COMPAT: aarch64
+          SURFER_PLATFORM: darwin
+          ZEN_CROSS_COMPILING: "1"
+          ZEN_RELEASE_BRANCH: release
+          ZEN_RELEASE: "1"
+          ZEN_GA_DISABLE_PGO: "1"
+          MOZ_BUILD_DATE: ${{ needs.detect.outputs.build_id }}
+        run: |
+          set -ex
+          npm run package -- --verbose
+
+      - name: Stage app bundle and platform.ini
+        run: |
+          set -ex
+          obj="engine/obj-aarch64-apple-darwin"
+          app="$obj/dist/zen/Zen.app"
+          if [ ! -d "$app" ]; then
+            app=$(find "$obj/dist" -maxdepth 2 -name "*.app" -type d ! -path "*/dist/bin/*" | head -1)
+          fi
+          test -d "$app"
+          echo "App bundle: $app"
+
+          # Disable in-app updater (updates managed via Homebrew Cask)
+          resources="$app/Contents/Resources"
+          mkdir -p "$resources/distribution" "$resources/defaults/pref"
+          printf '%s\n' \
+            '{' \
+            '  "policies": {' \
+            '    "DisableAppUpdate": true,' \
+            '    "ManualAppUpdateOnly": true,' \
+            '    "BackgroundAppUpdate": false,' \
+            '    "AppAutoUpdate": false' \
+            '  }' \
+            '}' > "$resources/distribution/policies.json"
+          printf '%s\n' \
+            'pref("app.update.auto", false);' \
+            'pref("app.update.enabled", false);' > "$resources/defaults/pref/channel-prefs.js"
+
+          rm -f zen-rc-unsigned-app.zip
+          (cd "$(dirname "$app")" && zip -q -r -y "$GITHUB_WORKSPACE/zen-rc-unsigned-app.zip" "$(basename "$app")")
+          cp "$obj/dist/bin/platform.ini" ./platform.ini
+          echo "App: $(du -h zen-rc-unsigned-app.zip | cut -f1)"
+
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 2
+          name: rc-app-aarch64
+          path: |
+            zen-rc-unsigned-app.zip
+            platform.ini
+
+  package:
+    name: Codesign app
+    needs: [detect, sync, build]
+    if: ${{ !failure() && !cancelled() && needs.detect.outputs.build == 'true' && needs.build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Download built app
+        uses: actions/download-artifact@v4
+        with:
+          name: rc-app-aarch64
+          path: ~/app-artifact
+
+      - name: Install rcodesign
+        run: |
+          set -euo pipefail
+          curl -sSL "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign/0.29.0/apple-codesign-0.29.0-x86_64-unknown-linux-musl.tar.gz" | tar -xz
+          sudo mv apple-codesign-0.29.0-x86_64-unknown-linux-musl/rcodesign /usr/local/bin/
+          rcodesign --version
+
+      - name: Extract and codesign app
+        env:
+          P12_BASE64: ${{ secrets.ZEN_CODESIGN_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.ZEN_CODESIGN_P12_PASSWORD }}
+        run: |
+          set -ex
+          unzip -q -o "$HOME/app-artifact/zen-rc-unsigned-app.zip" -d app-root
+          app=$(find app-root -maxdepth 2 -name "*.app" -type d | head -1)
+          test -d "$app"
+
+          # Hardened runtime without these entitlements makes TCC silently refuse
+          # the microphone/camera prompt (and Gecko loses JIT on SIP-on machines).
+          # Mirrors mozilla-central security/mac/hardenedruntime/v2/production/browser.entitlements.
+          cat > browser.entitlements <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>com.apple.security.cs.allow-jit</key>
+            <true/>
+            <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+            <true/>
+            <key>com.apple.security.cs.disable-library-validation</key>
+            <true/>
+            <key>com.apple.security.device.audio-input</key>
+            <true/>
+            <key>com.apple.security.device.camera</key>
+            <true/>
+            <key>com.apple.security.automation.apple-events</key>
+            <true/>
+          </dict>
+          </plist>
+          EOF
+          SIGN_FLAGS="--code-signature-flags runtime --entitlements-xml-file browser.entitlements"
+
+          if [ -n "$P12_BASE64" ]; then
+            echo "$P12_BASE64" | base64 --decode > cert.p12
+            # OpenSSL 3 on Linux produces modern PBES2/PBKDF2 encrypted PKCS#12 by default,
+            # which rust-native apple-codesign (rcodesign) rejects with 'incorrect password'.
+            # Unpack via OpenSSL and re-export as legacy PKCS#12 compatible with rcodesign,
+            # or pass PEM files directly to --pem-file.
+            if openssl pkcs12 -in cert.p12 -passin pass:"$P12_PASSWORD" -nodes -out cert_bundle.pem 2>/dev/null; then
+              echo "Decrypted P12 with OpenSSL, signing with PEM bundle..."
+              rcodesign sign --pem-file cert_bundle.pem $SIGN_FLAGS "$app"
+              rm -f cert_bundle.pem
+            else
+              echo "OpenSSL decrypt failed; falling back to direct P12..."
+              rcodesign sign --p12-file cert.p12 --p12-password "$P12_PASSWORD" $SIGN_FLAGS "$app"
+            fi
+            rm -f cert.p12
+          else
+            echo "No codesigning cert configured, ad-hoc signing"
+            rcodesign sign --entitlements-xml-file browser.entitlements "$app"
+          fi
+
+          (cd "$(dirname "$app")" && zip -q -r -y "$GITHUB_WORKSPACE/zen-rc-macos-aarch64.zip" "$(basename "$app")")
+
+      - name: Upload signed app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 5
+          name: rc-macos-app
+          path: ./zen-rc-macos-aarch64.zip
+
+  publish:
+    name: Publish release and update tap
+    needs: [detect, sync, build, package]
+    if: ${{ !failure() && !cancelled() && needs.detect.outputs.build == 'true' && needs.package.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download signed app
+        uses: actions/download-artifact@v4
+        with:
+          name: rc-macos-app
+          path: ~/signed-app
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.detect.outputs.version }}
+          UPSTREAM_TAG: ${{ needs.detect.outputs.upstream_tag }}
+          FIREFOX: ${{ needs.sync.outputs.firefox }}
+          COMMIT: ${{ needs.sync.outputs.sha }}
+        run: |
+          set -euo pipefail
+          app_zip="$HOME/signed-app/zen-rc-macos-aarch64.zip"
+          test -f "$app_zip"
+
+          # Reuse the upstream release notes/changelog verbatim, then append
+          # fork install instructions below it.
+          if ! upstream_body=$(gh api "repos/zen-browser/desktop/releases/tags/$UPSTREAM_TAG" --jq .body); then
+            echo "::error::Could not fetch upstream release notes for tag $UPSTREAM_TAG"
+            exit 1
+          fi
+          {
+            if [ -n "$upstream_body" ]; then
+              printf '%s\n' "$upstream_body"
+            else
+              printf 'RC build for upstream Zen %s, Firefox %s.\n' "$VERSION" "$FIREFOX"
+            fi
+            printf '\n---\n\n'
+            printf 'Fork build: macOS arm64, Firefox %s. Commit: %s\n\n' "$FIREFOX" "$COMMIT"
+            printf 'Install with Homebrew:\n```bash\nbrew tap ShubhamJ010/tap\nbrew install --cask zen-browser-sj\n```\n'
+          } > notes.md
+
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --notes-file notes.md
+            gh release upload "$VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber \
+              "$app_zip"
+            exit 0
+          fi
+
+          gh release create "$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Zen SJ $VERSION" \
+            --notes-file notes.md \
+            "$app_zip"
+
+      - name: Update Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "::error::TAP_GITHUB_TOKEN secret not set; cannot bump the Homebrew cask. Cask will point at a stale sha256 and brew installs will fail. Add the secret (PAT with write access to ShubhamJ010/homebrew-tap), fix the cask manually, then re-run publish."
+            exit 1
+          fi
+
+          app_zip="$HOME/signed-app/zen-rc-macos-aarch64.zip"
+          SHA256=$(sha256sum "$app_zip" | awk '{print $1}')
+          echo "Bumping tap to $VERSION ($SHA256)..."
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/ShubhamJ010/homebrew-tap.git" tap
+          cd tap
+          CASK="Casks/zen-browser-sj.rb"
+          if [ -f "$CASK" ]; then
+            python3 -c 'import re, sys, pathlib; p = pathlib.Path(sys.argv[1]); c = p.read_text(); c = re.sub(r"version\s+\"[^\"]+\"", f"version \"{sys.argv[2]}\"", c, count=1); c = re.sub(r"sha256\s+(\"[^\"]+\"|:no_check)", f"sha256 \"{sys.argv[3]}\"", c, count=1); p.write_text(c)' "$CASK" "$VERSION" "$SHA256"
+            git add "$CASK"
+            if ! git diff --cached --quiet; then
+              git commit -m "chore(cask): bump zen-browser-sj to $VERSION"
+              git push origin main
+              echo "Homebrew tap updated!"
+            else
+              echo "Cask already up to date."
+            fi
+          fi
