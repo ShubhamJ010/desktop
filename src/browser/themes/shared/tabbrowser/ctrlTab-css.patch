@@ -1,12 +1,581 @@
 diff --git a/browser/themes/shared/tabbrowser/ctrlTab.css b/browser/themes/shared/tabbrowser/ctrlTab.css
-index ad4819fec3fc71c15db0952957ec17dc5cb82e98..9fa29871afb967af3012e6c52d766f1134eab765 100644
 --- a/browser/themes/shared/tabbrowser/ctrlTab.css
 +++ b/browser/themes/shared/tabbrowser/ctrlTab.css
-@@ -11,6 +11,7 @@
+@@ -2,118 +2,499 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
+-/* Ctrl-Tab */
++/*
++ * Zen "Recent Tabs" switcher for Ctrl+Tab, ported from Ardia's TabSwitcher.
++ *
++ * Layout constants, shared with browser-ctrlTab.js:
++ *   WIDTH 400, ROW 40, SWITCHER_RADIUS 16, SWITCHER_PAD 8,
++ *   ROW_RADIUS 8, MAX_ROWS 9
++ *
++ * Colours follow Ardia's tokens; the panel fill is denser because a popup window
++ * has no page behind it.
++ */
+ 
++/* Popup reset: strip the native <panel> chrome so only the card shows. The
++ * padding leaves room for the shadow, which a popup window would clip
++ * (browser-ctrlTab.js subtracts this margin). */
+ #ctrlTab-panel {
++  --ctrl-tab-shadow-margin: 24px;
++
+   appearance: none;
+-  --panel-background-color: hsla(0, 0%, 40%, 0.85);
+-  --panel-text-color: white;
++  background-color: transparent !important;
++  border: none !important;
++  box-shadow: none !important;
++  --panel-background-color: transparent;
    --panel-border-color: transparent;
-   --panel-padding: 20px 10px 10px;
-   -moz-window-shadow: none;
+-  --panel-padding: 20px 10px 10px;
++  --panel-padding: 0;
 +  --panel-shadow-margin: 0;
+   -moz-window-shadow: none;
+-  background-color: transparent;
+-  @media not (-moz-platform: macos) {
+-    font-weight: var(--font-weight-bold);
++  padding: var(--ctrl-tab-shadow-margin) !important;
++  overflow: visible !important;
++}
++
++#ctrlTab-panel::part(content),
++#ctrlTab-panel > .panel-arrowcontainer,
++#ctrlTab-panel > .panel-arrowcontent {
++  background: transparent !important;
++  border: none !important;
++  box-shadow: none !important;
++  padding: 0 !important;
++
++  /* popup.css clips ::part(content) and clamps its width for menu content, which
++   * cuts the card's corner and shadow. Keep this box unclipped. */
++  margin: 0 !important;
++  overflow: visible !important;
++  max-width: none !important;
++  max-height: none !important;
++}
++
++/* Card, using the shared Ardia glass recipe (zen-ardia-glass.css). */
++.ctrlTab-card {
++  display: flex;
++  flex-direction: column;
++  box-sizing: border-box;
++  flex: none;
++
++  /* WIDTH */
++  width: 400px;
++
++  /* SWITCHER_PAD, space.m */
++  padding: 8px;
++
++  /* SWITCHER_RADIUS, radius.sheet */
++  border-radius: 16px;
++
++  /* Denser than the shared glass fill: a popup window has no page behind it to
++   * sample. */
++  --zen-ardia-glass-fill: light-dark(
++    rgba(248, 248, 252, 0.97),
++    rgba(40, 41, 45, 0.97)
++  );
++
++  --ctrl-tab-text-primary: light-dark(#111111, #ffffff);
++
++  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
++    sans-serif;
++  -moz-osx-font-smoothing: grayscale;
++
++  user-select: none;
++  animation: ctrlTab-card-in 150ms cubic-bezier(0.2, 0, 0, 1);
++  transition: opacity 120ms cubic-bezier(0.2, 0, 0, 1),
++              transform 120ms cubic-bezier(0.2, 0, 0, 1);
++}
++
++.ctrlTab-card.closing {
++  opacity: 0 !important;
++  transform: scale(0.96) translateY(4px) !important;
++  pointer-events: none !important;
++}
++
++#ctrlTab-panel .ctrlTab-card.zen-ardia-glass {
++  background-color: var(--zen-ardia-glass-fill, light-dark(#ffffff, #2a2a2a));
++  backdrop-filter: var(
++    --zen-ardia-glass-filter,
++    blur(42px) saturate(180%)
++  ) !important;
++  -webkit-backdrop-filter: var(
++    --zen-ardia-glass-filter,
++    blur(42px) saturate(180%)
++  ) !important;
++
++  border: 0.5px solid
++    light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
++  box-shadow: 0 12px 28px
++    light-dark(rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.5));
++}
++
++@keyframes ctrlTab-card-in {
++  from {
++    opacity: 0;
++    transform: scale(0.96) translateY(-4px);
++  }
++  to {
++    opacity: 1;
++    transform: scale(1) translateY(0);
+   }
+ }
+ 
+-#ctrlTab-previews {
+-  display: grid;
+-  grid-template-columns: repeat(var(--ctrlTab-previews-per-row), minmax(0, 1fr));
+-  /* Add 10px to offset the negative margin-top on .ctrlTab-preview-inner so
+-     wrapped rows keep a full row of spacing instead of nearly touching. */
+-  row-gap: calc(var(--space-medium) + 10px);
++.ctrlTab-header {
++  flex: none;
++  padding: 10px 12px 10px;
++  user-select: none;
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 10px;
+ }
+ 
+-.ctrlTab-preview {
+-  min-width: 0;
+-  padding: 0;
++.ctrlTab-header-space {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
+ }
+ 
+-.ctrlTab-preview,
+-#ctrlTab-showAll {
++.ctrlTab-space-icon {
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  width: 16px;
++  height: 16px;
++  flex: none;
++  -moz-context-properties: fill-opacity, fill, stroke;
++  fill: currentColor;
++  stroke: currentColor;
++  color: var(--ctrl-tab-text-primary);
++}
++
++.ctrlTab-space-icon-mask {
++  display: inline-block;
++  width: 15px;
++  height: 15px;
++  background-color: currentColor;
++  mask-size: contain;
++  mask-position: center;
++  mask-repeat: no-repeat;
++  -webkit-mask-size: contain;
++  -webkit-mask-position: center;
++  -webkit-mask-repeat: no-repeat;
++}
++
++.ctrlTab-space-icon-img {
++  width: 15px;
++  height: 15px;
++  object-fit: contain;
++  -moz-context-properties: fill-opacity, fill, stroke;
++  fill: currentColor;
++  stroke: currentColor;
++  color: var(--ctrl-tab-text-primary);
++}
++
++.ctrlTab-space-icon-badge {
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  width: 16px;
++  height: 16px;
++  border-radius: 4px;
++  background: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.12));
++  font-size: 10px;
++  font-weight: 700;
++  color: var(--ctrl-tab-text-primary);
++}
++
++.ctrlTab-header-label {
++  font-size: 13.5px;
++  font-weight: 750;
++  line-height: 16px;
++  letter-spacing: -0.01em;
++  color: var(--ctrl-tab-text-primary);
++  opacity: 0.96;
++}
++
++/* List: rows are back to back, MAX_ROWS * ROW = 360px. */
++.ctrlTab-list {
++  position: relative;
++  display: flex;
++  flex-direction: column;
++  /* Height comes from the row count, set once per paint, so a row entering or
++   * leaving never resizes the card mid-animation. */
++  height: calc(var(--ctrl-tab-rows, 0) * 40px);
++  max-height: 360px;
++  overflow: hidden;
++  transition: height 120ms cubic-bezier(0.2, 0, 0, 1),
++              opacity 120ms cubic-bezier(0.2, 0, 0, 1);
++}
++
++/* Last resort: the space has tabs, but the filters hid them all. */
++.ctrlTab-card.is-fallback .ctrlTab-list {
++  opacity: 0.65;
++}
++
++/* The list moves as one, in the switch direction. Staggered rows flicker on
++ * long lists. */
++@keyframes ctrlTabSwapInNext {
++  from {
++    opacity: 0.45;
++    transform: translateY(6px);
++  }
++  to {
++    opacity: 1;
++    transform: translateY(0);
++  }
++}
++
++@keyframes ctrlTabSwapInPrev {
++  from {
++    opacity: 0.45;
++    transform: translateY(-6px);
++  }
++  to {
++    opacity: 1;
++    transform: translateY(0);
++  }
++}
++
++.ctrlTab-list.swap-in-next {
++  animation: ctrlTabSwapInNext 130ms cubic-bezier(0.2, 0, 0, 1);
++}
++
++.ctrlTab-list.swap-in-prev {
++  animation: ctrlTabSwapInPrev 130ms cubic-bezier(0.2, 0, 0, 1);
++}
++
++/* Selection pill. Moving it is a transform, so rows never repaint. */
++.ctrlTab-pill {
++  position: absolute;
++  inset-inline: 0;
++  top: 0;
++  height: 40px;
++  border-radius: 8px;
++  background-color: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.18));
++  box-shadow: inset 0 0 0 0.5px
++    light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.15));
++  opacity: 0;
++  pointer-events: none;
++  will-change: transform, opacity;
++  transition: transform 90ms cubic-bezier(0.2, 0, 0, 1),
++    opacity 120ms cubic-bezier(0.2, 0, 0, 1);
++}
++
++.ctrlTab-pill.is-visible {
++  opacity: 1;
++}
++
++.ctrlTab-empty {
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  height: 48px;
++  font-size: 12px;
++  color: light-dark(rgba(0, 0, 0, 0.45), rgba(255, 255, 255, 0.45));
++}
++
++/* `hidden` is a presentation attribute that the `display` rules above beat, so
++ * hidden rows kept painting. */
++.ctrlTab-preview[hidden],
++.ctrlTab-empty[hidden],
++.ctrlTab-dots[hidden] {
++  display: none !important;
++}
++
++/* Row. ROW (40px) high, ROW_RADIUS (8px), 10px padding and gap. */
++.ctrlTab-preview {
+   appearance: none;
+-  color: inherit;
+-  /* remove the :-moz-focusring outline from button.css on Windows */
+-  outline: none !important;
+   margin: 0;
+-  text-shadow:
+-    0 0 1px hsl(0, 0%, 12%),
+-    0 0 2px hsl(0, 0%, 12%);
+-  border: none;
++
++  /* Reserve the focus ring, so selecting a row never shifts its contents. */
++  border: 0.5px solid transparent;
++  outline: none !important;
++
    background-color: transparent;
-   @media not (-moz-platform: macos) {
-     font-weight: var(--font-weight-bold);
++  display: flex;
++  flex-direction: row;
++  align-items: center;
++  gap: 10px;
++  box-sizing: border-box;
++  width: 100%;
++  height: 40px;
++  max-height: 40px;
++  padding: 0 10px;
++  border-radius: 8px;
++  cursor: pointer;
++  text-align: start;
++  user-select: none;
++  overflow: hidden;
++  /* Rows paint above the pill. */
++  position: relative;
++  z-index: 1;
++  transition: background-color 100ms ease,
++              border-color 100ms ease,
++              opacity 120ms cubic-bezier(0.2, 0, 0, 1),
++              transform 120ms cubic-bezier(0.2, 0, 0, 1),
++              max-height 120ms cubic-bezier(0.2, 0, 0, 1),
++              height 120ms cubic-bezier(0.2, 0, 0, 1),
++              padding-top 120ms cubic-bezier(0.2, 0, 0, 1),
++              padding-bottom 120ms cubic-bezier(0.2, 0, 0, 1),
++              margin 120ms cubic-bezier(0.2, 0, 0, 1);
+ }
+ 
+-.ctrlTab-preview > .button-box {
+-  display: none;
++.ctrlTab-preview.closing {
++  opacity: 0 !important;
++  transform: translateX(14px) scale(0.96) !important;
++  max-height: 0 !important;
++  height: 0 !important;
++  padding-top: 0 !important;
++  padding-bottom: 0 !important;
++  margin-top: 0 !important;
++  margin-bottom: 0 !important;
++  border-width: 0 !important;
++  pointer-events: none !important;
+ }
+ 
+-.ctrlTab-favicon-container {
+-  position: relative;
+-  justify-content: flex-end;
+-}
+-
+-.ctrlTab-favicon[src] {
+-  width: 42px;
+-  height: 42px;
+-  margin-top: -44px;
+-  margin-bottom: 2px;
+-  margin-inline-end: -6px;
+-  padding: 5px;
+-  background-color: var(--background-color-box);
+-  border-radius: var(--border-radius-small);
+-  border: 1px solid var(--border-color-deemphasized);
+-}
+-
+-.ctrlTab-canvas {
+-  color-scheme: light;
+-  background-color: Canvas;
+-  color: CanvasText;
+-  box-shadow: 1px 1px 2px hsl(0, 0%, 12%);
+-  margin-bottom: 8px;
+-  min-width: 0;
++/* Selected or focused row: the pill paints the fill, the row keeps a hairline
++ * ring for keyboard focus. Hover selects in JS, so no :hover rule. */
++.ctrlTab-preview[selected="true"],
++.ctrlTab-preview:focus {
++  background-color: transparent;
++  border-color: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.14));
++}
+ 
+-  @media (-moz-content-prefers-color-scheme: dark) {
+-    /* Make the blank canvas match the default content background. */
+-    color-scheme: dark;
+-  }
++.ctrlTab-preview[selected="true"] .ctrlTab-icon {
++  transform: scale(1.06);
++}
+ 
+-  > img,
+-  > canvas {
+-    min-width: 0;
++/* Space dots, the target of the 1-9 shortcuts. */
++.ctrlTab-dots {
++  display: flex;
++  align-items: center;
++  gap: 4px;
++  flex: none;
++}
++
++.ctrlTab-dot {
++  width: 4px;
++  height: 4px;
++  border-radius: 2px;
++  background-color: light-dark(rgba(0, 0, 0, 0.22), rgba(255, 255, 255, 0.28));
++  transition: width 140ms cubic-bezier(0.2, 0, 0, 1),
++    background-color 140ms ease;
++}
++
++.ctrlTab-dot.active {
++  width: 12px;
++  background-color: light-dark(#111111, #ffffff);
++}
++
++@keyframes ctrlTabHeaderSwap {
++  from {
++    opacity: 0.4;
++    transform: translateY(4px);
++  }
++  to {
++    opacity: 1;
++    transform: translateY(0);
+   }
+ }
+ 
+-.ctrlTab-placeholder {
+-  visibility: hidden;
++.ctrlTab-header-space.swap {
++  animation: ctrlTabHeaderSwap 180ms cubic-bezier(0.16, 1, 0.3, 1);
+ }
+ 
+-.ctrlTab-preview-inner,
+-#ctrlTab-showAll {
+-  padding: 8px;
+-  border: 2px solid transparent;
+-  border-radius: 0.5em;
++.ctrlTab-icon {
++  position: relative;
++  display: grid;
++  place-items: center;
++  flex: none;
++  width: 18px;
++  height: 18px;
++  border-radius: 2px;
++  overflow: hidden;
++  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1);
++}
++
++/* Letter tile shown until a favicon loads. */
++.ctrlTab-tile {
++  display: grid;
++  place-items: center;
++  width: 16px;
++  height: 16px;
++  border-radius: 5px;
++  background-color: light-dark(
++    rgba(0, 0, 0, 0.13),
++    rgba(247, 245, 255, 0.2)
++  );
++  font-size: 10px;
++  font-weight: 600;
++  line-height: 16px;
++  text-transform: uppercase;
++  color: light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.5));
+ }
+ 
+-.ctrlTab-preview-inner {
+-  margin-top: -10px;
++.ctrlTab-favicon {
++  position: absolute;
++  inset: 0;
++  width: 18px;
++  height: 18px;
++  object-fit: contain;
++  border-radius: 2px;
++  display: none;
++}
++
++.ctrlTab-icon.has-favicon .ctrlTab-favicon {
++  display: block;
++}
++
++.ctrlTab-icon.has-favicon .ctrlTab-tile {
++  display: none;
++}
++
++.ctrlTab-details {
++  display: flex;
++  flex-direction: column;
++  justify-content: center;
++  flex: 1;
+   min-width: 0;
++  overflow: hidden;
++}
++
++.ctrlTab-title {
++  font-size: 13px;
++  font-weight: 400;
++  line-height: 17px;
++  color: light-dark(#000000, #ffffff);
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
+ }
+ 
++.ctrlTab-preview[selected="true"] .ctrlTab-title,
++.ctrlTab-preview:focus .ctrlTab-title {
++  font-weight: 500;
++}
++
++.ctrlTab-url {
++  font-size: 11px;
++  font-weight: 400;
++  line-height: 14px;
++  color: light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.5));
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++/* Legacy markup from upstream browser.xhtml is replaced at runtime. */
++#ctrlTab-previews,
++#ctrlTab-showAll-container,
+ #ctrlTab-showAll {
+-  background-color: var(--color-white-alpha-20);
+-  margin-top: 0.5em;
++  display: none !important;
+ }
+ 
+-.ctrlTab-preview:focus > .ctrlTab-preview-inner,
+-#ctrlTab-showAll:focus {
+-  background-color: var(--color-black-alpha-70);
+-  text-shadow: none;
+-  border-color: #45a1ff;
++/* Opaque card when the platform disables transparency. */
++@media (prefers-reduced-transparency: reduce) {
++  #ctrlTab-panel .ctrlTab-card.zen-ardia-glass {
++    backdrop-filter: none !important;
++    -webkit-backdrop-filter: none !important;
++    background-color: light-dark(#ffffff, #2a2a2a);
++  }
+ }
+ 
+-.ctrlTab-label {
+-  flex: 1;
+-  text-align: center;
+-  contain: inline-size;
++/* No animation or transitions when reduced motion is requested. */
++@media (prefers-reduced-motion: reduce) {
++  .ctrlTab-card,
++  .ctrlTab-list.swap-in-next,
++  .ctrlTab-list.swap-in-prev,
++  .ctrlTab-header-space.swap {
++    animation: none !important;
++  }
++
++  .ctrlTab-pill,
++  .ctrlTab-preview,
++  .ctrlTab-dot,
++  .ctrlTab-list,
++  .ctrlTab-icon {
++    transition: none !important;
++  }
+ }

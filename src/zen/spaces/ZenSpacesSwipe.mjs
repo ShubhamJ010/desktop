@@ -184,11 +184,63 @@ export class ZenSpacesSwipe {
         library: libraryOpen || lazy.ZenLibrary.readySwipeOpenLibrary(),
         addSpace: this.#addSwipe.readySwipeAddSpace(),
       },
+      detentCrossed: false,
     };
     if (libraryOpen) {
       lazy.ZenLibrary.startSwipe();
     }
     this.#applySwipeThreshold(event);
+  }
+
+  #canSwitchWorkspace(offset) {
+    const ws = gZenWorkspaces;
+    const workspaces = ws.getWorkspaces();
+    if (workspaces.length <= 1) {
+      return false;
+    }
+    if (ws.shouldWrapAroundNavigation) {
+      return true;
+    }
+    const activeWorkspace = ws.getActiveWorkspace();
+    const currentIndex = workspaces.indexOf(activeWorkspace);
+    if (currentIndex < 0) {
+      return false;
+    }
+    const targetIndex = currentIndex + offset;
+    return targetIndex >= 0 && targetIndex < workspaces.length;
+  }
+
+  #handleDetentHaptic(event) {
+    const state = this.#swipeState;
+    if (state.action || state.detentCrossed) {
+      return;
+    }
+
+    // Cheap math first: most update frames are nowhere near the detent, so
+    // they should not pay for the direction and workspace lookups below.
+    const progress = Math.abs(event.delta) / ZenSpacesSwipe.SUCCESS_THRESHOLD;
+    if (progress < 0.6) {
+      return;
+    }
+
+    // Resolve the gesture once. The flag is forward-only, so a swipe that
+    // wavers around the threshold neither re-checks nor re-fires.
+    state.detentCrossed = true;
+
+    const ws = gZenWorkspaces;
+    const isRTL = document.documentElement.matches(":-moz-locale-dir(rtl)");
+    const moveForward =
+      (event.direction === SimpleGestureEvent.DIRECTION_RIGHT) !== isRTL;
+    const rawDirection = moveForward ? 1 : -1;
+    const direction = ws.naturalScroll ? -1 : 1;
+    const offset = rawDirection * direction;
+
+    if (!this.#canSwitchWorkspace(offset)) {
+      return;
+    }
+
+    // eslint-disable-next-line mozilla/valid-services
+    Services.zen?.playHapticFeedback?.();
   }
 
   #handleSwipeUpdate(event) {
@@ -197,6 +249,8 @@ export class ZenSpacesSwipe {
     if (!ws.workspaceEnabled || !this.#swipeState?.isGestureActive) {
       return;
     }
+
+    this.#handleDetentHaptic(event);
 
     const stripWidth = this.#stripWidth;
 
@@ -312,6 +366,7 @@ export class ZenSpacesSwipe {
       direction: null,
       action: null,
       allowed: { library: false, addSpace: false },
+      detentCrossed: false,
     };
 
     this.#toggleSwipeGestureAttr(false);

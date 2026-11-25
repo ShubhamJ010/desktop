@@ -1,16 +1,560 @@
 diff --git a/toolkit/components/pictureinpicture/content/player.js b/toolkit/components/pictureinpicture/content/player.js
-index dfa666aa0a3ab457a6766bf518506e61089893c5..a1671164fb4340afd976fc0407bc409c7327cbdd 100644
+index dfa666a..57cc11a 100644
 --- a/toolkit/components/pictureinpicture/content/player.js
 +++ b/toolkit/components/pictureinpicture/content/player.js
-@@ -975,6 +975,11 @@ let Player = {
-         });
+@@ -112,6 +112,63 @@ function setIsMutedState(isMuted) {
+   Player.isMuted = isMuted;
+ }
+ 
++const MEET_PATHS = {
++  micOn: [
++    "M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z",
++    "M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"
++  ],
++  micOff: "M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.24-5.3-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c1.37-.2 2.63-.78 3.66-1.62l3.07 3.07 1.27-1.27L4.27 3z",
++  camOn: "M15 8v8H5V8h10m1-2H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4V7c0-.55-.45-1-1-1z",
++  camOff: "M21 6.5l-4 4V7c0-.55-.45-1-1-1H9.82L21 17.18V6.5zM3.27 2L2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.55-.18L19.73 21 21 19.73 3.27 2zM5 16V8.27L12.73 16H5z",
++  hangup: "M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z",
++};
++
++function createMeetSvg(pathData) {
++  const NS = "http://www.w3.org/2000/svg";
++  const svg = document.createElementNS(NS, "svg");
++  svg.setAttribute("viewBox", "0 0 24 24");
++  svg.setAttribute("width", "22");
++  svg.setAttribute("height", "22");
++  svg.setAttribute("fill", "#ffffff");
++  svg.setAttribute("aria-hidden", "true");
++  svg.style.pointerEvents = "none";
++  svg.style.display = "block";
++
++  if (Array.isArray(pathData)) {
++    for (const d of pathData) {
++      const path = document.createElementNS(NS, "path");
++      path.setAttribute("d", d);
++      path.setAttribute("fill", "#ffffff");
++      svg.appendChild(path);
++    }
++  } else {
++    const path = document.createElementNS(NS, "path");
++    path.setAttribute("d", pathData);
++    path.setAttribute("fill", "#ffffff");
++    svg.appendChild(path);
++  }
++  return svg;
++}
++
++function setMeetButtonIcon(button, pathData) {
++  if (!button) return;
++  button.replaceChildren(createMeetSvg(pathData));
++}
++
++function setIsGoogleMeetState(isMeet) {
++  if (isMeet) {
++    Player.isGoogleMeet = true;
++    if (document.body) {
++      document.body.classList.add("is-google-meet");
++    }
++    Player.setupMeetControls();
++  }
++}
++
++function setMeetState(data) {
++  Player.setMeetState(data);
++}
++
+ /**
+  * Function to resize and reposition the PiP window
+  *
+@@ -170,7 +227,6 @@ let Player = {
+     "click",
+     "contextmenu",
+     "command",
+-    "dblclick",
+     "keydown",
+     "mousedown",
+     "mouseup",
+@@ -261,6 +317,10 @@ let Player = {
+     browser.setAttribute("nodefaultsrc", "true");
+ 
+     this.setupTooltip("close", "pictureinpicture-close-btn", "closeShortcut");
++    // The card's own keys are matched in keydown, not declared as XUL <key>
++    // elements, so their labels are passed in directly.
++    this.setupKeyHint("minimize", "pictureinpicture-minimize-btn", "A");
++    this.setupKeyHint("unpip", "pictureinpicture-unpip-btn", "Esc");
+     let strId = this.isFullscreen
+       ? `pictureinpicture-exit-fullscreen-btn2`
+       : `pictureinpicture-fullscreen-btn2`;
+@@ -422,16 +482,276 @@ let Player = {
+       document.documentElement.classList.add("seethrough-mode");
+     }
+ 
++    const isGoogleMeet =
++      wgp?.documentURI?.spec?.includes("meet.google.com") ||
++      wgp?.browsingContext?.currentURI?.spec?.includes("meet.google.com");
++    if (isGoogleMeet) {
++      this.isGoogleMeet = true;
++      document.body.classList.add("is-google-meet");
++      this.setupMeetControls();
++    }
++
++    Services.obs.addObserver(this, "zen-pip-gesture-begin");
++    Services.obs.addObserver(this, "zen-pip-gesture-end");
++    Services.obs.addObserver(this, "zen-pip-gesture-hover");
++    Services.obs.addObserver(this, "zen-pip-command");
++    this._contentFreeze = null;
++    if (Services.prefs.getBoolPref("zen.pip.debug", false)) {
++      document.body.classList.add("pip-debug");
++    }
++    this._onMouseMoveAfterResize = () => {
++      if (this._awaitingMouseMoveAfterResize && !this._inNativeGesture) {
++        this._awaitingMouseMoveAfterResize = false;
++        if (document && document.body) {
++          document.body.classList.remove("pip-gesture-active");
++        }
++      }
++    };
++    window.addEventListener("mousemove", this._onMouseMoveAfterResize, { passive: true });
++
+     this._isInitialized = true;
+ 
+     return { actor: this.actor, setupPromise };
+   },
+ 
+   uninit() {
++    Services.obs.removeObserver(this, "zen-pip-gesture-begin");
++    Services.obs.removeObserver(this, "zen-pip-gesture-end");
++    Services.obs.removeObserver(this, "zen-pip-gesture-hover");
++    Services.obs.removeObserver(this, "zen-pip-command");
++    this._unpinChildViewport();
++    if (this._onMouseMoveAfterResize) {
++      window.removeEventListener("mousemove", this._onMouseMoveAfterResize);
++      this._onMouseMoveAfterResize = null;
++    }
++    this._awaitingMouseMoveAfterResize = false;
++    this._inNativeGesture = false;
+     this.resizeDebouncer.disarm();
+     PictureInPicture.unload(window, this.actor);
+   },
+ 
++  observe(subject, topic, data) {
++    if (!document || !document.body) return;
++    switch (topic) {
++      case "zen-pip-gesture-begin":
++        this._inNativeGesture = true;
++        this._awaitingMouseMoveAfterResize = false;
++        document.body.classList.add("pip-gesture-active");
++        this._pinChildViewport();
++        break;
++      case "zen-pip-gesture-end":
++        this._inNativeGesture = false;
++        this._awaitingMouseMoveAfterResize = true;
++        if (this._contentFreeze) {
++          this._contentFreeze.ending = true;
++        }
++        break;
++      case "zen-pip-gesture-hover":
++        // Mouse-moved events are not delivered to an inactive app, so with
++        // another app frontmost this document never sees the pointer come
++        // back over the card. The native controller tracks the pointer for
++        // us and reports it here, whichever app is active.
++        if (!this._inNativeGesture) {
++          this._awaitingMouseMoveAfterResize = false;
++          document.body.classList.remove("pip-gesture-active");
++        }
++        break;
++      case "zen-pip-command":
++        this.onNativeCommand(data);
++        break;
++    }
++  },
++
++  /**
++   * Run a command routed from the native card, the only place that sees a key
++   * while another window has focus. What each command means is decided here.
++   *
++   * @param {string} command
++   *   One of "close-pause", "close", "unpip" or "mute".
++   */
++  onNativeCommand(command) {
++    switch (command) {
++      case "close-pause":
++        // Same as the close button: stop playback, then close the card.
++        this.onClose(false);
++        break;
++      case "close":
++        // Same as minimize: close the card and leave the audio running.
++        this.closePipWindow({ reason: "CloseButton" });
++        break;
++      case "unpip":
++        // Back to the tab, at the page's own size, still playing.
++        this.backToTab();
++        break;
++      case "mute":
++        this.toggleMute();
++        break;
++    }
++  },
++
++  // The picture lives in the remote <browser> child, one process away, so a
++  // resize travels window -> shell reflow -> IPC -> child reflow -> child paint
++  // and a 120 Hz gesture outruns it: the child's bottom edge arrives late and
++  // leaves a black band. While shrinking (w <= baseW) the larger old picture is
++  // simply clipped by the window, so pin and scale only when enlarging past the
++  // base size; shrinking tracks down with no transform.
++  _pinChildViewport() {
++    if (this._contentFreeze) return;
++    let browser = document.getElementById("browser");
++    if (!browser) return;
++    let w = window.innerWidth;
++    let h = window.innerHeight;
++    if (!(w > 0 && h > 0)) return;
++
++    this._contentFreeze = {
++      browser,
++      baseW: w,
++      baseH: h,
++      pinned: false,
++      ending: false,
++      lastW: w,
++      lastH: h,
++      lastChangeAt: performance.now(),
++      raf: 0,
++    };
++
++    this._contentFreeze.raf = window.requestAnimationFrame(() =>
++      this._scaleFrozenChild()
++    );
++  },
++
++  _scaleFrozenChild() {
++    let freeze = this._contentFreeze;
++    if (!freeze) {
++      return;
++    }
++    let now = performance.now();
++    let w = window.innerWidth;
++    let h = window.innerHeight;
++
++    if (w !== freeze.lastW || h !== freeze.lastH) {
++      freeze.lastW = w;
++      freeze.lastH = h;
++      freeze.lastChangeAt = now;
++    }
++
++    let settled = now - freeze.lastChangeAt;
++    if (freeze.ending ? settled > 200 : settled > 2500) {
++      this._unpinChildViewport();
++      return;
++    }
++
++    if (w > freeze.baseW || h > freeze.baseH) {
++      if (!freeze.pinned) {
++        freeze.pinned = true;
++        let style = freeze.browser.style;
++        style.flex = "0 0 auto";
++        style.alignSelf = "flex-start";
++        style.width = `${freeze.baseW}px`;
++        style.height = `${freeze.baseH}px`;
++        style.transformOrigin = "0 0";
++      }
++      let sx = w / freeze.baseW;
++      let sy = h / freeze.baseH;
++      freeze.browser.style.transform = `scale(${sx}, ${sy})`;
++    } else {
++      if (freeze.pinned) {
++        freeze.pinned = false;
++        let style = freeze.browser.style;
++        style.flex = "";
++        style.alignSelf = "";
++        style.width = "";
++        style.height = "";
++        style.transform = "";
++        style.transformOrigin = "";
++      }
++      freeze.baseW = w;
++      freeze.baseH = h;
++    }
++
++    freeze.raf = window.requestAnimationFrame(() =>
++      this._scaleFrozenChild()
++    );
++  },
++
++  _unpinChildViewport() {
++    let freeze = this._contentFreeze;
++    if (!freeze) {
++      return;
++    }
++    this._contentFreeze = null;
++    if (freeze.raf) {
++      window.cancelAnimationFrame(freeze.raf);
++    }
++    if (freeze.pinned) {
++      let style = freeze.browser.style;
++      style.flex = "";
++      style.alignSelf = "";
++      style.width = "";
++      style.height = "";
++      style.transform = "";
++      style.transformOrigin = "";
++    }
++  },
++
++  setupMeetControls() {
++    let controlsBottom = document.getElementById("controls-bottom");
++    if (!controlsBottom || document.getElementById("meet-controls")) return;
++
++    let meetControls = document.createElement("div");
++    meetControls.id = "meet-controls";
++
++    // `control-item` gives these the show/hide behaviour of the window's own
++    // buttons: upstream paints every .control-item at opacity 0 and raises it
++    // only while #controls is [showing]/[keying] or the button is hovered.
++    let micBtn = document.createElement("button");
++    micBtn.id = "meet-mic-btn";
++    micBtn.className = "meet-btn control-item";
++    micBtn.setAttribute("title", "Toggle Microphone");
++    micBtn.setAttribute("aria-label", "Toggle Microphone");
++    setMeetButtonIcon(micBtn, MEET_PATHS.micOn);
++
++    let camBtn = document.createElement("button");
++    camBtn.id = "meet-camera-btn";
++    camBtn.className = "meet-btn control-item";
++    camBtn.setAttribute("title", "Toggle Camera");
++    camBtn.setAttribute("aria-label", "Toggle Camera");
++    setMeetButtonIcon(camBtn, MEET_PATHS.camOn);
++
++    let leaveBtn = document.createElement("button");
++    leaveBtn.id = "meet-leave-btn";
++    leaveBtn.className = "meet-btn meet-btn-hangup control-item";
++    leaveBtn.setAttribute("title", "Leave Call");
++    leaveBtn.setAttribute("aria-label", "Leave Call");
++    setMeetButtonIcon(leaveBtn, MEET_PATHS.hangup);
++
++    meetControls.appendChild(micBtn);
++    meetControls.appendChild(camBtn);
++    meetControls.appendChild(leaveBtn);
++    controlsBottom.appendChild(meetControls);
++
++    if (this._meetState) {
++      this.setMeetState(this._meetState);
++    }
++  },
++
++  setMeetState(data) {
++    if (!data) return;
++    this._meetState = Object.assign(this._meetState || {}, data);
++    let micBtn = document.getElementById("meet-mic-btn");
++    if (micBtn && typeof data.isMicMuted === "boolean") {
++      micBtn.classList.toggle("is-muted", data.isMicMuted);
++      setMeetButtonIcon(micBtn, data.isMicMuted ? MEET_PATHS.micOff : MEET_PATHS.micOn);
++      micBtn.setAttribute("aria-label", data.isMicMuted ? "Turn on microphone" : "Turn off microphone");
++    }
++    let camBtn = document.getElementById("meet-camera-btn");
++    if (camBtn && typeof data.isCamOff === "boolean") {
++      camBtn.classList.toggle("is-off", data.isCamOff);
++      setMeetButtonIcon(camBtn, data.isCamOff ? MEET_PATHS.camOff : MEET_PATHS.camOn);
++      camBtn.setAttribute("aria-label", data.isCamOff ? "Turn on camera" : "Turn off camera");
++    }
++  },
++
+   setupTooltip(elId, l10nId, shortcutId) {
+     const el = document.getElementById(elId);
+     const shortcut = document.getElementById(shortcutId);
+@@ -441,6 +761,24 @@ let Player = {
+     document.l10n.setAttributes(el, l10nId, l10nObj);
+   },
+ 
++  /**
++   * Put a key hint in a control's tooltip. The card's keys are handled in
++   * `keydown`, not by a XUL <key> element, so `setupTooltip` has nothing to
++   * prettify.
++   *
++   * @param {string} elId
++   *   Id of the control whose tooltip gains the hint.
++   * @param {string} l10nId
++   *   Fluent id of the tooltip, which must reference `$shortcut`.
++   * @param {string} shortcut
++   *   The key as it should read, e.g. "A" or "Esc".
++   */
++  setupKeyHint(elId, l10nId, shortcut) {
++    document.l10n.setAttributes(document.getElementById(elId), l10nId, {
++      shortcut,
++    });
++  },
++
+   handleEvent(event) {
+     switch (event.type) {
+       case "click": {
+@@ -468,11 +806,6 @@ let Player = {
          break;
        }
-+
+ 
+-      case "dblclick": {
+-        this.onDblClick(event);
+-        break;
+-      }
+-
+       case "keydown": {
+         if (event.keyCode == KeyEvent.DOM_VK_TAB) {
+           this.controls.setAttribute(KEYING_ATTRIBUTE, true);
+@@ -525,8 +858,9 @@ let Player = {
+             // We handle the ESC key, in fullscreen modus as intent to leave only the fullscreen mode
+             document.exitFullscreen();
+           } else {
+-            // We handle the ESC key, as an intent to leave the picture-in-picture modus
+-            this.onClose(this.isUnpipWithoutPauseShortcut(event));
++            // ESC returns the video to its tab at the page's own size, still
++            // playing - the same as the "back to tab" control.
++            this.backToTab();
+           }
+         } else if (
+           (event.key == "<" || event.key == ">") &&
+@@ -534,6 +868,25 @@ let Player = {
+         ) {
+           // Same playback speed shortcuts as the YouTube player.
+           this.cyclePlaybackRate(event.key == ">" ? 1 : -1);
++        } else if (
++          !event.metaKey &&
++          !event.ctrlKey &&
++          !event.altKey &&
++          !event.shiftKey &&
++          (event.key == "a" || event.key == "m")
++        ) {
++          // The card's own keys. They work whether or not the native controller
++          // saw the key first, so both paths mean the same thing.
++          event.preventDefault();
++          this.onCardShortcut(event.key);
++        } else if (
++          (event.metaKey || event.ctrlKey) &&
++          (event.keyCode == KeyEvent.DOM_VK_DOWN ||
++            event.keyCode == KeyEvent.DOM_VK_UP)
++        ) {
++          // Mute is the card's M key now, so the old Command+Arrow pair must
++          // not reach the page and mute behind it.
++          event.preventDefault();
+         } else if (
+           Services.prefs.getBoolPref(KEYBOARD_CONTROLS_ENABLED_PREF, false) &&
+           (event.key != " " || !event.target.closest(".control-button, .panel"))
+@@ -902,15 +1255,17 @@ let Player = {
+     PictureInPicture.closeSinglePipWindow({ reason, actorRef: this.actor });
+   },
+ 
+-  onDblClick(event) {
+-    if (event.target.id == "controls") {
+-      this.fullscreenModeToggle();
+-      event.preventDefault();
+-    }
++  /**
++   * Close the card and put the video back in its tab, still playing.
++   */
++  backToTab() {
++    PictureInPicture.focusTabAndClosePip(window, this.actor);
+   },
+ 
+   onClick(event) {
+-    switch (event.target.id) {
++    let clickedButton = event.target.closest("button");
++    let targetId = clickedButton ? clickedButton.id : event.target.id;
++    switch (targetId) {
+       case "audio": {
+         this.toggleMute();
+         break;
+@@ -921,6 +1276,33 @@ let Player = {
+         break;
+       }
+ 
 +      case "minimize": {
 +        this.closePipWindow({ reason: "CloseButton" });
 +        break;
 +      }
++
++      case "meet-mic-btn": {
++        let btn = document.getElementById("meet-mic-btn");
++        let nextMuted = btn ? !btn.classList.contains("is-muted") : true;
++        this.setMeetState({ isMicMuted: nextMuted });
++        this.actor.sendAsyncMessage("PictureInPicture:MeetToggleMic");
++        break;
++      }
++
++      case "meet-camera-btn": {
++        let btn = document.getElementById("meet-camera-btn");
++        let nextOff = btn ? !btn.classList.contains("is-off") : true;
++        this.setMeetState({ isCamOff: nextOff });
++        this.actor.sendAsyncMessage("PictureInPicture:MeetToggleCam");
++        break;
++      }
++
++      case "meet-leave-btn": {
++        this.actor.sendAsyncMessage("PictureInPicture:MeetLeaveCall");
++        this.closePipWindow({ reason: "CloseButton" });
++        break;
++      }
++
+       case "playpause": {
+         if (!this.isPlaying) {
+           this.actor.sendAsyncMessage("PictureInPicture:Play");
+@@ -954,7 +1336,7 @@ let Player = {
+       }
+ 
+       case "unpip": {
+-        PictureInPicture.focusTabAndClosePip(window, this.actor);
++        this.backToTab();
+         break;
+       }
+ 
+@@ -1083,6 +1465,25 @@ let Player = {
      }
-     // If the click came from a element that is not inside the subtitles settings panel
-     // then we want to hide the panel
+   },
+ 
++  /**
++   * The card's letter keys, shared by the document key handler and the native
++   * command bridge.
++   *
++   * @param {string} key
++   *   "a" or "m".
++   */
++  onCardShortcut(key) {
++    switch (key) {
++      case "a":
++        // Dismiss the card and keep the audio running, like minimize.
++        this.closePipWindow({ reason: "CloseButton" });
++        break;
++      case "m":
++        this.toggleMute();
++        break;
++    }
++  },
++
+   onKeyDown(event) {
+     // We don't want to send a keydown event if the event target was one of the
+     // font sizes in the settings panel or a control in the playback speed panel
+@@ -1432,8 +1833,17 @@ let Player = {
+    *  Event context data object
+    */
+   onResize() {
++    // A native pinch resizes up to 120 times a second; nothing here is needed
++    // per tick.
++    if (this._inNativeGesture) {
++      return;
++    }
+     this.toggleSubtitlesSettingsPanel({ forceHide: true });
+     this.togglePlaybackRatePanel({ forceHide: true });
++    if (document && document.body) {
++      document.body.classList.add("pip-gesture-active");
++      this._awaitingMouseMoveAfterResize = true;
++    }
+     this.resizeDebouncer.disarm();
+     this.resizeDebouncer.arm();
+   },
+@@ -1626,8 +2036,7 @@ let Player = {
+     let strId = isMuted
+       ? `pictureinpicture-unmute-btn`
+       : `pictureinpicture-mute-btn`;
+-    let shortcutId = isMuted ? "unMuteShortcut" : "muteShortcut";
+-    this.setupTooltip("audio", strId, shortcutId);
++    this.setupKeyHint("audio", strId, "M");
+   },
+ 
+   /**

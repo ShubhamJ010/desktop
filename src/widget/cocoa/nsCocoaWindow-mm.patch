@@ -2,7 +2,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
 index a12d7ac38124cc6f1df06e30434ef9bfe1848e06..5d6e4325d947d02459e1450603f21215a5a8fd5f 100644
 --- a/widget/cocoa/nsCocoaWindow.mm
 +++ b/widget/cocoa/nsCocoaWindow.mm
-@@ -89,9 +89,11 @@
+@@ -89,9 +89,13 @@
  #include "mozilla/StaticPrefs_mozilla.h"
  #include "mozilla/StaticPrefs_ui.h"
  #include "mozilla/StaticPrefs_widget.h"
@@ -11,10 +11,12 @@ index a12d7ac38124cc6f1df06e30434ef9bfe1848e06..5d6e4325d947d02459e1450603f21215
  #include "mozilla/dom/Document.h"
  #include "mozilla/layers/CompositorBridgeChild.h"
 +#include "mozilla/nsZenDragAndDrop.h"
++#import "mozilla/ZenPictureInPictureInternal.h"
++#import "mozilla/ZenSwipeInternal.h"
  #include "mozilla/widget/Screen.h"
  
  #ifdef ACCESSIBILITY
-@@ -1441,6 +1443,115 @@ - (NSRect)_opaqueRectForWindowMoveWhenInTitlebar {
+@@ -1441,6 +1443,121 @@ - (NSRect)_opaqueRectForWindowMoveWhenInTitlebar {
  }
  @end
  
@@ -91,11 +93,17 @@ index a12d7ac38124cc6f1df06e30434ef9bfe1848e06..5d6e4325d947d02459e1450603f21215
 +    mWindow.styleMask |= NSWindowStyleMaskNonactivatingPanel;
 +    return;
 +  }
++  if (mWindow && (aXulWinType.EqualsLiteral("PictureInPicture") ||
++                  aXulWinType.LowerCaseEqualsLiteral("pictureinpicture"))) {
++    zen_pip::Attach(mWindow);
++    return;
++  }
 +  if (mWindowType != WindowType::TopLevel || mIsBrowserWindow ||
 +      !aXulWinType.EqualsLiteral("navigator:browser")) {
 +    return;
 +  }
 +  mIsBrowserWindow = true;
++  zen_swipe::Attach(mWindow);
 +  Preferences::RegisterCallback(ZenWindowVibrancyPrefChanged,
 +                                "zen.widget.macos.window-vibrancy", this);
 +  UpdateWindowMaterial();
@@ -151,10 +159,14 @@ index a12d7ac38124cc6f1df06e30434ef9bfe1848e06..5d6e4325d947d02459e1450603f21215
    NS_IF_RELEASE(mDragService);
    return handled;
  }
-@@ -5090,6 +5206,10 @@ - (BOOL)wantsBestResolutionOpenGLSurface {
+@@ -5090,6 +5206,14 @@ - (BOOL)wantsBestResolutionOpenGLSurface {
  nsCocoaWindow::~nsCocoaWindow() {
    NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
  
++  if (mWindow) {
++    zen_pip::Detach(mWindow);
++    zen_swipe::Detach(mWindow);
++  }
 +  if (mIsBrowserWindow) {
 +    Preferences::UnregisterCallback(ZenWindowVibrancyPrefChanged,
 +                                    "zen.widget.macos.window-vibrancy", this);
@@ -162,11 +174,14 @@ index a12d7ac38124cc6f1df06e30434ef9bfe1848e06..5d6e4325d947d02459e1450603f21215
    RemoveAllChildren();
    if (mWindow && mWindowMadeHere) {
      CancelAllTransitions();
-@@ -5782,7 +5902,9 @@ static void SyncPopoverBounds(NSPopover* aPopover,
+@@ -5782,7 +5902,12 @@ static void SyncPopoverBounds(NSPopover* aPopover,
      } else {
        NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
        EnsureFrameIsOnScreen();
 -      if (mWindowType == WindowType::TopLevel &&
++      if (mWindow && [mWindow level] == NSFloatingWindowLevel && [mWindow.title containsString:@"Picture"]) {
++        zen_pip::Attach(mWindow);
++      }
 +      if ((mWindowType == WindowType::TopLevel ||
 +           (mWindowType == WindowType::Dialog &&
 +            mAnimationType == nsIWidget::eDocumentWindowAnimation)) &&

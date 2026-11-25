@@ -1,0 +1,51 @@
+--- a/toolkit/components/extensions/ExtensionContent.sys.mjs
++++ b/toolkit/components/extensions/ExtensionContent.sys.mjs
+@@ -519,6 +519,26 @@
+     ) {
+       return;
+     }
++
++    // Zen Per-Space Extension Isolation:
++    // Block content scripts from executing in tabs belonging to spaces
++    // where the extension is disabled.
++    try {
++      const bc = window.docShell?.browsingContext;
++      const topBrowserId = bc?.top?.browserId || bc?.browserId;
++      if (topBrowserId) {
++        const raw = Services.prefs.getStringPref(
++          "zen.workspaces.browser-disabled-extensions",
++          "{}"
++        );
++        const map = JSON.parse(raw);
++        const list = map[topBrowserId];
++        if (Array.isArray(list) && list.includes(this.extension.id)) {
++          return;
++        }
++      }
++    } catch (e) {}
++
+     this.injectedInto.add(window.document);
+ 
+     let context = this.extension.getContext(window);
+@@ -1448,6 +1468,21 @@
+         // This is TOCTOU safe: if a frame navigated after same-origin check,
+         // wgc.isClosed would be true and .matchesWindowGlobal() would fail.
+         const runScript = cs => {
++          try {
++            const topBrowserId = bc.top?.browserId || bc.browserId;
++            if (topBrowserId) {
++              const raw = Services.prefs.getStringPref(
++                "zen.workspaces.browser-disabled-extensions",
++                "{}"
++              );
++              const map = JSON.parse(raw);
++              const list = map[topBrowserId];
++              if (Array.isArray(list) && list.includes(cs.extension.id)) {
++                return;
++              }
++            }
++          } catch (e) {}
++
+           if (cs.matchesWindowGlobal(wgc, /* ignorePermissions */ true)) {
+             return cs.injectInto(bc.window);
+           }
