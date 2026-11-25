@@ -18,6 +18,10 @@ zen-settings-window-pane-search = Search
 zen-settings-window-pane-language = Language
 zen-settings-window-pane-shortcuts = Shortcuts
 zen-settings-window-pane-advanced = Advanced
+zen-settings-window-filter =
+    .placeholder = Search
+zen-settings-window-filter-results = Search Results
+zen-settings-window-filter-no-results = No settings match your search.
 zen-settings-window-link-privacy = Privacy & Security
 zen-settings-window-link-accessibility = Accessibility
 zen-settings-window-link-mods = Mods
@@ -41,6 +45,12 @@ zen-settings-window-download-location-other =
 zen-settings-window-download-location-ask =
     .label = Ask every time
 zen-settings-window-download-location-picker = Choose Download Folder
+
+zen-settings-window-updates-header = Updates
+zen-settings-window-update-version = Version { $version }
+zen-settings-window-update-check = Check for Updates…
+zen-settings-window-update-history = Update history
+zen-settings-window-update-history-button = Show…
 
 ## Appearance
 
@@ -112,42 +122,15 @@ zen-settings-window-containers-remove-cancel = Cancel
 
 zen-settings-window-little-header = Little { -brand-short-name }
 zen-settings-window-little-description = Little { -brand-short-name } is a smaller, simpler { -brand-short-name } window, perfect for links from other apps or temporary links you don’t want in the main { -brand-short-name } window.
-zen-settings-window-little-enabled = Enable Little { -brand-short-name }
 zen-settings-window-little-global-shortcut = Open Little { -brand-short-name } with its shortcut from any app
 # Variables:
 #   $shortcut (String): the keyboard shortcut, e.g. ⌥⌘N
 zen-settings-window-little-global-shortcut-key = Open Little { -brand-short-name } when I press { $shortcut } in any app
+zen-settings-window-little-trigger = Open Little { -brand-short-name } when clicking on links with { $shortcut } held
 zen-settings-window-little-external-links = Links from other apps open in Little { -brand-short-name }
 zen-settings-window-glance-header = Glance
 zen-settings-window-glance-description = Glance opens a link in a preview on top of the current tab. It’s perfect for quick lookups.
-zen-settings-window-glance-trigger = Open Glance when clicking on links with
-zen-settings-window-glance-trigger-ctrl =
-    .label = { PLATFORM() ->
-        [macos] ⌃ held
-       *[other] Ctrl held
-    }
-    .aria-label = { PLATFORM() ->
-        [macos] Control held
-       *[other] Ctrl held
-    }
-zen-settings-window-glance-trigger-alt =
-    .label = { PLATFORM() ->
-        [macos] ⌥ held
-       *[other] Alt held
-    }
-    .aria-label = { PLATFORM() ->
-        [macos] Option held
-       *[other] Alt held
-    }
-zen-settings-window-glance-trigger-shift =
-    .label = { PLATFORM() ->
-        [macos] ⇧ held
-       *[other] Shift held
-    }
-    .aria-label = Shift held
-zen-settings-window-glance-trigger-meta =
-    .label = ⌘ held
-    .aria-label = Command held
+zen-settings-window-glance-trigger = Open Glance when clicking on links with { $shortcut } held
 zen-settings-window-glance-external-links = Open Glance when clicking on links to other sites
 zen-settings-window-glance-external-links-note = This only affects Essentials and pinned tabs
 zen-settings-window-space-routing = Choose where links open inside { -brand-short-name }.
@@ -274,4 +257,5 @@ zen-settings-window-window-header = Window
 zen-settings-window-haptic-feedback = Haptic feedback when reordering tabs
 zen-settings-window-drag-from-content = Drag the window from the top of the page
 zen-settings-window-compact-flash-popup = Briefly show the toolbar when switching tabs in compact mode
+zen-settings-window-performance-header = Performance
 zen-settings-window-more-settings = More Settings…

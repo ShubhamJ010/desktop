@@ -598,13 +598,15 @@ export class nsZenSiteDataPanel {
 
   #initBrowserListeners() {
     Services.obs.addObserver(this, "zen-boosts-update");
-    this.window.gBrowser.addProgressListener({
-      onLocationChange: aWebProgress => {
+    const progressListener = {
+      onLocationChange: (aWebProgress, _aRequest, aLocation) => {
         if (aWebProgress.isTopLevel) {
+          this.#updateCopyUrlButton(aLocation);
           this.checkIfTabIsBoosted();
         }
       },
-    });
+    };
+    this.window.gBrowser.addProgressListener(progressListener);
     const onWorkspacesUpdate = () => {
       if (this.#isFolderOpen()) {
         this.#toggleDisabledFolder(false);
@@ -622,7 +624,6 @@ export class nsZenSiteDataPanel {
       "TabSelect",
       onTabSelect
     );
-
     this.window.addEventListener(
       "unload",
       () => {
@@ -636,6 +637,7 @@ export class nsZenSiteDataPanel {
         );
         this._unsubscribeExtensions?.();
         Services.obs.removeObserver(this, "zen-boosts-update");
+        this.window.gBrowser.removeProgressListener(progressListener);
       },
       { once: true }
     );
@@ -692,19 +694,15 @@ export class nsZenSiteDataPanel {
       }
       this.document.getElementById("cmd_zenCopyCurrentURL").doCommand();
     });
+  }
 
-    this.window.gBrowser.addProgressListener({
-      onLocationChange: (aWebProgress, aRequest, aLocation) => {
-        if (aWebProgress.isTopLevel) {
-          const disabled = !this.#canCopyUrl(aLocation);
-          if (disabled) {
-            aElement.setAttribute("disabled", true);
-          } else {
-            aElement.removeAttribute("disabled");
-          }
-        }
-      },
-    });
+  #updateCopyUrlButton(aLocation) {
+    const aElement = this.document.getElementById("zen-copy-url-button");
+    if (!this.#canCopyUrl(aLocation)) {
+      aElement.setAttribute("disabled", true);
+    } else {
+      aElement.removeAttribute("disabled");
+    }
   }
 
   #initContextMenuEventListener() {

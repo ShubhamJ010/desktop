@@ -2,7 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { ZenSettingsAdvanced } from "./sections/ZenSettingsAdvanced.mjs";
 import { ZenSettingsAppearance } from "./sections/ZenSettingsAppearance.mjs";
+import { ZenSettingsFilter } from "./sections/ZenSettingsFilter.mjs";
 import { ZenSettingsContainers } from "./sections/ZenSettingsContainers.mjs";
 import { ZenSettingsGeneral } from "./sections/ZenSettingsGeneral.mjs";
 import { ZenSettingsLanguage } from "./sections/ZenSettingsLanguage.mjs";
@@ -13,6 +15,7 @@ import { ZenSettingsShortcuts } from "./sections/ZenSettingsShortcuts.mjs";
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  AppConstants: "resource://gre/modules/AppConstants.sys.mjs",
   SubDialogManager: "resource://gre/modules/SubDialog.sys.mjs",
 });
 
@@ -118,6 +121,7 @@ class nsZenSettingsWindow {
     this.#initNavigation();
     this.#initPrefs();
     this.#initToggleRows();
+    this.#initSharedLabels();
     this.#initDependencies();
 
     this.sections = {
@@ -128,8 +132,10 @@ class nsZenSettingsWindow {
       search: new ZenSettingsSearch(this),
       language: new ZenSettingsLanguage(this),
       shortcuts: new ZenSettingsShortcuts(this),
+      advanced: new ZenSettingsAdvanced(this),
     };
     this.#initActions();
+    this.filter = new ZenSettingsFilter(this);
 
     window.addEventListener("unload", () => this.destroy(), { once: true });
 
@@ -236,6 +242,7 @@ class nsZenSettingsWindow {
    *   with an unknown or hidden one, the first pane is shown.
    */
   showPane(pane) {
+    this.filter?.clear();
     let selected = null;
     for (const category of this.#categories) {
       if (category.dataset.pane == pane && !category.hidden) {
@@ -312,6 +319,18 @@ class nsZenSettingsWindow {
     }
   }
 
+  async #initSharedLabels() {
+    const elements = [...document.querySelectorAll("[data-label-from]")];
+    const messages = await document.l10n.formatMessages(
+      elements.map(element => ({ id: element.dataset.labelFrom }))
+    );
+    for (const [index, element] of elements.entries()) {
+      element.textContent =
+        messages[index]?.attributes?.find(attr => attr.name == "label")
+          ?.value ?? "";
+    }
+  }
+
   /* Helpers shared with the sections */
 
   createIconButton(icon, l10nId) {
@@ -355,22 +374,53 @@ class nsZenSettingsWindow {
     );
   }
 
+  #openAboutAsChild() {
+    for (const about of Services.wm.getEnumerator("Browser:About")) {
+      if (about.closed) {
+        continue;
+      }
+      if (about.opener == window) {
+        about.focus();
+        return;
+      }
+      about.close();
+    }
+    const features =
+      lazy.AppConstants.platform == "macosx"
+        ? "chrome,centerscreen,resizable=no,minimizable=no"
+        : "chrome,centerscreen,dependent";
+    window.openDialog(
+      "chrome://browser/content/zen-components/windows/zen-about.xhtml",
+      "",
+      features
+    );
+  }
+
   /* Actions */
 
   #initActions() {
-    const leaveFor = pane => {
-      window.openPreferences(pane);
-      window.close();
+    const preferencesPanes = {
+      "open-mods": "paneZenMarketplace",
+      "open-more-settings": "paneGeneral",
+      "open-privacy-settings": "panePrivacy",
+      "open-accessibility-settings": "paneAccessibility",
     };
     const actions = {
-      "open-mods": () => leaveFor("paneZenMarketplace"),
-      "open-more-settings": () => leaveFor("paneGeneral"),
-      "open-about": () => window.openAboutDialog(),
+      "open-about": () => this.#openAboutAsChild(),
       "open-donate": () => window.openTrustedLinkIn(kDonateURL, "tab"),
-      "open-privacy-settings": () => leaveFor("panePrivacy"),
-      "open-accessibility-settings": () => leaveFor("paneAccessibility"),
       "open-sync-settings": () => window.openPreferences("paneSync"),
     };
+    for (const [action, pane] of Object.entries(preferencesPanes)) {
+      actions[action] = () => {
+        window.openPreferences(pane);
+        window.close();
+      };
+      for (const button of document.querySelectorAll(
+        `[data-action="${action}"]`
+      )) {
+        button.toggleAttribute("data-opens-preferences", true);
+      }
+    }
     for (const section of Object.values(this.sections)) {
       Object.assign(actions, section.actions);
     }
