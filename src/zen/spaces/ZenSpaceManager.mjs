@@ -159,7 +159,18 @@ class nsZenWorkspaces {
       document.documentElement.setAttribute("zen-private-window", "true");
     }
 
-    window.addEventListener("resize", this.onWindowResize.bind(this));
+    const onWindowResize = this.onWindowResize.bind(this);
+    window.addEventListener("resize", onWindowResize);
+    window.addEventListener(
+      "unload",
+      () => {
+        this._pinnedTabsResizeObserver?.disconnect();
+        this._pinnedTabsResizeObserver = null;
+        window.removeEventListener("resize", onWindowResize);
+        this.ownerWindow = null;
+      },
+      { once: true }
+    );
     this.addPopupListeners();
 
     if (this.privateWindowOrDisabled) {
@@ -188,16 +199,20 @@ class nsZenWorkspaces {
         onContainerDeleted,
         "contextual-identity-deleted"
       );
-      window.addEventListener("unload", () => {
-        Services.obs.removeObserver(
-          observerFunction,
-          "workspace-bookmarks-updated"
-        );
-        Services.obs.removeObserver(
-          onContainerDeleted,
-          "contextual-identity-deleted"
-        );
-      });
+      window.addEventListener(
+        "unload",
+        () => {
+          Services.obs.removeObserver(
+            observerFunction,
+            "workspace-bookmarks-updated"
+          );
+          Services.obs.removeObserver(
+            onContainerDeleted,
+            "contextual-identity-deleted"
+          );
+        },
+        { once: true }
+      );
     }
   }
 
@@ -1097,9 +1112,8 @@ class nsZenWorkspaces {
       "zen.urlbar.open-on-startup",
       true
     );
-    let shownEmptyTab =
-      gBrowser.selectedTab.hasAttribute("zen-empty-tab") && openOnStartup;
     initialTabWasEmpty &&= openOnStartup;
+    const tabAtStartup = gBrowser.selectedTab;
 
     // Wait for the next event loop to ensure that the startup focus logic by
     // firefox has finished doing it's thing.
@@ -1112,6 +1126,9 @@ class nsZenWorkspaces {
       ) {
         return;
       }
+      const shownEmptyTab =
+        gBrowser.selectedTab.hasAttribute("zen-empty-tab") && openOnStartup;
+      initialTabWasEmpty &&= gBrowser.selectedTab === tabAtStartup;
       if (gZenVerticalTabsManager._canReplaceNewTab && shownEmptyTab) {
         BrowserCommands.openTab();
       } else if (shownEmptyTab || initialTabWasEmpty) {
@@ -1299,10 +1316,7 @@ class nsZenWorkspaces {
     if (!this.workspaceEnabled || !this._isClosingWindow) {
       return;
     }
-    // Inside a setTimeout to avoid reentrancy issues.
-    setTimeout(() => {
-      document.getElementById("cmd_closeWindow").doCommand();
-    }, 100);
+    document.getElementById("cmd_closeWindow").doCommand();
   }
 
   addPopupListeners() {
@@ -1690,7 +1704,14 @@ class nsZenWorkspaces {
   }
 
   #unpinnedTabsInWorkspace(workspaceID) {
-    return Array.from(this.allStoredTabs).filter(
+    const workspaceElement = this.workspaceElement(workspaceID);
+    const tabs = workspaceElement
+      ? this.#tabsInContainers([
+          workspaceElement.pinnedTabsContainer,
+          workspaceElement.tabsContainer,
+        ])
+      : this.allStoredTabs;
+    return tabs.filter(
       tab =>
         tab.getAttribute("zen-workspace-id") === workspaceID &&
         tab.visible &&
@@ -2064,13 +2085,16 @@ class nsZenWorkspaces {
     }
     const emptyTab = this._emptyTab;
     if (emptyTab) {
+      let changed =
+        emptyTab.getAttribute("zen-workspace-id") !== this.activeWorkspace;
       emptyTab.setAttribute("zen-workspace-id", this.activeWorkspace);
-      if (emptyTab.linkedBrowser) {
-        gBrowser.TabStateFlusher.flush(emptyTab.linkedBrowser);
-      }
       const container = this.activeWorkspaceStrip;
       if (container && container.firstChild !== emptyTab) {
         container.insertBefore(emptyTab, container.firstChild);
+        changed = true;
+      }
+      if (changed && emptyTab.linkedBrowser) {
+        gBrowser.TabStateFlusher.flush(emptyTab.linkedBrowser);
       }
     }
     this.#fixTabPositions();
@@ -2321,8 +2345,9 @@ class nsZenWorkspaces {
       lazy.browserBackgroundElement,
       lazy.toolbarBackgroundElement,
     ];
-    // Start from what is on screen, a swipe can leave the backgrounds midway.
-    const shown = parseFloat(getComputedStyle(elements[0], "::after").opacity);
+    const shown = parseFloat(
+      elements[0].style.getPropertyValue("--zen-background-opacity")
+    );
     const from = shown >= 1 || !shown ? 0 : 1 - shown;
     // Same curve as the springs the tabs slide with.
     const { ease, duration: ms } = gZenUIManager.motion.spring.applyToOptions({
@@ -3452,7 +3477,6 @@ class nsZenWorkspaces {
       return this._allStoredTabs;
     }
 
-    const tabs = [];
     // we need to go through each tab in each container
     const essentialsContainer = document.querySelectorAll(
       "#zen-essentials .zen-workspace-tabs-section"
@@ -3481,31 +3505,42 @@ class nsZenWorkspaces {
         }
       }
     }
-    const containers = [
+    return (this._allStoredTabs = this.#tabsInContainers([
       ...essentialsContainer,
       ...pinnedContainers,
       ...normalContainers,
-    ];
+    ]));
+  }
+
+  /**
+   * @param {Element[]} containers - Tab sections whose children are tabs or
+   *   tab groups
+   * @returns {MozTabbrowserTab[]} Their tabs, each followed by its glance
+   */
+  #tabsInContainers(containers) {
+    const tabs = [];
     for (const container of containers) {
       for (const tab of container.children) {
         if (gBrowser.isTab(tab)) {
-          tabs.push(tab);
-          const glance = tab.querySelector(".tabbrowser-tab[glance-id]");
-          if (glance) {
-            tabs.push(glance);
-          }
+          this.#pushTabAndGlance(tabs, tab);
         } else if (gBrowser.isTabGroup(tab)) {
           for (const groupTab of tab.tabs) {
-            tabs.push(groupTab);
-            const glance = groupTab.querySelector(".tabbrowser-tab[glance-id]");
-            if (glance) {
-              tabs.push(glance);
-            }
+            this.#pushTabAndGlance(tabs, groupTab);
           }
         }
       }
     }
-    return (this._allStoredTabs = tabs);
+    return tabs;
+  }
+
+  #pushTabAndGlance(tabs, tab) {
+    tabs.push(tab);
+    if (tab.hasAttribute("glance-id")) {
+      const glance = tab.querySelector(".tabbrowser-tab[glance-id]");
+      if (glance) {
+        tabs.push(glance);
+      }
+    }
   }
 
   get allTabGroups() {
