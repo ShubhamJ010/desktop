@@ -2,7 +2,7 @@ diff --git a/widget/cocoa/nsCocoaWindow.mm b/widget/cocoa/nsCocoaWindow.mm
 index a12d7ac38124cc6f1df06e30434ef9bfe1848e06..5d6e4325d947d02459e1450603f21215a5a8fd5f 100644
 --- a/widget/cocoa/nsCocoaWindow.mm
 +++ b/widget/cocoa/nsCocoaWindow.mm
-@@ -89,9 +89,11 @@
+@@ -89,9 +89,13 @@
  #include "mozilla/StaticPrefs_mozilla.h"
  #include "mozilla/StaticPrefs_ui.h"
  #include "mozilla/StaticPrefs_widget.h"
@@ -16,7 +16,7 @@ index a12d7ac38124cc6f1df06e30434ef9bfe1848e06..5d6e4325d947d02459e1450603f21215
  #include "mozilla/widget/Screen.h"
  
  #ifdef ACCESSIBILITY
-@@ -1441,6 +1443,115 @@ - (NSRect)_opaqueRectForWindowMoveWhenInTitlebar {
+@@ -1441,6 +1443,121 @@ - (NSRect)_opaqueRectForWindowMoveWhenInTitlebar {
  }
  @end
  
@@ -159,7 +159,7 @@ index a12d7ac38124cc6f1df06e30434ef9bfe1848e06..5d6e4325d947d02459e1450603f21215
    NS_IF_RELEASE(mDragService);
    return handled;
  }
-@@ -5090,6 +5206,10 @@ - (BOOL)wantsBestResolutionOpenGLSurface {
+@@ -5090,6 +5206,14 @@ - (BOOL)wantsBestResolutionOpenGLSurface {
  nsCocoaWindow::~nsCocoaWindow() {
    NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
  
@@ -174,7 +174,7 @@ index a12d7ac38124cc6f1df06e30434ef9bfe1848e06..5d6e4325d947d02459e1450603f21215
    RemoveAllChildren();
    if (mWindow && mWindowMadeHere) {
      CancelAllTransitions();
-@@ -5782,7 +5902,9 @@ static void SyncPopoverBounds(NSPopover* aPopover,
+@@ -5782,7 +5902,12 @@ static void SyncPopoverBounds(NSPopover* aPopover,
      } else {
        NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
        EnsureFrameIsOnScreen();
